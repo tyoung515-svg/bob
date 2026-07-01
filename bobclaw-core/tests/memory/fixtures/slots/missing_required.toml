@@ -1,0 +1,4 @@
+# Missing required keys (model, backend, endpoint).
+[slot.embed_text]
+backend = "test-backend"
+endpoint = "http://test:1234"

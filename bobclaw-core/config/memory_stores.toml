@@ -1,0 +1,11 @@
+[meta]
+spec_version = "1.0"
+
+[stores.bobclaw_default]
+description = "Default single-user store"
+acl_allowed_providers = ["qdrant_local"]
+
+[providers.qdrant_local]
+locality = "local"
+collection_prefix = "bobclaw_"
+capability_classes = ["text_dense"]

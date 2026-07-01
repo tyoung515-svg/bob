@@ -1,0 +1,7 @@
+# All slots deferred — nothing active.
+[slot.synth_mid]
+deferred = true
+[slot.synth_deep]
+deferred = true
+[slot.audit_manager]
+deferred = true

@@ -1,0 +1,22 @@
+Vendored frontend libraries for BobClaw Web UI.
+
+Downloaded: 2026-06-14
+
+preact.js
+- Package: preact
+- Version: 10.26.4
+- Source URL: https://unpkg.com/preact@10.26.4/dist/preact.module.js
+- License: MIT
+
+preact-hooks.js
+- Package: preact
+- Version: 10.26.4
+- Source URL: https://unpkg.com/preact@10.26.4/hooks/dist/hooks.module.js
+- License: MIT
+- Browser resolution: index.html maps the package import "preact" to ./vendor/preact.js.
+
+htm.js
+- Package: htm
+- Version: 3.1.1
+- Source URL: https://unpkg.com/htm@3.1.1/dist/htm.module.js
+- License: MIT

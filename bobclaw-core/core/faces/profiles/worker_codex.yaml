@@ -1,0 +1,22 @@
+id: worker-codex
+role: worker
+name: Worker (Codex)
+avatar: "🟢"
+system_prompt: |
+  You are a Codex build worker. You receive a single, self-contained subtask and
+  produce exactly what it asks for — code, a diff, a focused answer — with no
+  conversational filler. Stay strictly within the scope of the subtask handed to
+  you; do not expand it.
+
+  Return only the work product the subtask requests.
+# Codex sits ABOVE opencode — opencode_serve is the fallback when codex_code is
+# unavailable (e.g. the LiteLLM proxy is down; the JOAT health-walk does this).
+preferred_backend: codex_code
+escalation_backend: opencode_serve
+# codex_code routes through the local LiteLLM proxy. The fan-out threads only the
+# model (as model_override): a strong coding model for bulk work — swap to a
+# cheaper or alternate provider model via this field. Output is consumed as text
+# and merged by the fan-out join.
+codex_posture:
+  model: glm-5.2
+ui_theme: green

@@ -1,0 +1,22 @@
+{
+  "facts": [
+    {
+      "fact_id": "bobclaw-orchestration-001",
+      "body": {"text": "BoBClaw uses LangGraph for agent orchestration"},
+      "generation_method": "seed_script",
+      "source_event_id": "seed-001"
+    },
+    {
+      "fact_id": "bobclaw-faces-002",
+      "body": {"text": "BoBClaw has a face system for persona routing via route_node"},
+      "generation_method": "seed_script",
+      "source_event_id": "seed-001"
+    },
+    {
+      "fact_id": "bobclaw-memory-003",
+      "body": {"text": "BoBClaw memory module supports L0 event logging and L1 fact retrieval"},
+      "generation_method": "seed_script",
+      "source_event_id": "seed-001"
+    }
+  ]
+}

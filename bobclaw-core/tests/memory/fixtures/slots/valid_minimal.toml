@@ -1,0 +1,9 @@
+# Minimum valid slot config for testing — one active, one deferred.
+[slot.embed_text]
+model = "test-embedder"
+backend = "test-backend"
+endpoint = "http://test:1234"
+embedding_dimension = 128
+
+[slot.synth_deep]
+deferred = true

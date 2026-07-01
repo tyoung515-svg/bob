@@ -1,0 +1,20 @@
+BoB — Build · Orchestrate · Bind
+A Canopy Seed project.
+
+Copyright 2026 Canopy Seed
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------------
+Bring-your-own credentials
+------------------------------------------------------------------------------
+
+BoB is a consumer application that you run on your own machine with your own
+credentials. It does not bundle, proxy, or resell access to any model provider.
+Each backend (Anthropic, OpenAI, Google, Z.AI, Moonshot/Kimi, MiniMax, DeepSeek,
+local model servers, etc.) is reached with your own API key or your own official
+vendor CLI logged in under your own subscription, per each vendor's published
+terms. See COMPLIANCE.md for details.
+
+BoB depends on third-party open-source software, each under its own license.
+Those licenses are retained in the respective packages' distributions.

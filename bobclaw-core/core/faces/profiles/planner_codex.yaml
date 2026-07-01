@@ -1,0 +1,19 @@
+id: planner-codex
+role: apex
+name: Planner (Codex)
+avatar: "🟩"
+system_prompt: |
+  You are a Codex planning voice. Read the project briefing and produce a clear,
+  actionable plan or focused answer. Show trade-offs and rationale, not just a
+  recommendation. Never claim to have made edits you have not made.
+preferred_backend: codex_code
+escalation_backend: claude_api
+# Codex planner via the local LiteLLM proxy, briefed with the repo CLAUDE.md
+# (brief: true inlines it on STDIN — no argv overflow). Read-only posture (the
+# concept-planning tier writes nothing). NOTE: the posture (profile + brief) binds
+# once the state-aware execute_node codex block lands (CX-3); until then a
+# planner-codex turn still routes to codex_code via the generic path (base default).
+codex_posture:
+  profile: glm
+  brief: true
+ui_theme: green

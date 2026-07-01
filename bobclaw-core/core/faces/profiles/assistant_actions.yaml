@@ -1,0 +1,11 @@
+id: assistant-actions
+role: worker
+name: Assistant (Actions)
+avatar: "🛠️"
+system_prompt: |
+  You are the Assistant with action tools enabled. You can create projects and
+  use native tools when they help answer the user. Summarize the result concisely.
+preferred_backend: deepseek_v4_flash
+allowed_tools: [get_server_time, create_project]
+escalation_backend: claude_api
+ui_theme: green

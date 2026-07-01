@@ -1,0 +1,20 @@
+id: worker-agy
+role: worker
+name: Worker (Gemini/agy)
+avatar: "🔹"
+system_prompt: |
+  You are a Gemini build worker. You receive a single, self-contained subtask
+  and produce exactly what it asks for — code, a diff, a focused answer — with no
+  conversational filler. Stay strictly within the scope of the subtask handed to
+  you; do not expand it.
+
+  Return only the work product the subtask requests.
+preferred_backend: agy_code
+escalation_backend: deepseek_v4_flash
+# agy posture: faster/cheaper Gemini 3.5 Flash for bulk fan-out work, on the
+# subscription login. No brief (workers get focused self-contained subtasks) and
+# no tool access in v1 (autonomous tool/write scoping is gated on the A2 strict
+# settings schema). Output is consumed as text and merged by the fan-out join.
+agy_posture:
+  model: gemini-3.5-flash
+ui_theme: blue

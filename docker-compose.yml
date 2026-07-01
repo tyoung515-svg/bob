@@ -1,0 +1,72 @@
+# All infrastructure ports are bound to 127.0.0.1 (loopback) so nothing is
+# reachable from another host on the network. BoB's own services (core, gateway,
+# pipeline) run as host processes and connect over loopback; they are NOT in this
+# compose file. POSTGRES_PASSWORD is read from the environment (the setup flow
+# generates a strong value into .secrets/bobclaw.env) and falls back to a weak
+# dev default only when unset. See SECURITY.md.
+services:
+  postgres:
+    image: postgres:16
+    container_name: bobclaw-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: bobclaw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bobclaw}
+      POSTGRES_DB: bobclaw
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bobclaw"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: bobclaw-playwright
+    ports:
+      - "127.0.0.1:3100:3100"
+    environment:
+      - DISPLAY=:99
+    volumes:
+      - ./downloads:/downloads
+    profiles:
+      - full  # Only start with: docker-compose --profile full up
+
+  redis:
+    image: redis:7-alpine
+    container_name: bobclaw-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    container_name: bobclaw-qdrant
+    restart: unless-stopped
+    # Host ports 6353/6354 (not the Qdrant default 6333/6334) so this instance
+    # doesn't collide with any other Qdrant you may already run on 6333. Set
+    # MEMORY_QDRANT_URL=http://127.0.0.1:6353 to point BoB at it.
+    ports:
+      - "127.0.0.1:6353:6333"
+      - "127.0.0.1:6354:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:6333/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  pgdata:
+  qdrant_data:

@@ -1,0 +1,380 @@
+# Pinned lock for bobclaw-core — generated with:
+#   uv pip compile requirements.txt -o requirements.lock --universal --python-version 3.13
+# Install: uv pip install -r requirements.lock   (or: pip install -r requirements.lock)
+aiohappyeyeballs==2.6.2
+    # via aiohttp
+aiohttp==3.13.5
+    # via
+    #   -r requirements.txt
+    #   aiohttp-cors
+    #   aioresponses
+aiohttp-cors==0.8.1
+    # via -r requirements.txt
+aioresponses==0.7.9
+    # via -r requirements.txt
+aiosignal==1.4.0
+    # via aiohttp
+aiosqlite==0.22.1
+    # via -r requirements.txt
+annotated-types==0.7.0
+    # via pydantic
+anthropic==0.115.0
+    # via -r requirements.txt
+anyio==4.14.1
+    # via
+    #   anthropic
+    #   httpx
+    #   langsmith
+    #   mcp
+    #   openai
+    #   sse-starlette
+    #   starlette
+asyncpg==0.31.0
+    # via -r requirements.txt
+attrs==26.1.0
+    # via
+    #   aiohttp
+    #   jsonschema
+    #   referencing
+blake3==1.0.9
+    # via -r requirements.txt
+certifi==2026.6.17
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
+cffi==2.0.0 ; platform_python_implementation != 'PyPy'
+    # via cryptography
+charset-normalizer==3.4.7
+    # via requests
+click==8.4.2 ; sys_platform != 'emscripten'
+    # via uvicorn
+colorama==0.4.6 ; sys_platform == 'win32'
+    # via
+    #   click
+    #   pytest
+    #   tqdm
+croniter==6.2.2
+    # via -r requirements.txt
+cryptography==49.0.0
+    # via
+    #   google-auth
+    #   pyjwt
+distro==1.9.0
+    # via
+    #   anthropic
+    #   langsmith
+    #   openai
+docstring-parser==0.18.0
+    # via anthropic
+frozenlist==1.8.0
+    # via
+    #   aiohttp
+    #   aiosignal
+google-ai-generativelanguage==0.6.15
+    # via google-generativeai
+google-api-core==2.25.2
+    # via
+    #   google-ai-generativelanguage
+    #   google-api-python-client
+    #   google-generativeai
+google-api-python-client==2.198.0
+    # via google-generativeai
+google-auth==2.55.1
+    # via
+    #   google-ai-generativelanguage
+    #   google-api-core
+    #   google-api-python-client
+    #   google-auth-httplib2
+    #   google-generativeai
+google-auth-httplib2==0.4.0
+    # via google-api-python-client
+google-generativeai==0.8.6
+    # via -r requirements.txt
+googleapis-common-protos==1.75.0
+    # via
+    #   google-api-core
+    #   grpcio-status
+grpcio==1.81.1
+    # via
+    #   google-api-core
+    #   grpcio-status
+    #   qdrant-client
+grpcio-status==1.71.2
+    # via google-api-core
+h11==0.16.0
+    # via
+    #   httpcore
+    #   uvicorn
+h2==4.3.0
+    # via httpx
+hpack==4.2.0
+    # via h2
+httpcore==1.0.9
+    # via httpx
+httplib2==0.32.0
+    # via
+    #   google-api-python-client
+    #   google-auth-httplib2
+httpx==0.28.1
+    # via
+    #   anthropic
+    #   langgraph-sdk
+    #   langsmith
+    #   mcp
+    #   openai
+    #   qdrant-client
+httpx-sse==0.4.3
+    # via mcp
+hyperframe==6.1.0
+    # via h2
+idna==3.18
+    # via
+    #   anyio
+    #   httpx
+    #   requests
+    #   yarl
+iniconfig==2.3.0
+    # via pytest
+jinja2==3.1.6
+    # via -r requirements.txt
+jiter==0.16.0
+    # via
+    #   anthropic
+    #   openai
+jsonpatch==1.33
+    # via langchain-core
+jsonpointer==3.1.1
+    # via jsonpatch
+jsonschema==4.26.0
+    # via mcp
+jsonschema-specifications==2025.9.1
+    # via jsonschema
+langchain-core==1.4.8
+    # via
+    #   -r requirements.txt
+    #   langchain-mcp-adapters
+    #   langchain-openai
+    #   langgraph
+    #   langgraph-checkpoint
+    #   langgraph-prebuilt
+    #   langgraph-sdk
+langchain-mcp-adapters==0.3.0
+    # via -r requirements.txt
+langchain-openai==1.3.3
+    # via -r requirements.txt
+langchain-protocol==0.0.18
+    # via
+    #   langchain-core
+    #   langgraph-sdk
+langgraph==1.2.7
+    # via -r requirements.txt
+langgraph-checkpoint==4.1.1
+    # via
+    #   langgraph
+    #   langgraph-prebuilt
+langgraph-prebuilt==1.1.0
+    # via langgraph
+langgraph-sdk==0.4.2
+    # via langgraph
+langsmith==0.9.4
+    # via langchain-core
+markdown-it-py==3.0.0
+    # via -r requirements.txt
+markupsafe==3.0.3
+    # via jinja2
+mcp==1.28.1
+    # via
+    #   -r requirements.txt
+    #   langchain-mcp-adapters
+mdurl==0.1.2
+    # via markdown-it-py
+multidict==6.7.1
+    # via
+    #   aiohttp
+    #   yarl
+numpy==2.5.0
+    # via qdrant-client
+openai==2.44.0
+    # via langchain-openai
+orjson==3.11.9
+    # via
+    #   langgraph-sdk
+    #   langsmith
+ormsgpack==1.12.2
+    # via langgraph-checkpoint
+packaging==26.2
+    # via
+    #   aioresponses
+    #   langchain-core
+    #   langsmith
+    #   pytest
+pluggy==1.6.0
+    # via pytest
+portalocker==3.2.0
+    # via qdrant-client
+propcache==0.5.2
+    # via
+    #   aiohttp
+    #   yarl
+proto-plus==1.28.0
+    # via
+    #   google-ai-generativelanguage
+    #   google-api-core
+protobuf==5.29.6
+    # via
+    #   google-ai-generativelanguage
+    #   google-api-core
+    #   google-generativeai
+    #   googleapis-common-protos
+    #   grpcio-status
+    #   proto-plus
+    #   qdrant-client
+pyasn1==0.6.3
+    # via pyasn1-modules
+pyasn1-modules==0.4.2
+    # via google-auth
+pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+    # via cffi
+pydantic==2.13.4
+    # via
+    #   -r requirements.txt
+    #   anthropic
+    #   google-generativeai
+    #   langchain-core
+    #   langgraph
+    #   langsmith
+    #   mcp
+    #   openai
+    #   pydantic-settings
+    #   qdrant-client
+pydantic-core==2.46.4
+    # via pydantic
+pydantic-settings==2.14.2
+    # via mcp
+pygments==2.20.0
+    # via pytest
+pyjwt==2.13.0
+    # via
+    #   -r requirements.txt
+    #   mcp
+pyparsing==3.3.2
+    # via httplib2
+pytest==9.1.1
+    # via
+    #   -r requirements.txt
+    #   pytest-asyncio
+    #   pytest-socket
+pytest-asyncio==1.4.0
+    # via -r requirements.txt
+pytest-socket==0.8.0
+    # via -r requirements.txt
+python-dateutil==2.9.0.post0
+    # via croniter
+python-dotenv==1.2.2
+    # via
+    #   -r requirements.txt
+    #   pydantic-settings
+python-frontmatter==1.3.0
+    # via -r requirements.txt
+python-multipart==0.0.32
+    # via mcp
+pywin32==312 ; sys_platform == 'win32'
+    # via
+    #   mcp
+    #   portalocker
+pyyaml==6.0.3
+    # via
+    #   -r requirements.txt
+    #   langchain-core
+    #   python-frontmatter
+qdrant-client==1.18.0
+    # via -r requirements.txt
+redis==8.0.1
+    # via -r requirements.txt
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+regex==2026.6.28
+    # via tiktoken
+requests==2.34.2
+    # via
+    #   google-api-core
+    #   langsmith
+    #   requests-toolbelt
+    #   tiktoken
+requests-toolbelt==1.0.0
+    # via langsmith
+rpds-py==2026.6.3
+    # via
+    #   jsonschema
+    #   referencing
+six==1.17.0
+    # via python-dateutil
+sniffio==1.3.1
+    # via
+    #   anthropic
+    #   langsmith
+    #   openai
+sse-starlette==3.4.5
+    # via mcp
+starlette==1.3.1
+    # via
+    #   mcp
+    #   sse-starlette
+tenacity==9.1.4
+    # via langchain-core
+tiktoken==0.13.0
+    # via
+    #   -r requirements.txt
+    #   langchain-openai
+tqdm==4.68.3
+    # via
+    #   google-generativeai
+    #   openai
+typing-extensions==4.15.0
+    # via
+    #   anthropic
+    #   google-generativeai
+    #   grpcio
+    #   langchain-core
+    #   langchain-mcp-adapters
+    #   langchain-protocol
+    #   langsmith
+    #   mcp
+    #   openai
+    #   pydantic
+    #   pydantic-core
+    #   typing-inspection
+typing-inspection==0.4.2
+    # via
+    #   mcp
+    #   pydantic
+    #   pydantic-settings
+uritemplate==4.2.0
+    # via google-api-python-client
+urllib3==2.7.0
+    # via
+    #   qdrant-client
+    #   requests
+uuid-utils==0.16.2
+    # via
+    #   langchain-core
+    #   langsmith
+uvicorn==0.49.0 ; sys_platform != 'emscripten'
+    # via mcp
+watchdog==6.0.0
+    # via -r requirements.txt
+websockets==15.0.1
+    # via
+    #   langgraph-sdk
+    #   langsmith
+xxhash==3.8.0
+    # via
+    #   langgraph
+    #   langsmith
+yarl==1.24.2
+    # via aiohttp
+zstandard==0.25.0
+    # via langsmith

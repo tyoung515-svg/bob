@@ -1,0 +1,44 @@
+{
+  "ref": "0123456789abcdef0123456789abcdef01234567",
+  "events": [
+    {
+      "id": "E001",
+      "statement": "Holo3-35B scores 80.4 on the GUI grounding benchmark",
+      "ts": "2026-06-29T00:00:01Z",
+      "targets": [
+        {"claim": "C01_holo3_grounding", "polarity": "corroborate"}
+      ]
+    },
+    {
+      "id": "E002",
+      "statement": "Independent rerun puts Holo3-35B at 77.8, not 80.4",
+      "ts": "2026-06-29T00:00:02Z",
+      "targets": [
+        {"claim": "C01_holo3_grounding", "polarity": "refute"}
+      ]
+    },
+    {
+      "id": "E003",
+      "statement": "Agent S3 improves 62.6 to 69.9 on OSWorld with bBoN",
+      "ts": "2026-06-29T00:00:03Z",
+      "targets": [
+        {"claim": "C02_agents3_osworld", "polarity": "corroborate"}
+      ]
+    }
+  ],
+  "claims": {
+    "C01_holo3_grounding": {
+      "id": "C01_holo3_grounding",
+      "statement": "Holo3-35B grounding accuracy is contested between 80.4 and 77.8",
+      "status": "PENDING"
+    },
+    "C02_agents3_osworld": {
+      "id": "C02_agents3_osworld",
+      "statement": "Agent S3 reaches 69.9 on OSWorld using bBoN rollout diversity",
+      "status": "VERIFIED"
+    }
+  },
+  "falsifiers": [
+    {"id": "F001", "statement": "If no independent source reproduces 80.4, the claim is unverified"}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "instances": {
+    "bobclaw-memory": {
+      "repo": "./data/bobclaw-memory",
+      "ledger_dir": "ledger",
+      "collection": "bobclaw__768",
+      "dim": 768,
+      "meta": {
+        "note": "BoB's own agent-memory L1 store — the single BoB-OWNED (writer) collection. Reads are universal; writes are single-owner (single-writer fence). collection = provider _collection_name(768) from collection_prefix 'bobclaw_'.",
+        "acl": {"writer": "bobclaw", "readers": ["bobclaw"], "mode": "rw"},
+        "embed": {"model_id": "granite-embedding-311m", "dim": 768, "normalize": true, "distance": "cosine"}
+      }
+    },
+    "my-notes": {
+      "repo": "/path/to/your/notes-repo",
+      "ledger_dir": "ledger",
+      "collection": "my_notes_chunks",
+      "dim": 768,
+      "meta": {
+        "note": "EXAMPLE bring-your-own corpus instance. Point 'repo' at any local git repo of notes/docs you want BoB to read. Read-only from BoB's perspective (writer is your own indexer). Copy this block once per corpus you federate.",
+        "acl": {"writer": "lks", "readers": ["bobclaw", "lks"], "mode": "ro"}
+      }
+    }
+  }
+}

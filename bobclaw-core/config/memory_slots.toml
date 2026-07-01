@@ -1,0 +1,64 @@
+# BoBClaw Memory Module — Capability-class slot configuration
+#
+# Format: one [slot.<name>] section per slot. Each section must have
+# either `deferred = true` (slot declared but inactive in this phase)
+# OR all of `model`, `backend`, `endpoint`.
+#
+# This file is the single source of truth for model names. No core
+# code under core/memory/ references a model name string — the
+# SlotResolver reads the model names from here and nothing else
+# (enforced by tests/memory/test_no_model_names_in_core.py).
+#
+# Defaults carry forward from LKS prod
+# (evaluations run 2026-05-09, head-to-head Granite-Embedding-311M
+# vs Qwen3-4B-Embedding on retrieval F1 + index throughput). Per
+# environment, override individual fields via slot-file editing or
+# by pointing MEMORY_SLOTS_FILE at a different file.
+
+# Default text embedder. CPU-friendly, +0.033 mean F1 vs Qwen3-4B,
+# indexes 3x faster (per LKS eval 2026-05-09).
+[slot.embed_text]
+model = "granite-embedding-311m"
+backend = "lmstudio"           # protocol selector (OpenAI /v1/embeddings) — NOT literally LM Studio
+endpoint = "http://localhost:8081"   # llama.cpp llama-server (granite-311m, CPU). LM Studio dropped (flaky over remote-in).
+embedding_dimension = 768
+
+# Heavyweight embedder, on-demand only.
+# Different vector dim — needs its own Qdrant collection if used.
+[slot.embed_text_heavy]
+model = "qwen3-embedding-4b"
+backend = "lmstudio"
+endpoint = "http://localhost:1234"
+embedding_dimension = 2560
+
+# Extraction / classification / routing.
+# Swapped from Qwen3.5-2B → Gemma-4-E4B-it on 2026-05-09 after head-to-head eval.
+# 2026-06-10: moved off LM Studio (:1234, flaky over remote-in) to a dedicated
+# llama.cpp llama-server (CPU, scripts/win/start-extractor.ps1) — same pattern
+# as embed_text on :8081.
+[slot.extract_small]
+model = "gemma-4-e4b-it"
+backend = "lmstudio"           # protocol selector (OpenAI /v1/chat) — NOT literally LM Studio
+endpoint = "http://localhost:8082"
+
+# Mid-tier rollup / synthesis.
+[slot.rollup_mid]
+model = "gemma-4-e4b-it"
+backend = "lmstudio"
+endpoint = "http://localhost:1234"
+
+# Slots declared but not active in Phase 1 — resolver raises if used.
+[slot.synth_mid]
+deferred = true
+[slot.synth_deep]
+deferred = true
+[slot.audit_manager]
+deferred = true
+[slot.embed_multimodal]
+deferred = true
+[slot.embed_visual_doc]
+deferred = true
+[slot.rerank_cross]
+deferred = true
+[slot.managed_remote]
+deferred = true

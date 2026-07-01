@@ -1,0 +1,12 @@
+[meta]
+spec_version = "1.0"
+
+[section.user_facts]
+title = "User Facts"
+predicate = { generation_method = "extract_facts_from_event", body_kind = "user_assertion" }
+template = "section.j2"
+
+[section.tool_outputs]
+title = "Tool Outputs"
+predicate = { generation_method = "extract_facts_from_event", body_kind = "tool_output" }
+template = "section.j2"

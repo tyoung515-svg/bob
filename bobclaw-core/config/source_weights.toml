@@ -1,0 +1,7 @@
+[meta]
+spec_version = "1.0"
+
+[weights]
+user_assertion = 1.0
+tool_output = 0.5
+llm_inference = 0.2

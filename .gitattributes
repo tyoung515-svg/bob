@@ -1,0 +1,14 @@
+# Normalize line endings: store text as LF in the repo, check out native.
+* text=auto
+
+# Keep shell scripts LF even on Windows checkouts.
+*.sh text eol=lf
+
+# Treat these as binary (no EOL/normalization, no diff).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.gguf binary
+*.jar binary

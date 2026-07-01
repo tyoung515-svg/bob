@@ -1,0 +1,31 @@
+aiohttp>=3.9,<3.14   # 3.14 breaks aioresponses 0.7.8 mock-patching (test_local_router); lift when aioresponses ships 3.14 support
+aiohttp-cors>=0.7
+aiosqlite>=0.19
+asyncpg>=0.29
+blake3>=0.4
+python-dotenv>=1.0
+langgraph>=0.2
+langchain-core>=0.3
+langchain-openai>=0.2
+langchain-mcp-adapters>=0.3
+mcp>=1.0
+PyJWT>=2.0    # MCP server (Neck Beard MODE) decodes the agent token's faces claim
+pydantic>=2.0
+pyyaml>=6.0
+croniter>=2,<7    # P5 profile scheduler: cron expr parsing + next/prev fire times
+anthropic>=0.39
+google-generativeai>=0.8
+redis>=5.0
+python-frontmatter>=1,<2
+markdown-it-py>=3,<4
+tiktoken>=0.5,<1
+
+qdrant-client>=1.12
+
+# Testing
+pytest>=7.4
+pytest-asyncio>=0.23
+pytest-socket>=0.7
+aioresponses>=0.7
+jinja2>=3.1
+watchdog>=4.0

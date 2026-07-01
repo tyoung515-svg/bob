@@ -1,0 +1,14 @@
+# {{ section.title }}
+
+_Spec version: {{ section.spec_version }} — input hash: {{ section.input_hash }}_
+
+{% for fact in facts %}
+## {{ fact.fact_id }}
+
+{{ fact.body.text or "" }}
+
+- **Confidence:** α={{ fact.confidence.alpha }}, β={{ fact.confidence.beta }}, rank={{ fact.confidence.rank }}
+- **Source event:** `{{ fact.source_event_id }}`
+{% if fact.attestation %}- **Attestation:** producer={{ fact.attestation.producer_id }}, hash={{ fact.attestation.producer_hash }}{% endif %}
+
+{% endfor %}

@@ -1,0 +1,5 @@
+# Unknown slot name not in the known whitelist.
+[slot.foo]
+model = "test"
+backend = "test"
+endpoint = "http://test:1234"

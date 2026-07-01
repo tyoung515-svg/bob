@@ -1,0 +1,121 @@
+# ── Secrets / env ────────────────────────────────────────
+# Ignore the CONTENTS of .secrets/ (not the dir itself) so the tracked
+# *.example template can be re-included by the negation below.
+.secrets/*
+!.secrets/*.example
+.env
+.env.local
+*.env
+!*.env.example
+
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+dist/
+build/
+# Exception: the build pipeline's SOURCE package (Feature 2) is named core/build/ —
+# re-include it; only Python build ARTIFACTS named build/ should be ignored.
+!bobclaw-core/core/build/
+venv/
+.venv/
+env/
+
+# ── Local SQLite caches ──────────────────────────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+bobclaw_cache.db
+gateway.db
+.pytest-tmp/
+.test-tmp/
+test-db/
+
+# ── Memory module runtime data (SQLite db + query log) ───
+.memory/
+
+# ── Docker volumes / artifacts ───────────────────────────
+downloads/
+/tmp/
+bobclaw-builds/
+
+# ── Kotlin / Gradle / KMP ────────────────────────────────
+.gradle/
+bobclaw-app/.gradle/
+bobclaw-app/build/
+bobclaw-app/*/build/
+bobclaw-app/*/bin/
+bobclaw-app/local.properties
+*.iml
+
+# ── iOS ──────────────────────────────────────────────────
+bobclaw-app/iosApp/build/
+bobclaw-app/iosApp/Pods/
+bobclaw-app/iosApp/*.xcworkspace/xcuserdata/
+bobclaw-app/iosApp/*.xcodeproj/xcuserdata/
+
+# ── Android ──────────────────────────────────────────────
+bobclaw-app/androidApp/build/
+bobclaw-app/androidApp/local.properties
+
+# ── IDE / editor ─────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────
+*.log
+logs/
+
+# ── TLS / certs ──────────────────────────────────────────
+*.pem
+*.key
+*.crt
+ssl/
+.aider*
+.fresh-instance-prompt.txt
+Aider gml51 profile.txt
+pytest-cache-files-*/
+audit_report.md
+credentials.json
+run_baseline_tests.ps1
+test_*.log
+docs/.$*
+
+# CC session sidecar (runtime data, C3) + the federation registry (MS-1) — both hold
+# machine-local absolute paths, so the data/ dir is ignored by contents (data/*). The ONLY
+# tracked file there is the federation registry SCHEMA/EXAMPLE (no real secrets/paths beyond
+# illustrative ones). `data/*` (not `data/`) leaves the dir itself includable so the re-include works.
+bobclaw-core/data/*
+!bobclaw-core/data/ledger_instances.example.json
+
+# ── Workspace scratch (transient worker/audit/testing run artifacts) ──
+# Single home for regenerable run output so it never clutters the repo root.
+# Track only the README + the per-folder .gitkeep skeleton; ignore all artifacts.
+/_workspace/*
+!/_workspace/README.md
+!/_workspace/worker/
+!/_workspace/audit/
+!/_workspace/testing/
+!/_workspace/logs/
+!/_workspace/runs/
+_workspace/worker/*
+_workspace/audit/*
+_workspace/testing/*
+_workspace/logs/*
+_workspace/runs/*
+!_workspace/*/.gitkeep
