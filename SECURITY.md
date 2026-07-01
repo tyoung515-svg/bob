@@ -49,8 +49,46 @@ generated code, BoB is designed to fail closed rather than run it on the host.
 
 - Real secrets live in `.secrets/bobclaw.env`, which is **git-ignored**. Only
   `.secrets/bobclaw.env.example` (placeholders) is tracked.
+- The admin password is stored as a **bcrypt hash** (`BOBCLAW_PASSWORD_HASH`);
+  `gen_secrets.py` prints the plaintext once and never writes it to disk. A legacy
+  plaintext `BOBCLAW_PASSWORD` is still honored for backward compatibility.
+- `.secrets/bobclaw.env` still holds your provider API keys and `BOBCLAW_SECRET` in
+  plaintext — it is the highest-value file in the install. Keep it readable only by
+  you (restrict its file permissions on any shared machine).
 - BoB never bundles or transmits your provider credentials anywhere except directly
   to the provider you configured. See `COMPLIANCE.md`.
+
+## Authentication hardening
+
+- **Login lockout:** after `LOGIN_MAX_FAILURES` (default 5) consecutive failed logins,
+  an IP is locked out of `/auth/login` with exponential backoff (`429` + `Retry-After`),
+  persisted across restarts; a successful login resets it.
+- **Refresh tokens** are opaque server-side rows (not JWTs), so revocation is real.
+  Rotation-on-use has a shortened sliding TTL (`REFRESH_TOKEN_DAYS`, default 30) **and**
+  an absolute rotation-chain cap (`REFRESH_TOKEN_ABSOLUTE_DAYS`, default 90) — a stolen
+  token cannot be rotated forever to extend its life. `POST /auth/revoke-all` (admin)
+  kills every session at once.
+- **TOTP** is required to start the gateway once configured (startup config validation),
+  with RFC 6238 §5.2 replay protection.
+- **Security headers** — `Content-Security-Policy`, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` — are set on every response,
+  including the static web UI.
+
+## Before you expose BoB to a network
+
+v0.95 is designed for loopback, single-operator use. If you ever place the gateway
+behind a reverse proxy reachable from a broader network, do these first:
+
+- [ ] Restrict `.secrets/bobclaw.env` file permissions (it holds all your API keys).
+- [ ] Terminate TLS at the proxy and forward **only** to the gateway — never expose
+      core, the pipeline, Postgres, Redis, or Qdrant.
+- [ ] Set a strong, non-default `BOBCLAW_PASSWORD_HASH` and `TOTP_SECRET`.
+- [ ] Tighten the Content-Security-Policy in `bobclaw-gateway/security_headers.py`
+      for your deployment (e.g. nonces/hashes instead of `'unsafe-inline'` styles).
+- [ ] Review rate limiting — the built-in limiter is **per-process / in-memory**, so a
+      multi-worker deployment multiplies the effective limit. A Redis-backed limiter is
+      the tracked replacement for shared abuse prevention.
+- [ ] Consider shortening the access-token lifetime and `REFRESH_TOKEN_ABSOLUTE_DAYS`.
 
 ## Scope of v0.95
 

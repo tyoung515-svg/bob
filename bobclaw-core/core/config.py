@@ -651,14 +651,17 @@ BUILD_REPAIR_UNIT_CAP: int = int(os.getenv("BUILD_REPAIR_UNIT_CAP", "25"))
 # bar but cannot contain Python; the REAL boundary is running the gate in a throwaway
 # container with ONLY the per-turn workspace bind-mounted (no host secrets/repo),
 # --network none, and resource caps. Modes:
-#   "docker"     — force the container; FAIL-LOUD if the daemon/image is unavailable.
-#   "subprocess" — host execution (P3 static gate + env-strip only); trusted models / CI.
-#   "auto"       — docker when the daemon + image are available, else subprocess + a
-#                  loud warning. (Default.)
-# plan_contracts' build-empty gate runs only deterministic STUBS (no LLM code) so it
-# stays on the host regardless. Build the image once:
+#   "docker"     — force the container; FAIL-LOUD if the daemon/image is unavailable. (Default.)
+#   "subprocess" — host execution (P3 static gate + env-strip only); trusted models / CI ONLY.
+#   "auto"       — docker when the daemon + image are available, else subprocess + a loud
+#                  warning. Opt-in — convenient for dev, but it can silently run LLM-written
+#                  code on the host if Docker is down, so it is no longer the default.
+# The default is "docker" (fail-closed): the verify gate runs LLM-written code, and Docker is
+# already a hard prerequisite (it hosts Postgres/Redis/Qdrant). plan_contracts' build-empty
+# gate runs only deterministic STUBS (no LLM code) so it stays on the host regardless. Build
+# the image once:
 #   docker build -t bobclaw-build-sandbox:py313 -f docker/build-sandbox.Dockerfile docker
-BUILD_SANDBOX: str = os.getenv("BUILD_SANDBOX", "auto")
+BUILD_SANDBOX: str = os.getenv("BUILD_SANDBOX", "docker")
 BUILD_SANDBOX_IMAGE: str = os.getenv("BUILD_SANDBOX_IMAGE", "bobclaw-build-sandbox:py313")
 BUILD_SANDBOX_MEMORY: str = os.getenv("BUILD_SANDBOX_MEMORY", "512m")
 BUILD_SANDBOX_PIDS: int = int(os.getenv("BUILD_SANDBOX_PIDS", "256"))

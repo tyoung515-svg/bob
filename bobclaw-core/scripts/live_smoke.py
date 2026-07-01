@@ -47,11 +47,11 @@ from core.nodes.critic import (  # noqa: E402
 
 # Public pricing (USD per 1M tokens). Approximate; verify against current
 # vendor pricing pages before relying on the cost column.
-#   - claude-sonnet-4-6 : anthropic.com/pricing  (snapshot ~2026-01)
+#   - claude-sonnet-5   : platform.claude.com/docs/en/about-claude/pricing
 #   - kimi-k2.6 PAYG    : api.moonshot.ai (rates from core/backends/_cost.py)
 #   - deepseek-v4-flash : api-docs.deepseek.com/quick_start/pricing
 PRICING: dict[str, dict[str, float]] = {
-    "claude_api":         {"input": 3.00, "output": 15.00, "note": "claude-sonnet-4-6"},
+    "claude_api":         {"input": 3.00, "output": 15.00, "note": "claude-sonnet-5"},
     "kimi_code":          {"input": 0.95, "output": 4.00,  "note": "kimi-k2.7-code membership via moonshot.ai"},
     "deepseek_v4_flash":  {"input": 0.07, "output": 0.28,  "note": "deepseek-v4-flash"},
 }

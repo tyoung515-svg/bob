@@ -17,10 +17,15 @@ from auth import (
     verify_password_plain,
     verify_totp_with_replay_protection,
 )
+from config import config
 from core.permissions import Scope
 from db import (
+    check_login_locked,
+    clear_login_attempts,
     create_refresh_token,
     invalidate_refresh_token,
+    record_failed_login,
+    revoke_all_refresh_tokens,
     validate_and_rotate_refresh_token,
 )
 
@@ -33,9 +38,32 @@ router = web.RouteTableDef()
 _MAX_AGENT_FACES = 32
 
 
+async def _record_login_failure(ip: str) -> None:
+    await record_failed_login(
+        ip,
+        threshold=config.LOGIN_MAX_FAILURES,
+        base_seconds=config.LOGIN_LOCKOUT_BASE_SECONDS,
+        max_seconds=config.LOGIN_LOCKOUT_MAX_SECONDS,
+    )
+
+
 @router.post("/auth/login")
 async def login(request: web.Request) -> web.Response:
-    """Authenticate with password and optional TOTP; return access + refresh tokens."""
+    """Authenticate with password and optional TOTP; return access + refresh tokens.
+
+    Per-IP failed-login lockout (B1): after LOGIN_MAX_FAILURES consecutive failures an
+    IP is locked out with exponential backoff (429 + Retry-After); a success clears it.
+    """
+    ip = request.remote or "unknown"
+
+    locked_for = await check_login_locked(ip)
+    if locked_for is not None:
+        return web.json_response(
+            {"error": "Too many failed login attempts; try again later"},
+            status=429,
+            headers={"Retry-After": str(locked_for)},
+        )
+
     try:
         body = await request.json()
     except Exception:
@@ -45,11 +73,14 @@ async def login(request: web.Request) -> web.Response:
     totp_code = body.get("totp_code") or ""
 
     if not verify_password_plain(password):
+        await _record_login_failure(ip)
         return web.json_response({"error": "Invalid credentials"}, status=401)
 
     if not await verify_totp_with_replay_protection(totp_code):
+        await _record_login_failure(ip)
         return web.json_response({"error": "Invalid TOTP code"}, status=401)
 
+    await clear_login_attempts(ip)
     access_token = create_access_token()
     refresh_token = await create_refresh_token()
 
@@ -102,6 +133,35 @@ async def logout(request: web.Request) -> web.Response:
         await invalidate_refresh_token(token)
 
     return web.json_response({"status": "logged out"})
+
+
+@router.post("/auth/revoke-all")
+async def revoke_all(request: web.Request) -> web.Response:
+    """Revoke ALL of the caller's refresh tokens (kill every session).
+
+    Self-authenticating (the /auth/* prefix is middleware-exempt): requires a valid
+    *admin* access token — an agent token may not revoke. Refresh tokens are opaque
+    server-side rows, so this is immediate and complete; any outstanding access token
+    still expires on its own within ACCESS_TOKEN_MINUTES.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return web.json_response(
+            {"error": "Missing or invalid Authorization header"}, status=401
+        )
+    payload = decode_access_token(auth_header[7:])
+    if payload is None:
+        return web.json_response({"error": "Invalid or expired token"}, status=401)
+    if payload.get("token_type") is not None:
+        return web.json_response(
+            {"error": "Only an admin token may revoke sessions"}, status=403
+        )
+
+    user_id = payload.get("sub", "admin")
+    revoked = await revoke_all_refresh_tokens(user_id)
+    request["user"] = payload  # so the audit middleware attributes the action
+    logger.info("revoke-all: sub=%s revoked=%d refresh token(s)", user_id, revoked)
+    return web.json_response({"status": "revoked", "revoked": revoked})
 
 
 @router.post("/auth/agent-token")

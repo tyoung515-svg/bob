@@ -87,9 +87,13 @@ if ($envText -match '(?m)^POSTGRES_PASSWORD=bobclaw\s*$') {
     Ok "POSTGRES_PASSWORD + POSTGRES_URL set"
 } else { Ok "POSTGRES_PASSWORD already set" }
 
-# BOBCLAW_SECRET / BOBCLAW_PASSWORD / TOTP_SECRET.
-& $py (Join-Path $repo 'scripts\gen_secrets.py') | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
-Ok "auth secrets generated (BOBCLAW_SECRET / BOBCLAW_PASSWORD / TOTP_SECRET)"
+# BOBCLAW_SECRET / BOBCLAW_PASSWORD_HASH (plaintext shown once) / TOTP_SECRET.
+$adminPw = ''
+foreach ($line in (& $py (Join-Path $repo 'scripts\gen_secrets.py') 2>&1)) {
+    if ("$line" -match '^BOBCLAW_LOGIN_PASSWORD=(.+)$') { $adminPw = $Matches[1] }  # captured, not echoed
+    else { Write-Host "  $line" -ForegroundColor DarkGray }
+}
+Ok "auth secrets generated (admin password stored as a bcrypt hash)"
 
 # At least one backend credential.
 $envText = Get-Content -LiteralPath $envFile -Raw
@@ -152,12 +156,16 @@ if ($hasAnthropicKey) {
 } else { Warn "no Anthropic key set — skipped model smoke. (Local backends validate at chat time.)" }
 
 # ── 7. Done ───────────────────────────────────────────────────────────────────
-$pw = ([regex]::Match($envText, '(?m)^BOBCLAW_PASSWORD=(\S+)')).Groups[1].Value
 Step 7 "Setup complete"
 Write-Host ""
 Write-Host "  Open the web UI:  http://127.0.0.1:7826/ui" -ForegroundColor Green
-Write-Host "  Log in as:        admin  /  $pw" -ForegroundColor Green
-Write-Host "  (password is in .secrets/bobclaw.env as BOBCLAW_PASSWORD)" -ForegroundColor DarkGray
+if ($adminPw) {
+    Write-Host "  Log in as:        admin  /  $adminPw" -ForegroundColor Green
+    Write-Host "  (store it now — only the bcrypt hash is saved in .secrets/bobclaw.env)" -ForegroundColor DarkGray
+} else {
+    Write-Host "  Log in as:        admin  /  (the password gen_secrets printed earlier)" -ForegroundColor Green
+    Write-Host "  (re-run: only the bcrypt hash is stored; use your existing admin password)" -ForegroundColor DarkGray
+}
 Write-Host ""
 Write-Host "  Stop services:    ./scripts/win/stop-all.ps1" -ForegroundColor DarkGray
 Write-Host "  Re-run this setup anytime — it is idempotent." -ForegroundColor DarkGray

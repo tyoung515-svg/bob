@@ -60,6 +60,33 @@ async def _on_startup(app: web.Application) -> None:
     os.environ.setdefault("BOBCLAW_HEALTH_PROBE_REDIS", "1")
     install_live_probe()
 
+    # Build/verify sandbox posture — surfaced at STARTUP (not just per verify-run) so
+    # a deployment that would run LLM-written code un-isolated on the host is loud, not
+    # silent. Never raises: chat is unaffected by the sandbox, so we only warn.
+    from core.build.sandbox import docker_ready
+
+    _sbx = (config.BUILD_SANDBOX or "docker").strip().lower()
+    if _sbx == "subprocess":
+        logger.warning(
+            "BUILD SANDBOX: BUILD_SANDBOX=subprocess — the build verify gate will run "
+            "LLM-written code UN-ISOLATED on the host. Use ONLY with trusted models."
+        )
+    elif _sbx == "auto" and not docker_ready():
+        logger.warning(
+            "BUILD SANDBOX: BUILD_SANDBOX=auto but Docker/image %r is unavailable — a "
+            "build turn would run LLM-written code UN-ISOLATED on the host. Build the "
+            "image and set BUILD_SANDBOX=docker for real isolation.",
+            config.BUILD_SANDBOX_IMAGE,
+        )
+    elif _sbx == "docker" and not docker_ready():
+        logger.warning(
+            "BUILD SANDBOX: BUILD_SANDBOX=docker but Docker/image %r is not ready — "
+            "build turns will FAIL CLOSED until Docker is up (chat is unaffected).",
+            config.BUILD_SANDBOX_IMAGE,
+        )
+    else:
+        logger.info("BUILD SANDBOX: mode=%s (isolated).", _sbx)
+
     if config.MEMORY_ENABLED:
         from core.memory.bootstrap import (
             MemoryBootstrapConfig,

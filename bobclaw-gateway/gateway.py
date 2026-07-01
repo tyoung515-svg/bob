@@ -19,6 +19,7 @@ from app_state import CONVERSATION_STATE_KEY, POSTGRES_POOL_KEY, SESSION_STATE_K
 from auth import auth_middleware
 from audit_log import make_audit_log_middleware
 from rate_limit import make_rate_limit_middleware
+from security_headers import make_security_headers_middleware
 
 from config import config
 from db import close_postgres_pool, get_postgres_pool, init_db
@@ -80,6 +81,7 @@ def build_app(state_overrides: dict[web.AppKey, Any] | None = None) -> web.Appli
     """Create and configure the aiohttp Application."""
     app = web.Application(
         middlewares=[
+            make_security_headers_middleware(),
             make_audit_log_middleware(enabled=config.AUDIT_LOG_ENABLED),
             auth_middleware,
             make_rate_limit_middleware(

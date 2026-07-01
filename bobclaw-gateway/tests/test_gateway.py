@@ -74,10 +74,22 @@ class TestHealthEndpoint(_GatewayTestBase):
         self.assertIn("status", data)
         self.assertEqual(data["status"], "ok")
 
-    def test_health_services_keys(self):
+    def test_health_does_not_leak_internal_urls(self):
+        # Security (A1): the unauthenticated /health must NOT expose internal
+        # service URLs (recon surface behind a reverse proxy). The service map
+        # lives behind auth at /system/config.
         resp = self._run(self._client.get("/health"))
         data = self._run(resp.json())
-        self.assertIn("services", data)
+        self.assertNotIn("services", data)
+        self.assertEqual(set(data.keys()), {"status", "service"})
+
+    def test_security_headers_present(self):
+        # Security (A2): every response carries the security headers.
+        resp = self._run(self._client.get("/health"))
+        self.assertIn("default-src 'self'", resp.headers.get("Content-Security-Policy", ""))
+        self.assertEqual(resp.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(resp.headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(resp.headers.get("Referrer-Policy"), "no-referrer")
 
 
 # ── POST /auth/login ──────────────────────────────────────────────────────────

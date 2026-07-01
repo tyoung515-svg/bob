@@ -49,10 +49,15 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def verify_password_plain(candidate: str) -> bool:
+    """Verify a candidate admin password.
+
+    Prefers the bcrypt hash (``config.BOBCLAW_PASSWORD_HASH``) so the plaintext is
+    never stored at rest. Falls back to a constant-time comparison against the
+    plaintext ``config.BOBCLAW_PASSWORD`` for backward compatibility (bcrypt already
+    runs in constant time w.r.t. the candidate).
     """
-    Compare a candidate password against config.BOBCLAW_PASSWORD using a
-    constant-time comparison to mitigate timing attacks.
-    """
+    if config.BOBCLAW_PASSWORD_HASH:
+        return verify_password(candidate, config.BOBCLAW_PASSWORD_HASH)
     return hmac.compare_digest(candidate, config.BOBCLAW_PASSWORD)
 
 

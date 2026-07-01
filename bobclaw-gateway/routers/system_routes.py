@@ -18,18 +18,13 @@ router = web.RouteTableDef()
 
 @router.get("/health")
 async def health(request: web.Request) -> web.Response:
-    """Basic health check — accessible without authentication."""
-    return web.json_response(
-        {
-            "status": "ok",
-            "service": "bobclaw-gateway",
-            "services": {
-                "core": config.CORE_URL,
-                "claude_pipeline": config.CLAUDE_PIPELINE_URL,
-                "canopy": config.CANOPY_URL,
-            },
-        }
-    )
+    """Basic health check — accessible without authentication.
+
+    Deliberately minimal: no internal service URLs or config are exposed on this
+    unauthenticated endpoint (recon surface if the gateway is ever placed behind a
+    reverse proxy). The service map lives behind auth at /system/config.
+    """
+    return web.json_response({"status": "ok", "service": "bobclaw-gateway"})
 
 
 @router.get("/system/ports")
