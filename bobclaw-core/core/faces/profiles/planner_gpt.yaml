@@ -14,7 +14,7 @@ escalation_backend: claude_api
 # ~/.codex (see README "Codex" + COMPLIANCE.md); it uses Codex's built-in OpenAI
 # provider + your ChatGPT login. Read-only planning posture (writes nothing).
 #
-# NOTE (v0.95): codex_code.health_check gates on the LiteLLM proxy whenever
+# NOTE (v0.96): codex_code.health_check gates on the LiteLLM proxy whenever
 # LITELLM_BASE_URL is set, so under a TEAM / JOAT health-walk this face is wrongly
 # marked unhealthy if :4000 is down — even though GPT-native needs no proxy. The
 # normal single-face path never probes, so direct use of this face is unaffected.

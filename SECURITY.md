@@ -1,8 +1,9 @@
 # Security
 
-BoB is **v0.95** and is designed to run as a **single-operator, loopback-only**
-application on a machine you control. Read this before exposing any part of it to
-a network.
+BoB is **v0.96** and runs as a **single-operator** application on a machine you
+control, **loopback by default**. The gateway can be exposed for remote access
+**behind a TLS-terminating reverse proxy** once you complete the checklist below;
+`core` and the infrastructure stay loopback-only. Read this first.
 
 ## The one rule: don't expose `core`
 
@@ -76,8 +77,8 @@ generated code, BoB is designed to fail closed rather than run it on the host.
 
 ## Before you expose BoB to a network
 
-v0.95 is designed for loopback, single-operator use. If you ever place the gateway
-behind a reverse proxy reachable from a broader network, do these first:
+v0.96 is single-operator and loopback by default. Before you place the gateway
+behind a reverse proxy reachable from a broader network, complete these:
 
 - [ ] Restrict `.secrets/bobclaw.env` file permissions (it holds all your API keys).
 - [ ] Terminate TLS at the proxy and forward **only** to the gateway — never expose
@@ -90,12 +91,14 @@ behind a reverse proxy reachable from a broader network, do these first:
       the tracked replacement for shared abuse prevention.
 - [ ] Consider shortening the access-token lifetime and `REFRESH_TOKEN_ABSOLUTE_DAYS`.
 
-## Scope of v0.95
+## Scope of v0.96
 
-The loopback single-operator model above is the supported deployment for v0.95.
-Full network isolation (gateway-only container topology, mutual TLS, multi-tenant
-auth hardening) is tracked for later releases. Do not treat v0.95 as
-internet-exposable.
+BoB is **single-operator** and loopback by default. Exposing the **gateway** for
+remote access is supported **behind a TLS-terminating reverse proxy** with the
+checklist above completed — suitable for trusted personal/remote access, **not** as
+a hardened multi-tenant public service. `core`, the pipeline, and the datastores
+stay loopback-only. Multi-tenant auth, a shared (Redis-backed) rate limiter,
+gateway-only container topology, and mutual TLS are tracked for later releases.
 
 ## Reporting a vulnerability
 

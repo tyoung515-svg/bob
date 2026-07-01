@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking at BoB. This is a **v0.95** release — headless-first, GUI-preview —
+Thanks for looking at BoB. This is a **v0.96** release — headless-first, GUI-preview —
 so expect rough edges and a moving target.
 
 ## Project layout

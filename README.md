@@ -14,9 +14,9 @@ routing work to the right model, fanning it out across many, deliberating in a
 council, and — the part most tools skip — **verifying** the result before it reaches
 you.
 
-> **v0.95 — headless-first.** The CLI / MCP / agent front door is usable today. The
+> **v0.96 — headless-first.** The CLI / MCP / agent front door is usable today. The
 > web and desktop GUIs ship as a **preview**. Hardening and GUI polish are tracked to
-> v1.0. This is an honest early release: read `SECURITY.md` before exposing anything.
+> v1.0. This is an honest early release: read `SECURITY.md` before exposing the gateway.
 
 ## Why BoB
 
@@ -129,8 +129,10 @@ are configurable — set your provider's current model in `.secrets/bobclaw.env`
 
 ## Status & scope
 
-v0.95 is headless-usable, GUI-preview, and single-operator / loopback by design.
-It is **not** meant to be exposed to the internet as-is. Containerized topology,
+v0.96 is headless-usable, GUI-preview, and single-operator. It is **loopback by
+default**; the gateway can be exposed for trusted remote access **behind a
+TLS-terminating reverse proxy** (see `SECURITY.md`) — `core` and the datastores stay
+loopback. It is not a hardened multi-tenant public service. Containerized topology,
 one-click packaging, and cross-platform support are on the roadmap to v1.0+.
 
 ## License

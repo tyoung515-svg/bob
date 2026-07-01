@@ -2,7 +2,7 @@
 
 This is the agent-runnable twin of `install-bob.ps1`. If you are an AI agent (or a
 human who prefers to run the steps by hand), follow these in order. They are
-**Windows-only** for v0.95 and idempotent — safe to re-run.
+**Windows-only** for v0.96 and idempotent — safe to re-run.
 
 The fastest path is simply to run the installer:
 

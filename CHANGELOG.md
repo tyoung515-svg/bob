@@ -3,12 +3,13 @@
 All notable changes to BoB are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
-## [0.95.0] — unreleased (initial open-source candidate)
+## [0.96.0] — first public release
 
-First public release candidate. **Headless-first** (CLI / MCP / agent is the usable
-front door); the web and Kotlin Multiplatform desktop GUIs ship as a **preview**.
-Designed for **loopback, single-operator** use — see `SECURITY.md` before exposing
-anything to a network.
+**Headless-first** (CLI / MCP / agent is the usable front door); the web and Kotlin
+Multiplatform desktop GUIs ship as a **preview**. Single-operator, **loopback by
+default** — the gateway is exposable for trusted remote access behind a
+TLS-terminating reverse proxy (see `SECURITY.md`). Supersedes the internal 0.95
+review candidate (never published).
 
 ### Added
 - Multi-agent orchestration engine (`bobclaw-core`, LangGraph): face routing,
@@ -83,6 +84,7 @@ From a guided first install on a clean Windows box:
   validate it against your provider.)
 
 ### Notes
-- v0.95 is a single-operator, loopback release and is **not** intended to be exposed to
-  the internet as-is. Containerized topology, one-click packaging, and cross-platform
-  support are tracked toward v1.0+.
+- v0.96 is single-operator and loopback by default; the gateway is exposable for trusted
+  remote access behind a TLS-terminating reverse proxy (see `SECURITY.md`), but it is not
+  a hardened multi-tenant public service. Containerized topology, one-click packaging, and
+  cross-platform support are tracked toward v1.0+.

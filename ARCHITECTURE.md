@@ -12,7 +12,7 @@ council.
 | `bobclaw-core` | Python / LangGraph | 7825 | The engine: routing, faces, fan-out dispatch, council, memory module, the build pipeline, and every model backend. **Has no auth of its own** — it trusts the gateway's HMAC scope vouch. Loopback-only. |
 | `bobclaw-gateway` | Python / aiohttp | 7826 | JWT + TOTP auth, WebSocket chat, REST (conversations / messages / faces / models / teams / profiles / approvals / memory), and serves the web UI at `/ui`. The only client-facing service. |
 | `bobclaw-claude-pipeline` | Python | 7823 | Claude build-session wrapper (holds an Anthropic key). |
-| `bobclaw-app` | Kotlin Multiplatform | — | Native client (desktop + Android). **Preview** in v0.95. |
+| `bobclaw-app` | Kotlin Multiplatform | — | Native client (desktop + Android). **Preview** in v0.96. |
 
 Infrastructure (Docker, all bound to `127.0.0.1`): Postgres `5432`, Redis `6379`,
 Qdrant `6353/6354`, and an optional Playwright `3100`. Optional local model servers
