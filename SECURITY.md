@@ -83,6 +83,9 @@ behind a reverse proxy reachable from a broader network, complete these:
 - [ ] Restrict `.secrets/bobclaw.env` file permissions (it holds all your API keys).
 - [ ] Terminate TLS at the proxy and forward **only** to the gateway — never expose
       core, the pipeline, Postgres, Redis, or Qdrant.
+- [ ] Note the **preview web UI** keeps its session tokens in browser `localStorage`,
+      so an XSS in the UI would hand over the session. Prefer an **SSH tunnel** or the
+      **native client** for remote access; keep the browser UI on trusted networks.
 - [ ] Set a strong, non-default `BOBCLAW_PASSWORD_HASH` and `TOTP_SECRET`.
 - [ ] Tighten the Content-Security-Policy in `bobclaw-gateway/security_headers.py`
       for your deployment (e.g. nonces/hashes instead of `'unsafe-inline'` styles).

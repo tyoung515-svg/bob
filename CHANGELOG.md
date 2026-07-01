@@ -25,7 +25,7 @@ review candidate (never published).
   `codex`, `agy`, `kimi`), and local model servers (Ollama, LM Studio, llama.cpp).
 - Guided Windows installer (`install-bob.ps1`) and an agent-runnable `AGENTS-SETUP.md`.
 - Docker Compose infrastructure (Postgres / Redis / Qdrant), pinned dependency
-  lockfiles for all three Python services, and `docker/build-sandbox.Dockerfile`.
+  lockfiles for all three Python services, and `bobclaw-core/docker/build-sandbox.Dockerfile`.
 - Apache-2.0 `LICENSE` + `NOTICE`; `README`, `ARCHITECTURE`, `SECURITY`, `COMPLIANCE`,
   and `CONTRIBUTING` documentation.
 

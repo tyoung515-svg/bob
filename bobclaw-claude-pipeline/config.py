@@ -5,6 +5,7 @@ BoBClaw Claude Build Pipeline — Configuration
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -89,4 +90,6 @@ DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
 # Build workspace root (sandboxed)
 # ---------------------------------------------------------------------------
 
-BUILD_WORKSPACE_ROOT: Path = Path(os.environ.get("BUILD_WORKSPACE_ROOT", "/tmp/bobclaw-builds"))
+BUILD_WORKSPACE_ROOT: Path = Path(
+    os.environ.get("BUILD_WORKSPACE_ROOT") or str(Path(tempfile.gettempdir()) / "bobclaw-builds")
+)

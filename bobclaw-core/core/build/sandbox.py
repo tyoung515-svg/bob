@@ -68,7 +68,8 @@ def resolve_mode() -> str:
         raise SandboxUnavailable(
             f"BUILD_SANDBOX=docker but the Docker daemon or image "
             f"{_config.BUILD_SANDBOX_IMAGE!r} is unavailable; build it with "
-            f"`docker build -t {_config.BUILD_SANDBOX_IMAGE} -f docker/build-sandbox.Dockerfile docker`"
+            f"`docker build -t {_config.BUILD_SANDBOX_IMAGE} "
+            f"-f bobclaw-core/docker/build-sandbox.Dockerfile bobclaw-core/docker` (from the repo root)"
         )
     # auto
     if docker_ready():

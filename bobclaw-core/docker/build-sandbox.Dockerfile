@@ -7,8 +7,8 @@
 # A gate-slipping impl is therefore confined to a throwaway container with no host
 # secrets and no network — it cannot read .secrets/bobclaw.env or exfiltrate.
 #
-# Build once (from bobclaw-core/):
-#   docker build -t bobclaw-build-sandbox:py313 -f docker/build-sandbox.Dockerfile docker
+# Build once (from the repo root):
+#   docker build -t bobclaw-build-sandbox:py313 -f bobclaw-core/docker/build-sandbox.Dockerfile bobclaw-core/docker
 #
 # Python 3.13 matches the host venv. Only pytest is needed beyond stdlib — the built
 # "minikit" app is stdlib-only by contract, so no other deps are installed.

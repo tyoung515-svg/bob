@@ -399,6 +399,11 @@ class BoBClawConfig:
                 errors.append(
                     "MEMORY_DEFAULT_STORE_ID is required when MEMORY_ENABLED=true"
                 )
+        if not cls.BOBCLAW_SECRET:
+            errors.append(
+                "BOBCLAW_SECRET is required — it keys the gateway->core scope vouch "
+                "(empty => scoped requests fail closed). Run scripts/gen_secrets.py."
+            )
         if errors:
             raise ValueError(f"Config errors: {'; '.join(errors)}")
 
@@ -659,8 +664,8 @@ BUILD_REPAIR_UNIT_CAP: int = int(os.getenv("BUILD_REPAIR_UNIT_CAP", "25"))
 # The default is "docker" (fail-closed): the verify gate runs LLM-written code, and Docker is
 # already a hard prerequisite (it hosts Postgres/Redis/Qdrant). plan_contracts' build-empty
 # gate runs only deterministic STUBS (no LLM code) so it stays on the host regardless. Build
-# the image once:
-#   docker build -t bobclaw-build-sandbox:py313 -f docker/build-sandbox.Dockerfile docker
+# the image once (from the repo root):
+#   docker build -t bobclaw-build-sandbox:py313 -f bobclaw-core/docker/build-sandbox.Dockerfile bobclaw-core/docker
 BUILD_SANDBOX: str = os.getenv("BUILD_SANDBOX", "docker")
 BUILD_SANDBOX_IMAGE: str = os.getenv("BUILD_SANDBOX_IMAGE", "bobclaw-build-sandbox:py313")
 BUILD_SANDBOX_MEMORY: str = os.getenv("BUILD_SANDBOX_MEMORY", "512m")

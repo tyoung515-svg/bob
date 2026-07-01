@@ -60,7 +60,8 @@ cd bob
 
 The installer checks prerequisites, creates the Python environment from the pinned
 lockfiles, brings up the Docker infrastructure, bootstraps your secrets
-(interactively), waits for health, smoke-tests your default model, and prints the URL
+(interactively), waits for health, smoke-tests your Anthropic model (if a key is set),
+and prints the URL
 and login. It is idempotent — safe to re-run.
 
 Prefer to run the steps yourself, or drive setup from an agent? See
@@ -131,9 +132,11 @@ are configurable — set your provider's current model in `.secrets/bobclaw.env`
 
 v0.96 is headless-usable, GUI-preview, and single-operator. It is **loopback by
 default**; the gateway can be exposed for trusted remote access **behind a
-TLS-terminating reverse proxy** (see `SECURITY.md`) — `core` and the datastores stay
-loopback. It is not a hardened multi-tenant public service. Containerized topology,
-one-click packaging, and cross-platform support are on the roadmap to v1.0+.
+TLS-terminating reverse proxy** (see `SECURITY.md`) — an SSH tunnel or the native
+client is preferred over the preview web UI, which keeps session tokens in the
+browser. `core` and the datastores stay loopback, and it is not a hardened
+multi-tenant public service. Containerized topology, one-click packaging, and
+cross-platform support are on the roadmap to v1.0+.
 
 ## License
 
