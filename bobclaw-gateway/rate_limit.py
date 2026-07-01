@@ -15,6 +15,8 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
+from client_ip import client_ip
+
 # Paths the rate limiter does not see. /health is skipped to avoid throttling
 # k8s liveness probes; /ws/chat is a long-lived WS handshake (rate-limit per
 # connection makes no sense — message-level limits would be a different layer);
@@ -59,8 +61,7 @@ def _request_key(request: web.Request) -> str:
     user = request.get("user")
     if user and "sub" in user:
         return f"user:{user['sub']}"
-    remote = request.remote or "unknown"
-    return f"ip:{remote}"
+    return f"ip:{client_ip(request)}"
 
 
 def _is_bypassed(path: str) -> bool:

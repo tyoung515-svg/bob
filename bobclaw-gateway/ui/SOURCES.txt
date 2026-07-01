@@ -20,3 +20,6 @@ htm.js
 - Version: 3.1.1
 - Source URL: https://unpkg.com/htm@3.1.1/dist/htm.module.js
 - License: MIT
+
+The full MIT license text — copyright notices + the permission notice the license
+requires be included with any copy — is in `vendor/LICENSE-vendored-mit.txt`.

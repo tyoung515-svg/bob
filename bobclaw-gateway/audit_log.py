@@ -15,6 +15,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
+from client_ip import client_ip
+
 from aiohttp import web
 
 logger = logging.getLogger("bobclaw.gateway.audit")
@@ -77,7 +79,7 @@ def make_audit_log_middleware(enabled: bool = True) -> Callable[
                 "path": request.path,
                 "status": status,
                 "duration_ms": duration_ms,
-                "remote": request.remote,
+                "remote": client_ip(request),
             }
             if error_class is not None:
                 record["error_class"] = error_class

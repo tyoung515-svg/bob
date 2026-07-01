@@ -86,6 +86,11 @@ behind a reverse proxy reachable from a broader network, complete these:
 - [ ] Note the **preview web UI** keeps its session tokens in browser `localStorage`,
       so an XSS in the UI would hand over the session. Prefer an **SSH tunnel** or the
       **native client** for remote access; keep the browser UI on trusted networks.
+- [ ] The per-IP login lockout and rate limiter key on the connection IP. Behind a
+      reverse proxy every request appears to come from the proxy, so set
+      `TRUST_X_FORWARDED_FOR=true` **and** have the proxy (exactly one, in front)
+      set/append a trustworthy `X-Forwarded-For` — otherwise a few failed logins lock
+      out every client at once.
 - [ ] Set a strong, non-default `BOBCLAW_PASSWORD_HASH` and `TOTP_SECRET`.
 - [ ] Tighten the Content-Security-Policy in `bobclaw-gateway/security_headers.py`
       for your deployment (e.g. nonces/hashes instead of `'unsafe-inline'` styles).

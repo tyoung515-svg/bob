@@ -79,6 +79,14 @@ class BoBClawGatewayConfig:
     LOGIN_LOCKOUT_BASE_SECONDS: int = int(os.getenv("LOGIN_LOCKOUT_BASE_SECONDS", "30"))
     LOGIN_LOCKOUT_MAX_SECONDS: int = int(os.getenv("LOGIN_LOCKOUT_MAX_SECONDS", "900"))
 
+    # -- Reverse-proxy client IP (for the per-IP lockout + rate limiter) --
+    # OFF by default: request.remote (the socket peer) IS the client for the loopback /
+    # direct-connection deployment. Enable ONLY behind a single trusted reverse proxy
+    # that sets/appends X-Forwarded-For — the client IP is then the rightmost XFF hop.
+    # See SECURITY.md "Before you expose". Left off behind a proxy, a few failed logins
+    # would lock out every client (they all share the proxy's IP).
+    TRUST_X_FORWARDED_FOR: bool = os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() in ("1", "true", "yes")
+
     # -- CORS --
     ALLOWED_ORIGINS: list[str] = [
         origin.strip()

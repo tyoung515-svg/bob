@@ -18,6 +18,7 @@ from auth import (
     verify_totp_with_replay_protection,
 )
 from config import config
+from client_ip import client_ip
 from core.permissions import Scope
 from db import (
     check_login_locked,
@@ -54,7 +55,7 @@ async def login(request: web.Request) -> web.Response:
     Per-IP failed-login lockout (B1): after LOGIN_MAX_FAILURES consecutive failures an
     IP is locked out with exponential backoff (429 + Retry-After); a success clears it.
     """
-    ip = request.remote or "unknown"
+    ip = client_ip(request)
 
     locked_for = await check_login_locked(ip)
     if locked_for is not None:
