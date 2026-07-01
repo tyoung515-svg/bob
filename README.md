@@ -54,7 +54,7 @@ BoB's value is the four things that come *after* "just call an LLM":
   Quick install: `winget install Microsoft.PowerShell`.
 
 ```powershell
-git clone <your-fork-url> bob
+git clone https://github.com/tyoung515-svg/bob.git
 cd bob
 ./install-bob.ps1
 ```
