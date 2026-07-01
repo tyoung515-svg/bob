@@ -1,16 +1,12 @@
 # AGENTS-SETUP — install BoB (agent-runnable)
 
-This is the agent-runnable twin of `install-bob.ps1`. If you are an AI agent (or a
-human who prefers to run the steps by hand), follow these in order. They are
-**Windows-only** for v0.96 and idempotent — safe to re-run.
+This is the **supported setup path for v0.96** — the step-by-step flow, safe for a human
+to run by hand or for an AI agent to drive. The steps are **Windows-only** for v0.96 and
+idempotent — safe to re-run. Follow them in order.
 
-The fastest path is simply to run the installer:
-
-```powershell
-./install-bob.ps1
-```
-
-If you run the steps manually instead, do them in this order.
+> A one-command installer (`install-bob.ps1`) that runs this whole flow end-to-end is
+> landing in **v1.0**. It ships in the tree now as a preview; for v0.96 these steps are
+> the supported path.
 
 ## 0. Prerequisites (fail-closed)
 

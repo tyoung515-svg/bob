@@ -44,7 +44,7 @@ BoB's value is the four things that come *after* "just call an LLM":
 
 ## Quickstart (Windows, headless-first)
 
-**Prerequisites** (all three are required; the installer fails closed without them):
+**Prerequisites** (all three are required; setup fails closed without them):
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) — **running**
   (`docker info` must succeed). Hosts Postgres/Redis/Qdrant **and** the build/verify sandbox.
@@ -56,20 +56,19 @@ BoB's value is the four things that come *after* "just call an LLM":
 ```powershell
 git clone https://github.com/tyoung515-svg/bob.git
 cd bob
-./install-bob.ps1
 ```
 
-The installer checks prerequisites, creates the Python environment from the pinned
-lockfiles, brings up the Docker infrastructure, bootstraps your secrets
-(interactively), waits for health, smoke-tests your Anthropic model (if a key is set),
-and prints the URL
-and login. It is idempotent — safe to re-run.
+For v0.96, set BoB up with the step-by-step guide in
+**[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the Python environment from the pinned
+lockfiles, the Docker infrastructure, secrets, a model backend, and first login, with
+the known first-run gotchas on a fresh Windows box called out. It is also
+**agent-runnable**, if you'd rather drive setup from an AI agent.
 
-Prefer to run the steps yourself, or drive setup from an agent? See
-**[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the same flow, step by step (it also lists the
-known first-run gotchas on a fresh Windows box).
+> **One-command installer:** a single script that runs the whole flow end-to-end
+> (`install-bob.ps1`) is landing in **v1.0**. It ships in the tree now as a preview; for
+> v0.96 the step-by-step guide above is the supported path.
 
-When it finishes:
+Once BoB is up:
 
 - **Web UI (preview):** http://127.0.0.1:7826/ui — log in as `admin` with the
   generated `BOBCLAW_PASSWORD` printed once during setup (only its bcrypt hash is stored
@@ -136,8 +135,8 @@ default**; the gateway can be exposed for trusted remote access **behind a
 TLS-terminating reverse proxy** (see `SECURITY.md`) — an SSH tunnel or the native
 client is preferred over the preview web UI, which keeps session tokens in the
 browser. `core` and the datastores stay loopback, and it is not a hardened
-multi-tenant public service. Containerized topology, one-click packaging, and
-cross-platform support are on the roadmap to v1.0+.
+multi-tenant public service. The one-command installer, containerized topology,
+one-click packaging, and cross-platform support are on the roadmap to v1.0+.
 
 ## License
 
