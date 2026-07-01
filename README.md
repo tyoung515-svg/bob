@@ -34,7 +34,8 @@ BoB's value is the four things that come *after* "just call an LLM":
   gated by a critic before their results are joined.
 - **Orchestration.** One request can route to a single fast face, fan out to many
   workers, escalate through a health-aware backend chain, or convene a multi-voice
-  council — with per-turn cost and width caps so a run can't stampede.
+  council — with round/width caps, plus per-turn cost caps on the metered paths
+  (fan-out and build), so a run can't stampede.
 - **Sovereignty.** Every backend is reached with your own key or the vendor's own
   official CLI under your own login. BoB never proxies, resells, or multi-tenants
   anyone's access. (See `COMPLIANCE.md`.)

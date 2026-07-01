@@ -129,8 +129,8 @@ must run.**
   mid-tier model audits. The default team is a byte-for-byte passthrough (no
   regression); teams are opt-in per conversation.
 - A **profile** is a team plus the *how* layer: per-slot role prompts, a deliberation
-  shape (fusion / sequential / debate), protocol bounds (max rounds, cost ceiling,
-  grounding), and an optional schedule. Profiles let you name and reuse a working
+  shape (fusion / sequential / debate), protocol bounds (max rounds, grounding, and a
+  cost ceiling on the metered paths), and an optional schedule. Profiles let you name and reuse a working
   shape.
 
 ### Capability classes, not model names

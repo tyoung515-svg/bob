@@ -1,8 +1,8 @@
 <#
   BoBClaw - Ornith test-model launcher (:8083, GPU, llama.cpp).
 
-  Serves an Ornith GGUF over the OpenAI /v1/chat/completions endpoint for the
-  LMForge deep/frontier coding eval. Same durable Task Scheduler pattern as
+  Serves an Ornith GGUF over the OpenAI /v1/chat/completions endpoint for a local
+  deep/frontier coding eval. Same durable Task Scheduler pattern as
   start-embedder.ps1 / start-extractor.ps1 - see those headers for the WHY.
 
   Variants (-Variant):
@@ -20,7 +20,7 @@
 
   USAGE - sequential A/B across the three variants:
     ./start-ornith.ps1 -Variant 9b                                  # load + serve
-    # (run LMForge deep/frontier against http://localhost:8083)
+    # (run your deep/frontier eval against http://localhost:8083)
     ./stop-ornith.ps1
     ./start-ornith.ps1 -Variant 9b-mtp
     ./stop-ornith.ps1
@@ -31,11 +31,10 @@
   metadata that may not be recognised by the b9509 build - a load failure shows
   in the console immediately rather than vanishing into a log file).
 
-  LMForge (D:\OLD windows files\CoCouncilHub\LMForge\lm-chat.html): set the
-  endpoint input to http://localhost:8083, connect, run Deep + Frontier tiers
-  (Code). Recommended sampling per Ornith model card: temp=0.6, top_p=0.95,
-  top_k=20 - set these in LMForge's Parameters sidebar (they override server
-  defaults per-request).
+  In any OpenAI-compatible chat UI: set the endpoint to http://localhost:8083,
+  connect, and run your Deep + Frontier eval tiers. Recommended sampling per the
+  Ornith model card: temp=0.6, top_p=0.95, top_k=20 (set these per-request in the
+  UI; they override the server defaults).
 #>
 [CmdletBinding()]
 param(

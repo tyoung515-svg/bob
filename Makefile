@@ -1,3 +1,6 @@
+# Linux/macOS developer convenience (docker-compose, systemctl, ollama). The
+# SUPPORTED install path is Windows via install-bob.ps1 — see README / AGENTS-SETUP.
+# Installs from the pinned requirements.lock files for reproducibility.
 .PHONY: setup start stop test logs clean ollama-setup
 
 # ── Setup ─────────────────────────────────────────────
@@ -5,16 +8,16 @@ setup:
 	docker-compose up -d postgres
 	@echo "Waiting for Postgres..."
 	@sleep 3
-	cd bobclaw-core && pip install -r requirements.txt
-	cd bobclaw-gateway && pip install -r requirements.txt
-	cd bobclaw-claude-pipeline && pip install -r requirements.txt
+	cd bobclaw-core && pip install -r requirements.lock
+	cd bobclaw-gateway && pip install -r requirements.lock
+	cd bobclaw-claude-pipeline && pip install -r requirements.lock
 	@echo "✅ Setup complete"
 
 setup-full:
 	docker-compose --profile full up -d
-	cd bobclaw-core && pip install -r requirements.txt
-	cd bobclaw-gateway && pip install -r requirements.txt
-	cd bobclaw-claude-pipeline && pip install -r requirements.txt
+	cd bobclaw-core && pip install -r requirements.lock
+	cd bobclaw-gateway && pip install -r requirements.lock
+	cd bobclaw-claude-pipeline && pip install -r requirements.lock
 
 # ── Start/Stop ────────────────────────────────────────
 start:
