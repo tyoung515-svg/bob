@@ -89,6 +89,7 @@ are configurable — set your provider's current model in `.secrets/bobclaw.env`
 - **[`SECURITY.md`](SECURITY.md)** — the loopback-by-default posture; read before exposing anything
 - **[`COMPLIANCE.md`](COMPLIANCE.md)** — using your own subscriptions/keys within each vendor's terms
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — running the tests, project layout
+- **[`CHANGELOG.md`](CHANGELOG.md)** — release notes
 
 ## Status & scope
 
