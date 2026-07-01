@@ -37,6 +37,7 @@ EXPECTED_FACE_IDS = {
     "planner-gemini",
     "worker-agy",
     "planner-codex",
+    "planner-gpt",
     "worker-codex",
     "worker-kimi-cli",
 }
@@ -49,7 +50,7 @@ def registry() -> FaceRegistry:
 # ─── Loading ──────────────────────────────────────────────────────────────────
 
 def test_all_profiles_loaded(registry: FaceRegistry):
-    assert len(registry) == 23
+    assert len(registry) == 24
 
 
 def test_all_expected_ids_present(registry: FaceRegistry):
@@ -193,7 +194,7 @@ def test_get_face_empty_string_raises_key_error(registry: FaceRegistry):
 
 def test_list_faces_returns_summaries(registry: FaceRegistry):
     summaries = registry.list_faces()
-    assert len(summaries) == 23
+    assert len(summaries) == 24
     for s in summaries:
         assert isinstance(s, FaceSummary)
         assert s.id

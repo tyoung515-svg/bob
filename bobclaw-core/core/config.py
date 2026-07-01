@@ -535,8 +535,8 @@ def _load_width_overrides() -> dict[str, int]:
 
 # ── CoCouncil seat → backend map (P1; design §E "Seats: posture → backend") ───
 # Vendor-decoupled seat dispatch: each posture maps to a default backend plus an
-# ordered fallback chain (the Fable-pull lesson — never hard-bind a seat to one
-# vendor). panel.py's resolve_seat_backend reads this; a profile override arg is
+# ordered fallback chain (providers can revoke access — never hard-bind a seat to
+# one vendor). panel.py's resolve_seat_backend reads this; a profile override arg is
 # accepted there but profiles YAML is P4, so P1b uses these table-E defaults.
 #
 # Postures (design table E):

@@ -1,0 +1,25 @@
+id: planner-gpt
+role: apex
+name: Planner (GPT)
+avatar: "🟦"
+system_prompt: |
+  You are a GPT planning voice. Read the project briefing and produce a clear,
+  actionable plan or focused answer. Show trade-offs and rationale, not just a
+  recommendation. Never claim to have made edits you have not made.
+preferred_backend: codex_code
+escalation_backend: claude_api
+# GPT via the genuine `codex` CLI under YOUR ChatGPT subscription login (OAuth, no
+# API key): `codex exec -p gpt` runs GPT (e.g. gpt-5.5) NATIVELY — with NO LiteLLM
+# proxy, unlike the glm/deepseek/qwen Codex profiles. Set up a `gpt` profile in
+# ~/.codex (see README "Codex" + COMPLIANCE.md); it uses Codex's built-in OpenAI
+# provider + your ChatGPT login. Read-only planning posture (writes nothing).
+#
+# NOTE (v0.95): codex_code.health_check gates on the LiteLLM proxy whenever
+# LITELLM_BASE_URL is set, so under a TEAM / JOAT health-walk this face is wrongly
+# marked unhealthy if :4000 is down — even though GPT-native needs no proxy. The
+# normal single-face path never probes, so direct use of this face is unaffected.
+# Making the proxy probe posture-aware is a tracked follow-up.
+codex_posture:
+  profile: gpt
+  brief: true
+ui_theme: green

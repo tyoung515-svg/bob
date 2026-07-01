@@ -5,8 +5,14 @@
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 
+# --env-file so compose interpolates the SAME POSTGRES_PASSWORD the app uses (read
+# from .secrets, not the shell env) — container + app agree on first init.
+$composeArgs = @('compose', '-f', "$repo\docker-compose.yml")
+$envFile = "$repo\.secrets\bobclaw.env"
+if (Test-Path $envFile) { $composeArgs += @('--env-file', $envFile) }
+
 Write-Host "== Postgres (docker) ==" -ForegroundColor Yellow
-docker compose -f "$repo\docker-compose.yml" up -d postgres redis | Out-Host
+docker @composeArgs up -d postgres redis | Out-Host
 
 Write-Host "== Qdrant (:6353) ==" -ForegroundColor Yellow
 # BobClaw's Qdrant is mapped to host :6353 (compose 6353->6333) to avoid the
@@ -17,7 +23,7 @@ try { $null = Invoke-RestMethod 'http://localhost:6353/healthz' -TimeoutSec 3; $
 if ($qdrantUp) {
     Write-Host "BobClaw Qdrant already running on :6353 (reusing it)." -ForegroundColor Green
 } else {
-    docker compose -f "$repo\docker-compose.yml" up -d qdrant | Out-Host
+    docker @composeArgs up -d qdrant | Out-Host
 }
 
 function Spawn($title, $script) {

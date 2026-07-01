@@ -43,8 +43,14 @@ BoB's value is the four things that come *after* "just call an LLM":
 
 ## Quickstart (Windows, headless-first)
 
-Prerequisites: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-(running) and [`uv`](https://docs.astral.sh/uv/).
+**Prerequisites** (all three are required; the installer fails closed without them):
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — **running**
+  (`docker info` must succeed). Hosts Postgres/Redis/Qdrant **and** the build/verify sandbox.
+- [`uv`](https://docs.astral.sh/uv/) — the Python environment manager (`uv --version`).
+- [**PowerShell 7+**](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)
+  (`pwsh`). Windows ships only PowerShell 5.1; the durability and service scripts need `pwsh`.
+  Quick install: `winget install Microsoft.PowerShell`.
 
 ```powershell
 git clone <your-fork-url> bob
@@ -58,13 +64,43 @@ lockfiles, brings up the Docker infrastructure, bootstraps your secrets
 and login. It is idempotent — safe to re-run.
 
 Prefer to run the steps yourself, or drive setup from an agent? See
-**[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the same flow, step by step.
+**[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the same flow, step by step (it also lists the
+known first-run gotchas on a fresh Windows box).
 
 When it finishes:
 
 - **Web UI (preview):** http://127.0.0.1:7826/ui — log in as `admin` with the
-  generated `BOBCLAW_PASSWORD` (in `.secrets/bobclaw.env`).
+  generated `BOBCLAW_PASSWORD` printed once during setup (only its bcrypt hash is stored
+  in `.secrets/bobclaw.env`). Login also requires a **TOTP 2FA code** — enroll the
+  `TOTP_SECRET` (same file) in an authenticator app:
+  `otpauth://totp/BoB:admin?secret=<TOTP_SECRET>&issuer=BoB`.
 - **Stop:** `./scripts/win/stop-all.ps1`
+
+### Enabling a backend
+
+BoB needs at least one model backend. Each is enabled in `.secrets/bobclaw.env`, and
+**model IDs must match what your provider currently serves** — the example values are
+just placeholders. Core reads env at startup, so **restart core** after adding a key.
+
+| Backend (face) | What to set | Auth |
+| --- | --- | --- |
+| **Cloud API** (Anthropic / Google / DeepSeek / Z.AI / Kimi / MiniMax) | the provider's `*_API_KEY` + `*_MODEL` | paste your key |
+| **Claude CLI** (`planner-claude`) | `CC_CLI_PATH` (blank = resolve on PATH) | `claude setup-token` |
+| **Antigravity** (`planner-gemini`) | `AGY_CLI_PATH` | run `agy` once → Google login |
+| **Codex** (`planner-codex` / `planner-gpt`) | `CODEX_CLI_PATH`, `CODEX_HOME`; a LiteLLM proxy for non-OpenAI providers (`./scripts/win/start-litellm.ps1`) | ChatGPT login (GPT, native) / per-provider LiteLLM keys |
+| **Local** (Ollama / LM Studio) | `PREFERRED_LOCAL_MODEL` + the server URL | none |
+
+> **Codex note:** `codex exec` routes non-OpenAI providers (GLM/DeepSeek/Qwen) through a
+> local **LiteLLM proxy** (`LITELLM_BASE_URL`, default `:4000`). Start it with
+> `./scripts/win/start-litellm.ps1` (sample: `litellm/config.yaml`); Codex 0.142+ needs a
+> per-file `~/.codex/<profile>.config.toml` with `wire_api = "responses"`. **GPT** under a
+> ChatGPT login runs **natively** (no proxy) via the `planner-gpt` face.
+
+### Bringing it back up
+
+`stop-all` / a reboot stops the host services (Docker restarts itself). To relaunch,
+re-run `./install-bob.ps1` (idempotent) or the lighter `./scripts/win/start-local.ps1`,
+which brings up infra + core + gateway without requiring local embedding models.
 
 ## What's inside
 

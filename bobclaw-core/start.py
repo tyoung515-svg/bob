@@ -26,6 +26,11 @@ from aiohttp import web
 
 from api.server import GRAPH_KEY, POOL_KEY, build_app
 from core.config import config
+# BUILD_SANDBOX* (and other trailing settings) are module-level globals defined
+# BELOW the `config = BoBClawConfig()` instance in config.py, so they are NOT
+# attributes of `config`. Read them via the module — the same access pattern
+# core/nodes/build_verify.py and build_plan.py already use.
+import core.config as _config
 from core.db import init_postgres, init_sqlite
 from core.graph import create_graph
 
@@ -65,7 +70,7 @@ async def _on_startup(app: web.Application) -> None:
     # silent. Never raises: chat is unaffected by the sandbox, so we only warn.
     from core.build.sandbox import docker_ready
 
-    _sbx = (config.BUILD_SANDBOX or "docker").strip().lower()
+    _sbx = (_config.BUILD_SANDBOX or "docker").strip().lower()
     if _sbx == "subprocess":
         logger.warning(
             "BUILD SANDBOX: BUILD_SANDBOX=subprocess — the build verify gate will run "
@@ -76,13 +81,13 @@ async def _on_startup(app: web.Application) -> None:
             "BUILD SANDBOX: BUILD_SANDBOX=auto but Docker/image %r is unavailable — a "
             "build turn would run LLM-written code UN-ISOLATED on the host. Build the "
             "image and set BUILD_SANDBOX=docker for real isolation.",
-            config.BUILD_SANDBOX_IMAGE,
+            _config.BUILD_SANDBOX_IMAGE,
         )
     elif _sbx == "docker" and not docker_ready():
         logger.warning(
             "BUILD SANDBOX: BUILD_SANDBOX=docker but Docker/image %r is not ready — "
             "build turns will FAIL CLOSED until Docker is up (chat is unaffected).",
-            config.BUILD_SANDBOX_IMAGE,
+            _config.BUILD_SANDBOX_IMAGE,
         )
     else:
         logger.info("BUILD SANDBOX: mode=%s (isolated).", _sbx)

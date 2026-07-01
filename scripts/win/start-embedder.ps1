@@ -34,7 +34,14 @@ $ErrorActionPreference = 'Stop'
 #   BOBCLAW_EMBED_GGUF — path to your granite-embedding-311m GGUF (required)
 $server   = if ($env:LLAMA_SERVER_EXE) { $env:LLAMA_SERVER_EXE } else { 'llama-server.exe' }
 $gguf     = $env:BOBCLAW_EMBED_GGUF
-if (-not $gguf) { throw 'Set BOBCLAW_EMBED_GGUF to your granite-embedding-311m GGUF path (see README / AGENTS-SETUP.md).' }
+if (-not $gguf) {
+    # Soft-optional: memory/recall is OFF by default and the chat path does not need
+    # the embedder, so a fresh box without a local GGUF must SKIP (not abort the stack).
+    Write-Host "BOBCLAW_EMBED_GGUF not set — skipping the embedder (:8081)." -ForegroundColor Yellow
+    Write-Host "  Memory recall is OFF by default; set BOBCLAW_EMBED_GGUF to your" -ForegroundColor DarkGray
+    Write-Host "  granite-embedding-311m GGUF to enable it (see README / AGENTS-SETUP.md)." -ForegroundColor DarkGray
+    return
+}
 $repo     = (Resolve-Path "$PSScriptRoot\..\..").Path
 $logDir   = Join-Path $repo '.logs'
 $logFile  = Join-Path $logDir 'embedder.log'

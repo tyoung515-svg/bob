@@ -20,7 +20,14 @@ $ErrorActionPreference = 'Stop'
 #   BOBCLAW_EXTRACTOR_GGUF — path to your L1-extractor chat GGUF (e.g. a small gemma) (required)
 $server   = if ($env:LLAMA_SERVER_EXE) { $env:LLAMA_SERVER_EXE } else { 'llama-server.exe' }
 $gguf     = $env:BOBCLAW_EXTRACTOR_GGUF
-if (-not $gguf) { throw 'Set BOBCLAW_EXTRACTOR_GGUF to your extractor GGUF path (see README / AGENTS-SETUP.md).' }
+if (-not $gguf) {
+    # Soft-optional: L1 fact auto-extraction is OFF by default and the chat path does
+    # not need the extractor, so a fresh box without a local GGUF must SKIP (not abort).
+    Write-Host "BOBCLAW_EXTRACTOR_GGUF not set — skipping the extractor (:8082)." -ForegroundColor Yellow
+    Write-Host "  L1 auto-learn is OFF by default; set BOBCLAW_EXTRACTOR_GGUF to your" -ForegroundColor DarkGray
+    Write-Host "  extractor GGUF to enable it (see README / AGENTS-SETUP.md)." -ForegroundColor DarkGray
+    return
+}
 $repo     = (Resolve-Path "$PSScriptRoot\..\..").Path
 $logDir   = Join-Path $repo '.logs'
 $logFile  = Join-Path $logDir 'extractor.log'

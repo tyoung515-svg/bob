@@ -58,7 +58,7 @@ def test_resolve_seat_backend_table_e_defaults():
     assert stress == "gemini_flash"
     assert wildcard == "deepseek_v4_flash"
     assert synth == "minimax"
-    # framer carries a fallback chain (the Fable-pull lesson).
+    # framer carries a fallback chain (providers can revoke access).
     assert framer_fb and framer_fb[0] == "gemini_pro"
 
 
@@ -480,9 +480,9 @@ def test_build_council_spec_derives_seats_from_roles():
 
 # ─── face registry ───────────────────────────────────────────────────────────
 
-def test_registry_has_23_faces_with_council_split():
+def test_registry_has_24_faces_with_council_split():
     reg = FaceRegistry()
-    assert len(reg) == 23
+    assert len(reg) == 24
     ids = {f.id for f in reg.list_faces()}
     assert "council-max" in ids
     assert "council-lite" in ids

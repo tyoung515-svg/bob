@@ -50,7 +50,7 @@ async def test_routing_view_default_team_is_passthrough(client):
     view = await resp.json()
     assert view["active_team"] is None
     assert view["teams"] == ["cloud-heavy", "demo-fleet", "hier-fleet", "local-first"]
-    assert len(view["faces"]) == 23
+    assert len(view["faces"]) == 24
     rows = _by_id(view)
     # default team → resolved == preferred for every face
     for f in view["faces"]:

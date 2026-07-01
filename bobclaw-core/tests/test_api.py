@@ -51,6 +51,7 @@ EXPECTED_FACE_IDS = {
     "planner-gemini",
     "worker-agy",
     "planner-codex",
+    "planner-gpt",
     "worker-codex",
     "worker-kimi-cli",
 }
@@ -710,7 +711,7 @@ def test_build_app_defaults_construct_real_registry():
     from api.server import FACES_KEY
 
     assert isinstance(app[FACES_KEY], FaceRegistry)
-    assert len(app[FACES_KEY]) == 23
+    assert len(app[FACES_KEY]) == 24
 
 
 # ─── Stream disconnect robustness ──────────────────────────────────────────────

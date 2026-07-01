@@ -62,8 +62,8 @@ class ArtifactsTest {
 
     @Test
     fun file_artifact_backticked_windows_html_path() {
-        val text = "Wrote `C:\\dev\\scratch\\cc\\x\\hello.html`"
-        assertEquals("C:\\dev\\scratch\\cc\\x\\hello.html", extractFileArtifact(text))
+        val text = "Wrote `C:\\projects\\demo\\out\\hello.html`"
+        assertEquals("C:\\projects\\demo\\out\\hello.html", extractFileArtifact(text))
     }
 
     @Test

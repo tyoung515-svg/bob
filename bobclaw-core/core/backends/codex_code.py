@@ -2,14 +2,23 @@
 BoBClaw Core — Codex CLI subprocess backend (``codex_code``)
 
 Drives the genuine ``codex`` CLI (``codex exec``) as a headless one-shot
-subprocess, exposing **glm / deepseek / qwen** via Codex's per-provider config
-PROFILES — which route through a LOCAL LiteLLM proxy (``LITELLM_BASE_URL``,
-default ``http://localhost:4000``) that translates Codex's Responses API to each
-provider's Chat Completions. NOT an HTTP/OpenAI-compat client here — transport is
+subprocess. Two provider paths:
+
+* **GPT, native** — a ``gpt`` profile under a ChatGPT-subscription login (OAuth,
+  no API key) runs GPT (e.g. gpt-5.5) directly, with NO proxy (see the
+  ``planner-gpt`` face).
+* **Non-OpenAI (glm / deepseek / qwen)** — per-provider profiles that route through
+  a LOCAL LiteLLM proxy (``LITELLM_BASE_URL``, default ``http://127.0.0.1:4000``)
+  translating Codex's Responses API to each provider's Chat Completions (the proxy
+  also strips tool defs the provider rejects ⇒ answer-only).
+
+NOT an HTTP/OpenAI-compat client here — transport is
 ``asyncio.create_subprocess_exec`` (the ``claude_code`` / ``agy_code`` shape).
 
-Kimi is deliberately NOT exposed here — it has its own ``kimi_cli`` backend
-(the operator: "Kimi stays in its own CLI").
+Codex 0.142+ config: profiles live in per-file ``~/.codex/<profile>.config.toml``
+(an inline ``[profiles.x]`` block is rejected as legacy) and custom providers
+support only ``wire_api = "responses"``. Kimi is deliberately NOT exposed here — it
+has its own ``kimi_cli`` backend (the operator: "Kimi stays in its own CLI").
 
 Contract — EMPIRICALLY DERIVED against codex-cli 0.142.3 (2026-06-29; the locked
 facts the code depends on, like the agy contract):
@@ -25,12 +34,16 @@ facts the code depends on, like the agy contract):
   ``turn.completed{usage}``; on failure ``{type:"error",message}`` +
   ``turn.failed{error:{message}}`` (message embeds the provider error JSON with a
   ``code`` like 400/429).
-* **Provider via ``-p <profile>``** (``glm`` | ``deepseek`` | ``qwen``) layered on
-  the litellm base config; or ``-m <model> -c model_provider=litellm``.
+* **Provider via ``-p <profile>``** — ``gpt`` (native ChatGPT login, no proxy) or a
+  non-OpenAI profile (``glm`` | ``deepseek`` | ``qwen``) layered on the litellm base
+  config; or ``-m <model> -c model_provider=litellm``.
 * **Errors / throttle** = non-zero exit + the ``error`` / ``turn.failed`` message;
   a 429 / rate marker raises ``CodexThrottled`` (→ escalation), else ``CodexError``.
-* **Depends on the LiteLLM proxy** at ``LITELLM_BASE_URL`` — ``health_check``
-  probes both ``codex --version`` AND the proxy (codex is dead without it).
+* **LiteLLM proxy** at ``LITELLM_BASE_URL`` is required for the non-OpenAI profiles
+  (a native ``gpt`` profile does not need it). NOTE: ``health_check`` currently
+  probes the proxy whenever ``LITELLM_BASE_URL`` is set, so a native-only face is
+  wrongly gated on :4000 under a health-walk — making the probe posture-aware is a
+  tracked follow-up.
 
 Streaming is message-level (one block) — codex exec buffers the whole reply.
 """

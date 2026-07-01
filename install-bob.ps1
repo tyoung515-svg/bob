@@ -2,9 +2,9 @@
   BoB — guided Windows setup.
 
   One run takes a fresh clone to a running, chat-ready stack:
-    prereq check -> Python venv + pinned deps -> Docker infra + DB init ->
-    interactive .secrets bootstrap -> (optional durability) -> health wait ->
-    backend smoke -> print the URL + login.
+    prereq check -> Python venv + pinned deps -> env file + DB password ->
+    Docker infra + DB init -> auth secrets + backend -> (optional durability) ->
+    start (local) + health wait -> backend smoke -> print the URL + login.
 
   Idempotent: re-running skips steps already done and only fills what's missing.
 
@@ -31,12 +31,16 @@ function Ok($msg)   { Write-Host "  OK  $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Host "  !!  $msg" -ForegroundColor Yellow }
 function Die($msg)  { Write-Host "  XX  $msg" -ForegroundColor Red; exit 1 }
 
-# ── 0. Prerequisites ──────────────────────────────────────────────────────────
+# ── 0. Prerequisites (fail-closed) ────────────────────────────────────────────
 Step 0 "Checking prerequisites"
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Die "uv not found. Install it: https://docs.astral.sh/uv/  (then re-run)."
 }
 Ok "uv found"
+if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+    Die "PowerShell 7 (pwsh) not found. BoB's service scripts require it (Windows ships only PowerShell 5.1). Install: winget install --id Microsoft.PowerShell  (then re-run)."
+}
+Ok "pwsh (PowerShell 7) found"
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $docker) {
     Die "Docker not found. Install Docker Desktop: https://www.docker.com/products/docker-desktop/  (then re-run). Docker is required for Postgres/Redis/Qdrant AND for the build/verify sandbox."
@@ -58,11 +62,27 @@ foreach ($svc in 'bobclaw-core','bobclaw-gateway','bobclaw-claude-pipeline') {
 }
 Ok "dependencies installed from requirements.lock (aiohttp pinned <3.14)"
 
-# ── 2. Docker infrastructure + DB init ────────────────────────────────────────
-Step 2 "Starting Docker infrastructure (Postgres / Redis / Qdrant, loopback-only)"
-Push-Location $repo
-docker compose up -d postgres redis qdrant | Out-Null
-Pop-Location
+# ── 2. Env file + a strong database password (BEFORE the first compose up) ────
+Step 2 "Bootstrapping the env file + database password"
+if (-not (Test-Path $envFile)) { Copy-Item $exampleFile $envFile; Ok "created .secrets/bobclaw.env from the example" }
+# The strong Postgres password must exist BEFORE the container first initializes,
+# so the DB volume and the app's POSTGRES_URL agree on the first try (compose reads
+# it via --env-file in step 3). This avoids the "wrong password / docker compose
+# down -v" dance on a fresh box.
+$envText = Get-Content -LiteralPath $envFile -Raw
+if ($envText -match '(?m)^POSTGRES_PASSWORD=bobclaw\s*$') {
+    $pgpw = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(18)).TrimEnd('=').Replace('+','x').Replace('/','y')
+    $envText = $envText -replace '(?m)^POSTGRES_PASSWORD=.*$', "POSTGRES_PASSWORD=$pgpw"
+    $envText = $envText -replace '(?m)^POSTGRES_URL=.*$', "POSTGRES_URL=postgresql://bobclaw:$pgpw@localhost:5432/bobclaw"
+    Set-Content -LiteralPath $envFile -Value $envText -NoNewline -Encoding UTF8
+    Ok "generated a strong POSTGRES_PASSWORD + matching POSTGRES_URL"
+} else { Ok "POSTGRES_PASSWORD already set" }
+
+# ── 3. Docker infrastructure + DB init ────────────────────────────────────────
+Step 3 "Starting Docker infrastructure (Postgres / Redis / Qdrant, loopback-only)"
+# --env-file so compose interpolates the SAME POSTGRES_PASSWORD the app uses (it is
+# read from this file, NOT from the shell env — so container + app match on init).
+docker compose -f (Join-Path $repo 'docker-compose.yml') --env-file $envFile up -d postgres redis qdrant | Out-Null
 Write-Host "  waiting for Postgres to accept connections ..." -ForegroundColor DarkGray
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
@@ -72,21 +92,8 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 if ($ready) { Ok "Postgres healthy (init.sql applied on first init)" } else { Warn "Postgres not confirmed healthy after 60s; check 'docker compose logs postgres'." }
 
-# ── 3. Secrets bootstrap ──────────────────────────────────────────────────────
-Step 3 "Bootstrapping secrets (.secrets/bobclaw.env)"
-if (-not (Test-Path $envFile)) { Copy-Item $exampleFile $envFile; Ok "created .secrets/bobclaw.env from the example" }
-
-# Generate a strong Postgres password on first run and keep the URL in sync.
-$envText = Get-Content -LiteralPath $envFile -Raw
-if ($envText -match '(?m)^POSTGRES_PASSWORD=bobclaw\s*$') {
-    $pgpw = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(18)).TrimEnd('=').Replace('+','x').Replace('/','y')
-    $envText = $envText -replace '(?m)^POSTGRES_PASSWORD=.*$', "POSTGRES_PASSWORD=$pgpw"
-    $envText = $envText -replace '(?m)^POSTGRES_URL=.*$', "POSTGRES_URL=postgresql://bobclaw:$pgpw@localhost:5432/bobclaw"
-    Set-Content -LiteralPath $envFile -Value $envText -NoNewline -Encoding UTF8
-    Warn "generated a new POSTGRES_PASSWORD. If the postgres volume already existed with the old password, run 'docker compose down -v' once to re-init it."
-    Ok "POSTGRES_PASSWORD + POSTGRES_URL set"
-} else { Ok "POSTGRES_PASSWORD already set" }
-
+# ── 4. Auth secrets + at least one backend ────────────────────────────────────
+Step 4 "Generating auth secrets + choosing a backend"
 # BOBCLAW_SECRET / BOBCLAW_PASSWORD_HASH (plaintext shown once) / TOTP_SECRET.
 $adminPw = ''
 foreach ($line in (& $py (Join-Path $repo 'scripts\gen_secrets.py') 2>&1)) {
@@ -126,24 +133,26 @@ if (-not $hasAnthropicKey -and -not $NonInteractive) {
     }
 }
 
-# ── 4. Durability (optional) ──────────────────────────────────────────────────
+# ── 5. Durability (optional) ──────────────────────────────────────────────────
 if (-not $SkipDurability) {
-    Step 4 "Registering Task-Scheduler auto-start (survives reboot) — pass -SkipDurability to skip"
-    try { & (Join-Path $repo 'scripts\win\install-durability.ps1'); Ok "durability tasks registered" }
-    catch { Warn "durability step failed ($($_.Exception.Message)); services still run, just not auto-started on logon." }
-} else { Step 4 "Skipping durability registration (-SkipDurability)" }
+    Step 5 "Registering Task-Scheduler auto-start (survives reboot) — pass -SkipDurability to skip"
+    try { & (Join-Path $repo 'scripts\win\install-durability.ps1') -IncludeModels:$false -Quiet; Ok "durability tasks registered (core + gateway auto-start on logon)" }
+    catch { Warn "durability step failed ($($_.Exception.Message)); services still run now, just not auto-started on logon." }
+} else { Step 5 "Skipping durability registration (-SkipDurability)" }
 
-# ── 5. Start services + health wait ───────────────────────────────────────────
-Step 5 "Starting BoB services and waiting for health"
-try { & (Join-Path $repo 'scripts\win\start-all.ps1') } catch { Warn "start-all reported: $($_.Exception.Message)" }
+# ── 6. Start services + health wait ───────────────────────────────────────────
+Step 6 "Starting BoB services and waiting for health"
+# start-local: infra + core + gateway (+ LiteLLM if configured) as plain detached
+# windows — no local-model (embedder/extractor) or Task-Scheduler dependency.
+try { & (Join-Path $repo 'scripts\win\start-local.ps1') } catch { Warn "start-local reported: $($_.Exception.Message)" }
 $gwHealthy = $false
 for ($i = 0; $i -lt 30; $i++) {
     try { $null = Invoke-RestMethod 'http://127.0.0.1:7826/health' -TimeoutSec 2; $gwHealthy = $true; break } catch { Start-Sleep -Seconds 2 }
 }
 if ($gwHealthy) { Ok "gateway healthy on http://127.0.0.1:7826" } else { Warn "gateway not healthy yet; check the service windows / .logs." }
 
-# ── 6. Backend smoke (validates the model default resolves) ───────────────────
-Step 6 "Smoke-testing the default Anthropic model"
+# ── 7. Backend smoke (validates the model default resolves) ───────────────────
+Step 7 "Smoke-testing the default Anthropic model"
 if ($hasAnthropicKey) {
     $model = 'claude-sonnet-5'
     if ($envText -match '(?m)^ANTHROPIC_MODEL=(\S+)') { $model = $Matches[1] }
@@ -155,8 +164,9 @@ if ($hasAnthropicKey) {
     } catch { Warn "smoke call to '$model' failed: $($_.Exception.Message). Check ANTHROPIC_API_KEY / ANTHROPIC_MODEL." }
 } else { Warn "no Anthropic key set — skipped model smoke. (Local backends validate at chat time.)" }
 
-# ── 7. Done ───────────────────────────────────────────────────────────────────
-Step 7 "Setup complete"
+# ── 8. Done ───────────────────────────────────────────────────────────────────
+Step 8 "Setup complete"
+$totp = ([regex]::Match((Get-Content -LiteralPath $envFile -Raw), '(?m)^TOTP_SECRET=(\S+)')).Groups[1].Value
 Write-Host ""
 Write-Host "  Open the web UI:  http://127.0.0.1:7826/ui" -ForegroundColor Green
 if ($adminPw) {
@@ -165,6 +175,10 @@ if ($adminPw) {
 } else {
     Write-Host "  Log in as:        admin  /  (the password gen_secrets printed earlier)" -ForegroundColor Green
     Write-Host "  (re-run: only the bcrypt hash is stored; use your existing admin password)" -ForegroundColor DarkGray
+}
+if ($totp) {
+    Write-Host "  2FA (required):   enroll this in an authenticator app before logging in:" -ForegroundColor Green
+    Write-Host "                    otpauth://totp/BoB:admin?secret=$totp&issuer=BoB" -ForegroundColor Green
 }
 Write-Host ""
 Write-Host "  Stop services:    ./scripts/win/stop-all.ps1" -ForegroundColor DarkGray

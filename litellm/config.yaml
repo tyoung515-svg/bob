@@ -1,0 +1,32 @@
+# BoB — SAMPLE LiteLLM proxy config for Codex's non-OpenAI providers.
+#
+# WHY: Codex (`codex exec`) speaks the OpenAI *Responses* API. Non-OpenAI providers
+# (DeepSeek / GLM / Qwen) do not, so a Codex face that targets one routes through
+# this local proxy, which translates Responses -> that provider's Chat Completions.
+# GPT under a ChatGPT login runs NATIVELY and does NOT use this proxy (see the
+# planner-gpt face).
+#
+# Non-OpenAI providers also REJECT Codex's built-in tool definitions (e.g.
+# `type: "namespace"`), so tools are DROPPED here — a Codex face on DeepSeek is
+# answer-only, which is fine for a planning / worker voice.
+#
+# Keys + endpoints come from your .secrets/bobclaw.env (bring-your-own). This is a
+# SAMPLE: set `model_name` to match the `model` your ~/.codex/<profile>.config.toml
+# requests, and add a block per provider you want to reach through Codex.
+#
+# Start it:  ./scripts/win/start-litellm.ps1   (listens on 127.0.0.1:4000)
+# Docs:      README "Enabling a backend" (Codex) + AGENTS-SETUP.md.
+
+model_list:
+  # DeepSeek (OpenAI-compatible). A `deepseek` Codex profile targets model_name
+  # `deepseek-chat`; LiteLLM forwards it to your DeepSeek endpoint with tools stripped.
+  - model_name: deepseek-chat
+    litellm_params:
+      model: openai/deepseek-chat
+      api_base: os.environ/DEEPSEEK_BASE_URL
+      api_key: os.environ/DEEPSEEK_API_KEY
+      additional_drop_params: ["tools", "tool_choice", "parallel_tool_calls"]
+
+litellm_settings:
+  # Silently drop any provider-unsupported params rather than 400 the request.
+  drop_params: true
