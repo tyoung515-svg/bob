@@ -7,7 +7,6 @@ Usage:
 import argparse
 import logging
 import os
-import pathlib
 import ssl
 import sys
 from typing import Any

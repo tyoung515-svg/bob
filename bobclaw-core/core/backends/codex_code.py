@@ -40,10 +40,10 @@ facts the code depends on, like the agy contract):
 * **Errors / throttle** = non-zero exit + the ``error`` / ``turn.failed`` message;
   a 429 / rate marker raises ``CodexThrottled`` (→ escalation), else ``CodexError``.
 * **LiteLLM proxy** at ``LITELLM_BASE_URL`` is required for the non-OpenAI profiles
-  (a native ``gpt`` profile does not need it). NOTE: ``health_check`` currently
-  probes the proxy whenever ``LITELLM_BASE_URL`` is set, so a native-only face is
-  wrongly gated on :4000 under a health-walk — making the probe posture-aware is a
-  tracked follow-up.
+  (a native ``gpt`` profile does not need it). ``health_check`` is the codex-CLI
+  liveness ONLY — it does not probe the proxy, so a native ``gpt`` face is never
+  wrongly gated on :4000 under a health-walk; a litellm-routed profile that hits a
+  down proxy escalates at runtime instead.
 
 Streaming is message-level (one block) — codex exec buffers the whole reply.
 """

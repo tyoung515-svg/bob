@@ -10,8 +10,8 @@ All notable changes to BoB are documented here. This project adheres to
   localizable — 172 UI strings in en / zh-Hans (简) / zh-Hant (繁), a restart-free header
   language toggle (EN → 简 → 繁), and a role-label map. The backend threads an optional
   per-turn `locale`: when it is non-`en`, the model is directed to reply in that language
-  (a `switch_locale` WS message pins the locale to a conversation). Absent / `en` ⇒
-  byte-identical to before.
+  (the desktop app sends the locale per-turn; a `switch_locale` WS message can also pin it
+  to a conversation). Absent / `en` ⇒ byte-identical to before.
 - **Pick which GPT model on the Codex planner.** A UI model selection now binds on the
   `gpt` / codex planner tier, so a `gpt`-profile face can run a chosen GPT model (e.g.
   `gpt-5.5`) natively under a ChatGPT login instead of only the profile's default — without
@@ -36,6 +36,8 @@ All notable changes to BoB are documented here. This project adheres to
 - The KMM localization passes `:shared:jvmTest`; the runtime language-toggle *visual* check
   is a manual step (needs a display). Native-speaker review of the translations and the
   LiteLLM-via-Codex worker path remain user-validated.
+- The language directive is applied on the apex/synthesis reply; fan-out worker sub-turns
+  don't yet inherit the conversation locale (a follow-up — the surfaced answer is localized).
 
 ## [0.96.0] — first public release
 
