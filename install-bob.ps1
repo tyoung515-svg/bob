@@ -168,7 +168,7 @@ if ($hasAnthropicKey) {
 Step 8 "Setup complete"
 $totp = ([regex]::Match((Get-Content -LiteralPath $envFile -Raw), '(?m)^TOTP_SECRET=(\S+)')).Groups[1].Value
 Write-Host ""
-Write-Host "  Open the web UI:  http://127.0.0.1:7826/ui" -ForegroundColor Green
+Write-Host "  Gateway API:      http://127.0.0.1:7826  (desktop app / CLI / MCP — no browser UI)" -ForegroundColor Green
 if ($adminPw) {
     Write-Host "  Log in as:        admin  /  $adminPw" -ForegroundColor Green
     Write-Host "  (store it now — only the bcrypt hash is saved in .secrets/bobclaw.env)" -ForegroundColor DarkGray

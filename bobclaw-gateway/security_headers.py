@@ -1,14 +1,13 @@
 """BoBClaw Gateway — security response headers.
 
-Sets a conservative set of security headers on every response, including the
-static web UI. The web UI is fully same-origin (Preact/htm are vendored locally,
-no CDN, no inline <script>), so a strict CSP works: scripts are `'self'` only.
-`style-src` allows `'unsafe-inline'` because the SPA sets element style
-attributes at runtime — that does not create an script-injection surface.
+Sets a conservative set of security headers on every response as defense-in-depth. The
+browser web UI was removed in v0.97 (the desktop app is the client), so these now guard
+the JSON + WebSocket API surface: a strict CSP (`script-src 'self'`) costs nothing on JSON
+and hardens anything that ever renders a gateway response in a browser. (`style-src`'s
+`'unsafe-inline'` is a legacy allowance from the removed SPA — safe to tighten below.)
 
 For any non-loopback deployment, review this policy (and tighten `style-src` with
-nonces/hashes) as part of the "before you expose to a network" checklist in
-SECURITY.md.
+nonces/hashes) as part of the "before you expose to a network" checklist in SECURITY.md.
 """
 from __future__ import annotations
 

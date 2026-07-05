@@ -211,8 +211,8 @@ async def persist_run(
     create_conversation: Callable[..., Awaitable[dict]],
     save_message: Callable[..., Awaitable[object]],
 ) -> Optional[str]:
-    """Persist a scheduled run to a conversation so it is VISIBLE in the web UI /
-    KMM (the same Postgres ``conversations``/``messages`` they read) — otherwise a
+    """Persist a scheduled run to a conversation so it is VISIBLE in the desktop app
+    (the same Postgres ``conversations``/``messages`` it reads) — otherwise a
     scheduled run is invisible (daemon log / L0 only).
 
     One conversation per fire, titled by profile + bucket, owned by ``owner`` (the

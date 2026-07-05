@@ -10,9 +10,9 @@ bobclaw-core/            LangGraph engine (routing, faces, fan-out, council, mem
   core/                    the package
   tests/                   pytest suite
   docker/                  build-sandbox Dockerfile
-bobclaw-gateway/         aiohttp gateway (auth, chat, REST, web UI at /ui)
+bobclaw-gateway/         aiohttp gateway (auth, chat, REST + WS API — JSON only)
 bobclaw-claude-pipeline/ Claude build-session wrapper
-bobclaw-app/             Kotlin Multiplatform client (desktop + Android) — preview
+bobclaw-app/             Kotlin Multiplatform GUI (desktop; Android preview) — localized EN/简/繁
 scripts/win/             Windows launchers + durability
 docker-compose.yml       Postgres / Redis / Qdrant (loopback-only)
 install-bob.ps1          guided setup   (see also AGENTS-SETUP.md)

@@ -91,7 +91,8 @@ If an Anthropic key is set, confirm the default model resolves with a 16-token
 `claude-sonnet-5`). A non-error response means the key + model default are valid.
 Local-only setups validate at first chat.
 
-- Web UI: **http://127.0.0.1:7826/ui**
+- The front door is **headless** (CLI / MCP / the JSON+WS API at `http://127.0.0.1:7826`)
+  or the **desktop app** (`bobclaw-app`). There is no browser UI.
 - Log in as **admin** with the password `gen_secrets` printed once.
 - Login also requires a **TOTP 2FA code** — enroll `TOTP_SECRET` (from `.secrets\bobclaw.env`)
   in an authenticator app: `otpauth://totp/BoB:admin?secret=<TOTP_SECRET>&issuer=BoB`.

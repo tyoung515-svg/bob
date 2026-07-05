@@ -80,5 +80,5 @@ else {
 }
 
 Write-Host ""
-Write-Host "  Web UI:  http://127.0.0.1:7826/ui" -ForegroundColor Green
-Write-Host "  Stop:    ./scripts/win/stop-all.ps1" -ForegroundColor DarkGray
+Write-Host "  Gateway:  http://127.0.0.1:7826  (API — use the desktop app / CLI)" -ForegroundColor Green
+Write-Host "  Stop:     ./scripts/win/stop-all.ps1" -ForegroundColor DarkGray

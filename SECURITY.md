@@ -72,20 +72,19 @@ generated code, BoB is designed to fail closed rather than run it on the host.
 - **TOTP** is required to start the gateway once configured (startup config validation),
   with RFC 6238 §5.2 replay protection.
 - **Security headers** — `Content-Security-Policy`, `X-Content-Type-Options: nosniff`,
-  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` — are set on every response,
-  including the static web UI.
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` — are set on every response.
 
 ## Before you expose BoB to a network
 
-v0.96 is single-operator and loopback by default. Before you place the gateway
+v0.97 is single-operator and loopback by default. Before you place the gateway
 behind a reverse proxy reachable from a broader network, complete these:
 
 - [ ] Restrict `.secrets/bobclaw.env` file permissions (it holds all your API keys).
 - [ ] Terminate TLS at the proxy and forward **only** to the gateway — never expose
       core, the pipeline, Postgres, Redis, or Qdrant.
-- [ ] Note the **preview web UI** keeps its session tokens in browser `localStorage`,
-      so an XSS in the UI would hand over the session. Prefer an **SSH tunnel** or the
-      **native client** for remote access; keep the browser UI on trusted networks.
+- [ ] Reach the gateway with the **native desktop app** — over an **SSH tunnel** or via the
+      TLS reverse proxy. There is no browser UI (the Preact stopgap was removed in v0.97), so
+      there is no `localStorage` token surface to XSS.
 - [ ] The per-IP login lockout and rate limiter key on the connection IP. Behind a
       reverse proxy every request appears to come from the proxy, so set
       `TRUST_X_FORWARDED_FOR=true` **and** have the proxy (exactly one, in front)

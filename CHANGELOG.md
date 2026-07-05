@@ -3,6 +3,40 @@
 All notable changes to BoB are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+## [0.97.0]
+
+### Added
+- **Chinese localization (Simplified + Traditional).** The desktop app is fully
+  localizable — 172 UI strings in en / zh-Hans (简) / zh-Hant (繁), a restart-free header
+  language toggle (EN → 简 → 繁), and a role-label map. The backend threads an optional
+  per-turn `locale`: when it is non-`en`, the model is directed to reply in that language
+  (a `switch_locale` WS message pins the locale to a conversation). Absent / `en` ⇒
+  byte-identical to before.
+- **Pick which GPT model on the Codex planner.** A UI model selection now binds on the
+  `gpt` / codex planner tier, so a `gpt`-profile face can run a chosen GPT model (e.g.
+  `gpt-5.5`) natively under a ChatGPT login instead of only the profile's default — without
+  being forced through the LiteLLM proxy.
+
+### Changed
+- **Removed the preview web UI — the desktop app is the GUI.** The Preact browser stopgap
+  (`bobclaw-gateway/ui/*`) is retired; the gateway now serves the JSON + WebSocket API only
+  (`/` returns a small info response instead of redirecting to `/ui`). The Kotlin
+  Multiplatform desktop app is the client (Android preview). This also removes the browser
+  `localStorage` session-token surface. Docs updated throughout.
+
+### Fixed
+- **Codex `health_check` no longer strands a native-GPT face on a down proxy.** It gated on
+  the LiteLLM proxy unconditionally, so under a team / JOAT health-walk a `planner-gpt` face
+  (which needs no proxy) was wrongly marked unhealthy whenever `:4000` was down. Health is
+  now the codex-CLI liveness only; a litellm-routed profile that hits a down proxy escalates
+  at runtime via the existing chain.
+
+### Notes
+- Compose Multiplatform bumped 1.6.11 → 1.7.3 (KMM app).
+- The KMM localization passes `:shared:jvmTest`; the runtime language-toggle *visual* check
+  is a manual step (needs a display). Native-speaker review of the translations and the
+  LiteLLM-via-Codex worker path remain user-validated.
+
 ## [0.96.0] — first public release
 
 **Headless-first** (CLI / MCP / agent is the usable front door); the web and Kotlin

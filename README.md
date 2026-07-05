@@ -58,7 +58,7 @@ git clone https://github.com/tyoung515-svg/bob.git
 cd bob
 ```
 
-For v0.96, set BoB up with the step-by-step guide in
+For v0.97, set BoB up with the step-by-step guide in
 **[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the Python environment from the pinned
 lockfiles, the Docker infrastructure, secrets, a model backend, and first login, with
 the known first-run gotchas on a fresh Windows box called out. It is also
@@ -66,15 +66,16 @@ the known first-run gotchas on a fresh Windows box called out. It is also
 
 > **One-command installer:** a single script that runs the whole flow end-to-end
 > (`install-bob.ps1`) is landing in **v1.0**. It ships in the tree now as a preview; for
-> v0.96 the step-by-step guide above is the supported path.
+> v0.97 the step-by-step guide above is the supported path.
 
-Once BoB is up:
+Once BoB is up, the front door is **headless** (CLI / MCP / the JSON+WebSocket API) or the
+**Kotlin Multiplatform desktop app** (`bobclaw-app`). Log in as `admin` with the generated
+`BOBCLAW_PASSWORD` printed once during setup (only its bcrypt hash is stored in
+`.secrets/bobclaw.env`); login also requires a **TOTP 2FA code** — enroll the `TOTP_SECRET`
+(same file) in an authenticator app:
+`otpauth://totp/BoB:admin?secret=<TOTP_SECRET>&issuer=BoB`. The app is available in
+**English, Simplified Chinese (简), and Traditional Chinese (繁)** via the header toggle.
 
-- **Web UI (preview):** http://127.0.0.1:7826/ui — log in as `admin` with the
-  generated `BOBCLAW_PASSWORD` printed once during setup (only its bcrypt hash is stored
-  in `.secrets/bobclaw.env`). Login also requires a **TOTP 2FA code** — enroll the
-  `TOTP_SECRET` (same file) in an authenticator app:
-  `otpauth://totp/BoB:admin?secret=<TOTP_SECRET>&issuer=BoB`.
 - **Stop:** `./scripts/win/stop-all.ps1`
 
 ### Enabling a backend
@@ -110,9 +111,9 @@ Four services (see **[`ARCHITECTURE.md`](ARCHITECTURE.md)** for the full picture
 | Service | Port | Role |
 | --- | --- | --- |
 | `bobclaw-core` | 7825 | LangGraph engine — routing, faces, fan-out, council, memory, build pipeline, all model backends |
-| `bobclaw-gateway` | 7826 | Auth (JWT + TOTP), chat, REST API, serves the web UI at `/ui` |
+| `bobclaw-gateway` | 7826 | Auth (JWT + TOTP), chat, REST + WebSocket API (JSON only — the desktop app is the GUI) |
 | `bobclaw-claude-pipeline` | 7823 | Claude build-session wrapper |
-| `bobclaw-app` | — | Kotlin Multiplatform native client (desktop + Android) — **preview** |
+| `bobclaw-app` | — | Kotlin Multiplatform GUI — desktop; Android preview. Localized EN / 简 / 繁 |
 
 Backends span cloud APIs (Anthropic, Google, DeepSeek, Z.AI/GLM, Moonshot/Kimi,
 MiniMax), subscription CLIs run under your own login (`claude`, `codex`, `agy`,
@@ -130,13 +131,12 @@ are configurable — set your provider's current model in `.secrets/bobclaw.env`
 
 ## Status & scope
 
-v0.96 is headless-usable, GUI-preview, and single-operator. It is **loopback by
-default**; the gateway can be exposed for trusted remote access **behind a
-TLS-terminating reverse proxy** (see `SECURITY.md`) — an SSH tunnel or the native
-client is preferred over the preview web UI, which keeps session tokens in the
-browser. `core` and the datastores stay loopback, and it is not a hardened
-multi-tenant public service. The one-command installer, containerized topology,
-one-click packaging, and cross-platform support are on the roadmap to v1.0+.
+v0.97 is headless-usable and single-operator, with a **desktop GUI** (Android preview). It
+is **loopback by default**; the gateway can be exposed for trusted remote access **behind a
+TLS-terminating reverse proxy** (see `SECURITY.md`), reached via the native client over an
+SSH tunnel. `core` and the datastores stay loopback, and it is not a hardened multi-tenant
+public service. The one-command installer, containerized topology, one-click packaging, and
+cross-platform support are on the roadmap to v1.0+.
 
 ## License
 

@@ -255,7 +255,7 @@ class BoBClawConfig:
     # catch-up window can never be re-claimed; pruned each tick to keep the DB small.
     PROFILE_FIRE_RETENTION_DAYS: int = int(os.getenv("PROFILE_FIRE_RETENTION_DAYS", "7"))
     # Surface scheduled-run output: persist each fire to a Postgres conversation so
-    # it's visible in the web UI / KMM (the same conversations table they read).
+    # it's visible in the desktop app (the same conversations table it reads).
     # Best-effort — auto-disabled with a warning if Postgres is unreachable.
     PROFILE_SCHEDULE_PERSIST: bool = (
         os.getenv("PROFILE_SCHEDULE_PERSIST", "true").lower() in ("1", "true", "yes")
