@@ -21,6 +21,7 @@ fun main() = application {
             prefStore = FilePrefStore(),
             // Inject the JCEF-backed artifact renderer so commonMain stays platform-agnostic.
             artifactRenderer = { html, url, modifier -> WebArtifactView(html, url, modifier) },
+            applyPlatformLocale = { tag -> java.util.Locale.setDefault(when (tag) { "zh-Hans" -> java.util.Locale.forLanguageTag("zh-CN"); "zh-Hant" -> java.util.Locale.forLanguageTag("zh-TW"); else -> java.util.Locale.ENGLISH }) },
         )
     }
 }

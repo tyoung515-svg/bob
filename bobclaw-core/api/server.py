@@ -858,6 +858,7 @@ async def chat(request: web.Request) -> web.StreamResponse:
     # Profiles (HOW layer): optional per-conversation profile name. route_node loads
     # it; a council-shaped profile drives the council subgraph. None/absent ⇒ no change.
     profile_pin = (payload.get("profile") or None)
+    locale = payload.get("locale") or "en"  # absent/"en" => no directive => byte-identical.
     history: list[dict] = payload.get("history") or []
     # Project-level instructions resolved by the gateway (LEFT JOIN conversation
     # -> project). Spliced into the system prompt by execute_node. None/absent
@@ -910,6 +911,7 @@ async def chat(request: web.Request) -> web.StreamResponse:
         "backend_override": backend_override,
         "team": team_pin,
         "profile_name": profile_pin,
+        "locale": locale,
         "pin_authoritative": pin_authoritative,
         "hierarchical": hierarchical,
         "backend": backend_override or "local",

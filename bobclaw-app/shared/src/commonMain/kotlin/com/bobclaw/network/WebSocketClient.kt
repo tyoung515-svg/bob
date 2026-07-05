@@ -66,12 +66,22 @@ class BoBClawWebSocket(private val url: String) {
         }
     }
 
-    suspend fun sendMessage(conversationId: String, content: String, faceId: String?) {
+    suspend fun sendMessage(conversationId: String, content: String, faceId: String?, locale: String? = null) {
         sendClientMessage(
             ClientMessage.ChatMessage(
                 conversationId = conversationId,
                 content = content,
-                faceId = faceId
+                faceId = faceId,
+                locale = locale
+            )
+        )
+    }
+
+    suspend fun switchLocale(conversationId: String, locale: String) {
+        sendClientMessage(
+            ClientMessage.SwitchLocale(
+                conversationId = conversationId,
+                locale = locale
             )
         )
     }

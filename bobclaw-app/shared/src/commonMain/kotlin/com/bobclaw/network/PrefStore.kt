@@ -21,6 +21,7 @@ data class UserPrefs(
     val accentName: String = "teal",       // reserved for 4b; persisted now so 4b just reads it
     val theme: String = "dark",            // stub: dark | light | system
     val density: String = "comfortable",   // stub: comfortable | compact
+    val locale: String = "en",             // i18n: en | zh-Hans | zh-Hant (header toggle)
 )
 
 /** Default no-op store (no persistence) — used by callers/platforms that don't wire one. */
@@ -47,6 +48,7 @@ object PrefCodec {
         append("accentName=").append(p.accentName).append('\n')
         append("theme=").append(p.theme).append('\n')
         append("density=").append(p.density).append('\n')
+        append("locale=").append(p.locale).append('\n')
     }
 
     fun decode(text: String): UserPrefs {
@@ -68,6 +70,7 @@ object PrefCodec {
             accentName = map["accentName"]?.takeIf { it.isNotEmpty() } ?: defaults.accentName,
             theme = map["theme"]?.takeIf { it.isNotEmpty() } ?: defaults.theme,
             density = map["density"]?.takeIf { it.isNotEmpty() } ?: defaults.density,
+            locale = map["locale"]?.takeIf { it in setOf("en", "zh-Hans", "zh-Hant") } ?: defaults.locale,
         )
     }
 }

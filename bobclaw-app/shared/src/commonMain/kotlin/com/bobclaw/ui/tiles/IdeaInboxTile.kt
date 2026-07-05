@@ -1,5 +1,9 @@
 package com.bobclaw.ui.tiles
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -108,11 +112,11 @@ fun IdeaInboxTile(
         }
     }
 
-    SectionTile(title = "Idea Inbox", modifier = modifier) {
+    SectionTile(title = stringResource(Res.string.idea_inbox_title), modifier = modifier) {
         Column(modifier = Modifier.fillMaxWidth()) {
             if (isLocalOnly) {
                 Text(
-                    "Local only — sign in to sync",
+                    stringResource(Res.string.idea_inbox_local_only),
                     color = BoBClawColors.TextSecondary,
                     fontSize = 9.sp,
                     modifier = Modifier.padding(bottom = 4.dp),
@@ -126,14 +130,14 @@ fun IdeaInboxTile(
 
             when {
                 loading && !hasBackendItems && !hasLocalItems -> {
-                    Text("Loading ideas...", color = BoBClawColors.TextSecondary, fontSize = 12.sp)
+                    Text(stringResource(Res.string.idea_inbox_loading), color = BoBClawColors.TextSecondary, fontSize = 12.sp)
                 }
                 showError -> {
                     Text("Failed: $error", color = BoBClawColors.TextSecondary, fontSize = 12.sp)
                 }
                 showEmpty -> {
                     Text(
-                        "No ideas yet. Type one below.",
+                        stringResource(Res.string.idea_inbox_no_ideas),
                         color = BoBClawColors.TextSecondary,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(bottom = 8.dp),
@@ -167,7 +171,7 @@ fun IdeaInboxTile(
                     value = inputText,
                     onValueChange = { inputText = it },
                     placeholder = {
-                        Text("Quick capture...", color = BoBClawColors.TextSecondary, fontSize = 12.sp)
+                        Text(stringResource(Res.string.idea_inbox_placeholder), color = BoBClawColors.TextSecondary, fontSize = 12.sp)
                     },
                     modifier = Modifier.weight(1f),
                     singleLine = true,

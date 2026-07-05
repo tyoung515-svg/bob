@@ -1,5 +1,9 @@
 package com.bobclaw.ui.screens
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,11 +72,11 @@ fun LoginScreen(
     GradientBackground {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Tile(
-                title = "BoBClaw",
+                title = stringResource(Res.string.login_title),
                 modifier = Modifier.widthIn(max = 420.dp),
             ) {
                 Text(
-                    text = "Sign in",
+                    text = stringResource(Res.string.login_sign_in),
                     color = BoBClawColors.TextPrimary,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
@@ -81,7 +85,7 @@ fun LoginScreen(
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Password") },
+                    label = { Text(stringResource(Res.string.login_password_label)) },
                     singleLine = true,
                     enabled = !inFlight,
                     visualTransformation = PasswordVisualTransformation(),
@@ -102,7 +106,7 @@ fun LoginScreen(
                 OutlinedTextField(
                     value = totp,
                     onValueChange = { totp = it.filter(Char::isDigit).take(6) },
-                    label = { Text("TOTP code (optional)") },
+                    label = { Text(stringResource(Res.string.login_totp_label)) },
                     singleLine = true,
                     enabled = !inFlight,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
@@ -132,7 +136,7 @@ fun LoginScreen(
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        Text("Log in")
+                        Text(stringResource(Res.string.login_log_in))
                     }
                 }
                 if (error != null) {

@@ -1,5 +1,11 @@
 package com.bobclaw.ui.screens
 
+import com.bobclaw.ui.i18n.roleLabel
+
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -178,11 +184,10 @@ fun TeamsScreen(
 
     GradientBackground(modifier = modifier) {
         Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState())) {
-            Text("Teams & profiles", style = BoBClawType.title, color = colors.textPrimary)
+            Text(stringResource(Res.string.teams_heading), style = BoBClawType.title, color = colors.textPrimary)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Build a fleet — bind roles to backends, instruct each spot with a role prompt, " +
-                    "and pick a shape to make them deliberate.",
+                stringResource(Res.string.teams_subtitle),
                 style = BoBClawType.monoCaption, color = colors.textSecondary,
             )
 
@@ -197,21 +202,21 @@ fun TeamsScreen(
 
                 // ── Assistant chat ──────────────────────────────────────────
                 Spacer(Modifier.height(20.dp))
-                Text("Assistant", style = BoBClawType.body, color = colors.textPrimary,
+                Text(stringResource(Res.string.teams_assistant_label), style = BoBClawType.body, color = colors.textPrimary,
                     fontWeight = FontWeight.Bold)
-                Text("Describe or adjust the fleet (incl. role prompts + shape); it edits the draft below.",
+                Text(stringResource(Res.string.teams_assistant_description),
                     style = BoBClawType.monoCaption, color = colors.textMuted)
                 Spacer(Modifier.height(8.dp))
 
                 chat.forEach { (fromUser, text) -> ChatBubble(fromUser, text) }
-                if (refining) ChatBubble(false, "…thinking")
+                if (refining) ChatBubble(false, stringResource(Res.string.teams_thinking_dots))
 
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = message,
                     onValueChange = { message = it },
                     singleLine = true,
-                    placeholder = { Text("e.g. a fusion council: optimist + skeptic + synthesizer",
+                    placeholder = { Text(stringResource(Res.string.teams_placeholder_example),
                         color = colors.textMuted) },
                     textStyle = BoBClawType.body,
                     shape = BoBClawShapes.control,
@@ -242,24 +247,24 @@ fun TeamsScreen(
                             }
                         }
                     },
-                ) { Text(if (refining) "Thinking…" else "Send") }
+                ) { Text(if (refining) stringResource(Res.string.teams_send_button_thinking) else stringResource(Res.string.teams_send_button_send)) }
 
                 // ── Draft form ──────────────────────────────────────────────
                 Spacer(Modifier.height(24.dp))
-                Text("Draft", style = BoBClawType.body, color = colors.textPrimary,
+                Text(stringResource(Res.string.teams_draft_label), style = BoBClawType.body, color = colors.textPrimary,
                     fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 DraftTextField(
                     value = draft.name,
                     onChange = { draft = draft.withName(it); saveError = null; saveOk = null },
-                    placeholder = "name (lowercase-slug)",
+                    placeholder = stringResource(Res.string.teams_name_placeholder),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
 
                 pal.roles.forEach { role ->
                     Spacer(Modifier.height(10.dp))
-                    Text(role, style = BoBClawType.monoCaption, color = colors.textMuted)
+                    Text(roleLabel(role), style = BoBClawType.monoCaption, color = colors.textMuted)
                     (draft.roles[role] ?: emptyList()).forEachIndexed { idx, slot ->
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -268,7 +273,7 @@ fun TeamsScreen(
                             Dropdown(
                                 options = backendOptions,
                                 selected = slot.backend,
-                                placeholder = "— pick backend —",
+                                placeholder = stringResource(Res.string.teams_backend_placeholder),
                                 allowNone = false,
                                 onSelect = { draft = draft.setSlotBackend(role, idx, it) },
                             )
@@ -290,14 +295,14 @@ fun TeamsScreen(
                         DraftTextField(
                             value = slot.rolePrompt,
                             onChange = { draft = draft.setSlotRolePrompt(role, idx, it) },
-                            placeholder = "role prompt — how this spot should act (optional)",
+                            placeholder = stringResource(Res.string.teams_role_prompt_placeholder),
                             minLines = 2,
                             maxLines = 10,
                             modifier = Modifier.fillMaxWidth().padding(start = 8.dp, bottom = 4.dp),
                         )
                     }
                     Text(
-                        "+ add $role",
+                        stringResource(Res.string.teams_add_role, role),
                         style = BoBClawType.monoCaption,
                         color = colors.accent,
                         modifier = Modifier.clip(BoBClawShapes.cell)
@@ -308,14 +313,14 @@ fun TeamsScreen(
 
                 // ── Coordination (shape + bounds) ───────────────────────────
                 Spacer(Modifier.height(14.dp))
-                Text("Coordination", style = BoBClawType.monoCaption, color = colors.textMuted)
+                Text(stringResource(Res.string.teams_coordination_label), style = BoBClawType.monoCaption, color = colors.textMuted)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("shape", style = BoBClawType.body, color = colors.textSecondary)
+                    Text(stringResource(Res.string.teams_shape_label), style = BoBClawType.body, color = colors.textSecondary)
                     Spacer(Modifier.width(10.dp))
                     Dropdown(
                         options = SHAPES,
                         selected = draft.shape ?: "",
-                        placeholder = "— roster (no council) —",
+                        placeholder = stringResource(Res.string.teams_shape_placeholder),
                         allowNone = true,
                         onSelect = { draft = draft.setShape(it.ifBlank { null }) },
                     )
@@ -327,24 +332,24 @@ fun TeamsScreen(
                             value = draft.protocolBounds?.maxUsd?.toString() ?: "",
                             onValueChange = { draft = draft.setMaxUsd(it.toDoubleOrNull()) },
                             singleLine = true,
-                            placeholder = { Text("max $/run", color = colors.textMuted) },
+                            placeholder = { Text(stringResource(Res.string.teams_max_usd_placeholder), color = colors.textMuted) },
                             textStyle = BoBClawType.body,
                             shape = BoBClawShapes.control,
                             colors = fieldColors(),
                             modifier = Modifier.width(150.dp),
                         )
                         Spacer(Modifier.width(10.dp))
-                        Text("grounding", style = BoBClawType.body, color = colors.textSecondary)
+                        Text(stringResource(Res.string.teams_grounding_label), style = BoBClawType.body, color = colors.textSecondary)
                         Spacer(Modifier.width(8.dp))
                         Dropdown(
                             options = listOf("on", "off"),
                             selected = draft.protocolBounds?.grounding ?: "",
-                            placeholder = "default",
+                            placeholder = stringResource(Res.string.teams_grounding_placeholder),
                             allowNone = true,
                             onSelect = { draft = draft.setGrounding(it.ifBlank { null }) },
                         )
                     }
-                    Text("loop bounds apply once P3b lands; role prompts + shape are live now.",
+                    Text(stringResource(Res.string.teams_loop_bounds_info),
                         style = BoBClawType.monoCaption, color = colors.textMuted,
                         modifier = Modifier.padding(top = 2.dp))
                 }
@@ -378,7 +383,7 @@ fun TeamsScreen(
                                 }
                             }
                         },
-                    ) { Text(if (saving) "Saving…" else "Save") }
+                    ) { Text(if (saving) stringResource(Res.string.teams_save_button_saving) else stringResource(Res.string.teams_save_button_save)) }
                     Spacer(Modifier.width(12.dp))
                     val err = saveError
                     val ok = saveOk
@@ -388,12 +393,12 @@ fun TeamsScreen(
 
                 // ── All profiles ────────────────────────────────────────────
                 Spacer(Modifier.height(24.dp))
-                Text("All profiles", style = BoBClawType.body, color = colors.textPrimary,
+                Text(stringResource(Res.string.teams_all_profiles_label), style = BoBClawType.body, color = colors.textPrimary,
                     fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 val list = profiles
                 if (list == null) {
-                    Text("Loading…", style = BoBClawType.body, color = colors.textSecondary)
+                    Text(stringResource(Res.string.teams_loading), style = BoBClawType.body, color = colors.textSecondary)
                 } else {
                     list.forEach { team ->
                         TeamRow(team, onDelete = {
@@ -473,7 +478,7 @@ private fun TeamRow(team: Team, onDelete: () -> Unit) {
                 fontWeight = FontWeight.Medium)
             Spacer(Modifier.width(8.dp))
             Text(
-                if (team.builtin) "built-in" else "custom",
+                if (team.builtin) stringResource(Res.string.teams_builtin_label) else stringResource(Res.string.teams_custom_label),
                 style = BoBClawType.monoCaption,
                 color = if (team.builtin) colors.textMuted else colors.accent,
             )
@@ -484,7 +489,7 @@ private fun TeamRow(team: Team, onDelete: () -> Unit) {
             Spacer(Modifier.weight(1f))
             if (!team.builtin) {
                 Text(
-                    "Delete",
+                    stringResource(Res.string.teams_delete_label),
                     style = BoBClawType.monoCaption,
                     color = ErrorRed,
                     modifier = Modifier

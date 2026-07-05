@@ -1,5 +1,9 @@
 package com.bobclaw.ui.screens
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -115,6 +119,29 @@ private fun removeEmptyAssistantPlaceholder(bubbles: MutableList<ChatBubble>, st
  * @param openConversationId optional id to select on enter (e.g. opened from the dashboard).
  *        Falls back to most-recent, else creates a new conversation.
  */
+fun nextLocale(cur: String): String = when (cur) { "en" -> "zh-Hans"; "zh-Hans" -> "zh-Hant"; else -> "en" }
+
+/** UI-only chat connection status — localized at render (carries any dynamic args). The values are
+ * display-only; nothing is sent to the backend. */
+sealed interface ChatStatus {
+    object Connecting : ChatStatus
+    object Connected : ChatStatus
+    object Streaming : ChatStatus
+    object Sending : ChatStatus
+    data class Stopped(val code: String) : ChatStatus
+    data class ConnectedStats(val tok: String, val ms: String) : ChatStatus
+}
+
+@Composable
+private fun ChatStatus.label(): String = when (this) {
+    ChatStatus.Connecting -> stringResource(Res.string.status_connecting)
+    ChatStatus.Connected -> stringResource(Res.string.status_connected)
+    ChatStatus.Streaming -> stringResource(Res.string.status_streaming)
+    ChatStatus.Sending -> stringResource(Res.string.status_sending)
+    is ChatStatus.Stopped -> stringResource(Res.string.status_stopped, code)
+    is ChatStatus.ConnectedStats -> stringResource(Res.string.status_connected_stats, tok, ms)
+}
+
 @Composable
 fun ChatScreen(
     authManager: AuthManager,
@@ -124,6 +151,8 @@ fun ChatScreen(
     onOpenDashboard: (() -> Unit)? = null,
     openConversationId: String? = null,
     artifactRenderer: @Composable (html: String?, url: String?, modifier: Modifier) -> Unit = { _, _, _ -> },
+    locale: String = "en",
+    onSetLocale: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
 
@@ -134,7 +163,7 @@ fun ChatScreen(
     var selectedBackend by remember { mutableStateOf<String?>(null) }
     var conversationId by remember { mutableStateOf<String?>(null) }
     val conversations = remember { mutableStateListOf<Conversation>() }
-    var status by remember { mutableStateOf("Connecting...") }
+    var status by remember { mutableStateOf<ChatStatus>(ChatStatus.Connecting) }
     var errorBanner by remember { mutableStateOf<String?>(null) }
     var input by remember { mutableStateOf("") }
     var generating by remember { mutableStateOf(false) }
@@ -201,7 +230,7 @@ fun ChatScreen(
                 page.messages.reversed().forEach {
                     bubbles.add(ChatBubble(id = it.id, role = it.role, content = it.content, timestamp = it.createdAt))
                 }
-                status = "Connected"
+                status = ChatStatus.Connected
             }
             .onFailure { errorBanner = "Failed to load history: ${it.message}" }
     }
@@ -261,7 +290,7 @@ fun ChatScreen(
                         } else {
                             println("[chat] chunk DROPPED: streamingId=null")
                         }
-                        status = "Streaming..."
+                        status = ChatStatus.Streaming
                     }
                     is ServerMessage.MessageComplete -> {
                         println("[chat] complete sid=$streamingId tok=${msg.tokensOut} ms=${msg.elapsedMs}")
@@ -272,7 +301,7 @@ fun ChatScreen(
                         }
                         streamingId = null
                         generating = false
-                        status = "Connected (${msg.tokensOut} tok, ${msg.elapsedMs} ms)"
+                        status = ChatStatus.ConnectedStats(msg.tokensOut.toString(), msg.elapsedMs.toString())
                         // Refresh sidebar so the just-touched conversation gets its updated preview.
                         scope.launch { refreshConversations() }
                     }
@@ -298,7 +327,7 @@ fun ChatScreen(
                         }
                         streamingId = null
                         generating = false
-                        status = "Stopped (${msg.code})"
+                        status = ChatStatus.Stopped(msg.code.toString())
                     }
                     is ServerMessage.FaceSwitched -> {
                         msg.faceId?.let { selectedFaceId = it }
@@ -370,7 +399,7 @@ fun ChatScreen(
                     streamingId = null
                     generating = false
                     bubbles.clear()
-                    status = "Connected"
+                    status = ChatStatus.Connected
                     println("[chat] new chat created=${conv.id}")
                 }
                 .onFailure { errorBanner = "Failed to create conversation: ${it.message}" }
@@ -421,7 +450,7 @@ fun ChatScreen(
                             streamingId = null
                             generating = false
                             bubbles.clear()
-                            status = "Connected"
+                            status = ChatStatus.Connected
                         }
                     }
                     refreshConversations()
@@ -445,10 +474,10 @@ fun ChatScreen(
         streamingId = asstId
         generating = true
         input = ""
-        status = "Sending..."
+        status = ChatStatus.Sending
         println("[chat] send convId=$convId face=$selectedFaceId len=${text.length}")
         scope.launch {
-            runCatching { webSocket.sendMessage(convId, text, selectedFaceId) }
+            runCatching { webSocket.sendMessage(convId, text, selectedFaceId, locale) }
                 .onSuccess { println("[chat] send OK") }
                 .onFailure {
                     println("[chat] send FAILED: ${it.message}")
@@ -554,7 +583,7 @@ fun ChatScreen(
                     streamingId = null
                     generating = false
                     bubbles.clear()
-                    status = "Connected"
+                    status = ChatStatus.Connected
                     refreshConversations()
                 }
                 .onFailure { errorBanner = "Create conversation failed: ${it.message}" }
@@ -607,7 +636,7 @@ fun ChatScreen(
                     Spacer(Modifier.width(8.dp))
                     if (canvasHtml != null || canvasUrl != null) {
                         PillChip(
-                            text = if (canvasOpen) "Canvas ✕" else "Canvas",
+                            text = if (canvasOpen) stringResource(Res.string.chat_canvas_open) else stringResource(Res.string.chat_canvas),
                             onClick = { canvasOpen = !canvasOpen },
                             active = canvasOpen,
                         )
@@ -616,7 +645,7 @@ fun ChatScreen(
                     Box {
                         val label = faces.firstOrNull { it.id == selectedFaceId }?.name ?: selectedFaceId
                         PillChip(
-                            text = "Face: $label",
+                            text = stringResource(Res.string.chat_face_pill, label),
                             onClick = { faceMenuOpen = true },
                             active = true,
                         )
@@ -646,7 +675,7 @@ fun ChatScreen(
                     // mirroring the Face picker. Applies live to the active conversation via switchModel.
                     Box {
                         PillChip(
-                            text = "Backend: " + (selectedBackend ?: "Auto"),
+                            text = stringResource(Res.string.chat_backend_pill, selectedBackend ?: stringResource(Res.string.chat_backend_auto)),
                             onClick = { backendMenuOpen = true },
                             active = selectedBackend != null,
                         )
@@ -670,7 +699,7 @@ fun ChatScreen(
                                 }
                             }
                             DropdownMenuItem(
-                                text = { MenuLabel("Auto", active = selectedBackend == null, mono = true) },
+                                text = { MenuLabel(stringResource(Res.string.chat_auto), active = selectedBackend == null, mono = true) },
                                 onClick = { applyBackend(null) },
                             )
                             PROJECT_BACKENDS.forEach { backend ->
@@ -682,11 +711,26 @@ fun ChatScreen(
                         }
                     }
                     Spacer(Modifier.width(8.dp))
+                    // Locale toggle (i18n) — cycles EN -> 简 -> 繁; flips BOTH the UI catalog
+                    // (Compose Resources, via prefs.locale re-key) AND the response language
+                    // (S0 directive, via switch_locale on the WS session).
+                    PillChip(
+                        text = when (locale) { "zh-Hans" -> "简"; "zh-Hant" -> "繁"; else -> "EN" },
+                        onClick = {
+                            // Single source of truth: flip prefs.locale (the UI re-keys via Compose
+                            // Resources). Responses follow via the per-message `locale` arg on
+                            // sendMessage (S0) — the gateway prefers payload.locale over the session
+                            // pin — so no async switch_locale round-trip that could desync/race/fail.
+                            onSetLocale(nextLocale(locale))
+                        },
+                        active = locale != "en",
+                    )
+                    Spacer(Modifier.width(8.dp))
                     // Profile picker (HOW layer) — pin a saved profile (e.g. a council) to
                     // this conversation, or "Off" to clear it. Applies via switch_profile.
                     Box {
                         PillChip(
-                            text = "Profile: " + (selectedProfile ?: "Off"),
+                            text = stringResource(Res.string.chat_profile_pill, selectedProfile ?: stringResource(Res.string.chat_profile_off)),
                             onClick = { profileMenuOpen = true },
                             active = selectedProfile != null,
                         )
@@ -709,7 +753,7 @@ fun ChatScreen(
                                 }
                             }
                             DropdownMenuItem(
-                                text = { MenuLabel("Off", active = selectedProfile == null, mono = true) },
+                                text = { MenuLabel(stringResource(Res.string.chat_off), active = selectedProfile == null, mono = true) },
                                 onClick = { applyProfile(null) },
                             )
                             profileNames.forEach { name ->
@@ -722,7 +766,7 @@ fun ChatScreen(
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        status,
+                        status.label(),
                         color = LocalBoBClawColors.textSecondary,
                         style = BoBClawType.monoLabel,
                         maxLines = 1,
@@ -743,12 +787,12 @@ fun ChatScreen(
                         ) {
                             if (onOpenDashboard != null) {
                                 DropdownMenuItem(
-                                    text = { MenuLabel("Dashboard") },
+                                    text = { MenuLabel(stringResource(Res.string.chat_dashboard)) },
                                     onClick = { menuOpen = false; onOpenDashboard() },
                                 )
                             }
                             DropdownMenuItem(
-                                text = { MenuLabel("Log out") },
+                                text = { MenuLabel(stringResource(Res.string.chat_log_out)) },
                                 onClick = {
                                     menuOpen = false
                                     webSocket.disconnect()
@@ -776,7 +820,7 @@ fun ChatScreen(
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            "Dismiss",
+                            stringResource(Res.string.chat_dismiss),
                             color = LocalBoBClawColors.accent,
                             style = BoBClawType.label,
                             modifier = Modifier.clickable { errorBanner = null },
@@ -800,10 +844,10 @@ fun ChatScreen(
                             when {
                                 inlineHtml != null -> TextButton(onClick = {
                                     canvasHtml = inlineHtml; canvasUrl = null; canvasOpen = true
-                                }) { Text("Open in canvas ▸", color = LocalBoBClawColors.accent, style = BoBClawType.label) }
+                                }) { Text(stringResource(Res.string.chat_open_in_canvas), color = LocalBoBClawColors.accent, style = BoBClawType.label) }
                                 filePath != null -> TextButton(onClick = {
                                     canvasUrl = "file:///" + filePath.replace('\\', '/'); canvasHtml = null; canvasOpen = true
-                                }) { Text("Open file in canvas ▸", color = LocalBoBClawColors.accent, style = BoBClawType.label) }
+                                }) { Text(stringResource(Res.string.chat_open_file_in_canvas), color = LocalBoBClawColors.accent, style = BoBClawType.label) }
                             }
                         }
                     }
@@ -816,7 +860,7 @@ fun ChatScreen(
                     OutlinedTextField(
                         value = input,
                         onValueChange = { input = it },
-                        placeholder = { Text("Message planner-claude...", color = LocalBoBClawColors.textMuted) },
+                        placeholder = { Text(stringResource(Res.string.chat_message_placeholder), color = LocalBoBClawColors.textMuted) },
                         enabled = conversationId != null,
                         textStyle = BoBClawType.body,
                         shape = BoBClawShapes.control,
@@ -851,7 +895,7 @@ fun ChatScreen(
                             onClick = { scope.launch { runCatching { webSocket.stopGeneration() } } },
                             shape = BoBClawShapes.control,
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = LocalBoBClawColors.alert),
-                        ) { Text("Stop", style = BoBClawType.label) }
+                        ) { Text(stringResource(Res.string.chat_stop), style = BoBClawType.label) }
                     } else {
                         Button(
                             onClick = { send() },
@@ -863,7 +907,7 @@ fun ChatScreen(
                                 disabledContainerColor = LocalBoBClawColors.surfaceCard,
                                 disabledContentColor = LocalBoBClawColors.textMuted,
                             ),
-                        ) { Text("Send", style = BoBClawType.label) }
+                        ) { Text(stringResource(Res.string.chat_send), style = BoBClawType.label) }
                     }
                 }
             }
@@ -874,7 +918,7 @@ fun ChatScreen(
                 Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "Canvas",
+                            stringResource(Res.string.chat_canvas),
                             color = BoBClawColors.TextPrimary,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f),
@@ -892,7 +936,7 @@ fun ChatScreen(
                             value = canvasUrlInput,
                             onValueChange = { canvasUrlInput = it },
                             singleLine = true,
-                            placeholder = { Text("Enter URL...") },
+                            placeholder = { Text(stringResource(Res.string.chat_enter_url)) },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = { goToCanvasUrl(canvasUrlInput) }),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -918,7 +962,7 @@ fun ChatScreen(
                             onClick = { goToCanvasUrl(canvasUrlInput) },
                             enabled = canvasUrlInput.isNotBlank(),
                             colors = ButtonDefaults.buttonColors(containerColor = BoBClawColors.AccentGreen),
-                        ) { Text("Go") }
+                        ) { Text(stringResource(Res.string.chat_go)) }
                         Spacer(Modifier.width(8.dp))
                         OutlinedButton(
                             onClick = {
@@ -927,7 +971,7 @@ fun ChatScreen(
                                 canvasHtml = null
                             },
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = BoBClawColors.TextSecondary),
-                        ) { Text("Clear") }
+                        ) { Text(stringResource(Res.string.chat_clear)) }
                     }
                     Spacer(Modifier.height(8.dp))
                     Box(modifier = Modifier.fillMaxSize().glassMorphism()) {
@@ -943,13 +987,13 @@ fun ChatScreen(
     if (target != null) {
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename conversation", color = BoBClawColors.TextPrimary) },
+            title = { Text(stringResource(Res.string.chat_rename_conversation), color = BoBClawColors.TextPrimary) },
             text = {
                 OutlinedTextField(
                     value = renameText,
                     onValueChange = { renameText = it },
                     singleLine = true,
-                    placeholder = { Text("Title") },
+                    placeholder = { Text(stringResource(Res.string.chat_title)) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = BoBClawColors.TextPrimary,
                         unfocusedTextColor = BoBClawColors.TextPrimary,
@@ -966,11 +1010,11 @@ fun ChatScreen(
                         rename(target, renameText)
                         renameTarget = null
                     },
-                ) { Text("Rename", color = BoBClawColors.AccentGreen) }
+                ) { Text(stringResource(Res.string.chat_rename), color = BoBClawColors.AccentGreen) }
             },
             dismissButton = {
                 TextButton(onClick = { renameTarget = null }) {
-                    Text("Cancel", color = BoBClawColors.TextSecondary)
+                    Text(stringResource(Res.string.chat_cancel), color = BoBClawColors.TextSecondary)
                 }
             },
             containerColor = BoBClawColors.GradientBottom,
@@ -981,8 +1025,8 @@ fun ChatScreen(
     val createDraft = createProjectDraft
     if (createDraft != null) {
         ProjectDialog(
-            title = "New project",
-            confirmLabel = "Create",
+            title = stringResource(Res.string.chat_new_project),
+            confirmLabel = stringResource(Res.string.chat_create),
             draft = createDraft,
             faces = faces,
             onDraftChange = { createProjectDraft = it },
@@ -998,8 +1042,8 @@ fun ChatScreen(
     val editDraft = editProjectDraft
     if (editDraft != null) {
         ProjectDialog(
-            title = "Project settings",
-            confirmLabel = "Save",
+            title = stringResource(Res.string.chat_project_settings),
+            confirmLabel = stringResource(Res.string.chat_save),
             draft = editDraft.toDraft(),
             faces = faces,
             onDraftChange = { editProjectDraft = editDraft.withDraft(it) },
@@ -1075,8 +1119,8 @@ private fun ProjectDialog(
                     value = draft.name,
                     onValueChange = { onDraftChange(draft.copy(name = it)) },
                     singleLine = true,
-                    placeholder = { Text("Project name") },
-                    label = { Text("Name") },
+                    placeholder = { Text(stringResource(Res.string.chat_project_name)) },
+                    label = { Text(stringResource(Res.string.chat_name)) },
                     colors = fieldColors,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1085,8 +1129,8 @@ private fun ProjectDialog(
                     value = draft.description,
                     onValueChange = { onDraftChange(draft.copy(description = it)) },
                     singleLine = true,
-                    placeholder = { Text("Short description") },
-                    label = { Text("Description") },
+                    placeholder = { Text(stringResource(Res.string.chat_short_description)) },
+                    label = { Text(stringResource(Res.string.chat_description)) },
                     colors = fieldColors,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1094,8 +1138,8 @@ private fun ProjectDialog(
                 OutlinedTextField(
                     value = draft.instructions,
                     onValueChange = { onDraftChange(draft.copy(instructions = it)) },
-                    placeholder = { Text("Applied to every conversation in this project") },
-                    label = { Text("Project context / instructions") },
+                    placeholder = { Text(stringResource(Res.string.chat_applied_to_every_conversation_in_this_project)) },
+                    label = { Text(stringResource(Res.string.chat_project_context_instructions)) },
                     colors = fieldColors,
                     modifier = Modifier.fillMaxWidth().height(120.dp),
                 )
@@ -1105,7 +1149,7 @@ private fun ProjectDialog(
                     ?.let { id -> faces.firstOrNull { it.id == id }?.name ?: id }
                     ?: AUTO_NONE
                 ProjectDropdown(
-                    label = "Default face",
+                    label = stringResource(Res.string.chat_default_face),
                     current = faceLabel,
                 ) { dismiss ->
                     DropdownMenuItem(
@@ -1122,7 +1166,7 @@ private fun ProjectDialog(
                 Spacer(Modifier.height(8.dp))
                 // Default backend dropdown ("Auto (none)" → null + a fixed set).
                 ProjectDropdown(
-                    label = "Default backend",
+                    label = stringResource(Res.string.chat_default_backend),
                     current = draft.defaultBackend ?: AUTO_NONE,
                 ) { dismiss ->
                     DropdownMenuItem(
@@ -1146,7 +1190,7 @@ private fun ProjectDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = BoBClawColors.TextSecondary)
+                Text(stringResource(Res.string.chat_cancel), color = BoBClawColors.TextSecondary)
             }
         },
         containerColor = BoBClawColors.GradientBottom,
@@ -1224,7 +1268,7 @@ private fun ConversationSidebar(
             enabled = !generating,
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = BoBClawColors.AccentGreen),
-        ) { Text("+ New chat") }
+        ) { Text(stringResource(Res.string.chat_plus_new_chat)) }
 
         Spacer(Modifier.height(8.dp))
 
@@ -1232,13 +1276,13 @@ private fun ConversationSidebar(
             onClick = onNewProject,
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = BoBClawColors.AccentGreen),
-        ) { Text("+ New project") }
+        ) { Text(stringResource(Res.string.chat_plus_new_project)) }
 
         Spacer(Modifier.height(8.dp))
 
         if (conversations.isEmpty() && projects.isEmpty()) {
             Text(
-                "No conversations yet",
+                stringResource(Res.string.chat_no_conversations_yet),
                 color = BoBClawColors.TextSecondary,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(8.dp),
@@ -1286,7 +1330,7 @@ private fun ConversationSidebar(
                     val collapsed = collapsedProjectIds.contains(UNFILED_ID)
                     item(key = "project-unfiled") {
                         ProjectHeaderRow(
-                            name = "Unfiled",
+                            name = stringResource(Res.string.chat_unfiled),
                             count = unfiled.size,
                             collapsed = collapsed,
                             onToggle = { onToggleCollapse(UNFILED_ID) },
@@ -1371,7 +1415,7 @@ private fun ProjectHeaderRow(
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     if (onNewChatHere != null) {
                         DropdownMenuItem(
-                            text = { Text("New conversation here") },
+                            text = { Text(stringResource(Res.string.chat_new_conversation_here)) },
                             onClick = {
                                 menuOpen = false
                                 onNewChatHere()
@@ -1380,7 +1424,7 @@ private fun ProjectHeaderRow(
                     }
                     if (onSettings != null) {
                         DropdownMenuItem(
-                            text = { Text("Project settings") },
+                            text = { Text(stringResource(Res.string.chat_project_settings)) },
                             onClick = {
                                 menuOpen = false
                                 onSettings()
@@ -1389,7 +1433,7 @@ private fun ProjectHeaderRow(
                     }
                     if (onDelete != null) {
                         DropdownMenuItem(
-                            text = { Text("Delete project") },
+                            text = { Text(stringResource(Res.string.chat_delete_project)) },
                             onClick = {
                                 menuOpen = false
                                 onDelete()
@@ -1416,7 +1460,7 @@ private fun ConversationSidebarRow(
     var menuOpen by remember { mutableStateOf(false) }
     // Second menu for "Move to project ▸" (a flat project picker; opened from the row ⋯ menu).
     var moveMenuOpen by remember { mutableStateOf(false) }
-    val title = conv.title?.takeIf { it.isNotBlank() } ?: conv.lastMessagePreview ?: "New chat"
+    val title = conv.title?.takeIf { it.isNotBlank() } ?: conv.lastMessagePreview ?: stringResource(Res.string.chat_new_chat)
     // grey rows out while generating (switching is disabled in that window)
     val titleColor = if (generating && !active) BoBClawColors.TextSecondary else BoBClawColors.TextPrimary
 
@@ -1463,21 +1507,21 @@ private fun ConversationSidebarRow(
             )
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
-                    text = { Text("Rename") },
+                    text = { Text(stringResource(Res.string.chat_rename)) },
                     onClick = {
                         menuOpen = false
                         onRename()
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Move to project ▸") },
+                    text = { Text(stringResource(Res.string.chat_move_to_project)) },
                     onClick = {
                         menuOpen = false
                         moveMenuOpen = true
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Archive") },
+                    text = { Text(stringResource(Res.string.chat_archive)) },
                     onClick = {
                         menuOpen = false
                         onArchive()
@@ -1496,7 +1540,7 @@ private fun ConversationSidebarRow(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("Unfiled") },
+                    text = { Text(stringResource(Res.string.chat_unfiled_menu)) },
                     onClick = {
                         moveMenuOpen = false
                         onMove(null)
@@ -1585,7 +1629,7 @@ private fun MessageRow(bubble: ChatBubble) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (isUser) "You" else "Assistant",
+                    text = if (isUser) stringResource(Res.string.chat_you) else stringResource(Res.string.chat_assistant),
                     color = if (isUser) LocalBoBClawColors.accentEmphasis else LocalBoBClawColors.textSecondary,
                     style = BoBClawType.label,
                 )
@@ -1604,7 +1648,7 @@ private fun MessageRow(bubble: ChatBubble) {
                 if (bubble.content.isNotEmpty()) {
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = "Copy",
+                        text = stringResource(Res.string.chat_copy),
                         color = LocalBoBClawColors.textMuted,
                         style = BoBClawType.monoCaption,
                         modifier = Modifier

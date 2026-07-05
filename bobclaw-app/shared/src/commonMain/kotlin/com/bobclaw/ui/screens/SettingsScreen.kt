@@ -1,5 +1,11 @@
 package com.bobclaw.ui.screens
 
+import org.jetbrains.compose.resources.StringResource
+
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,13 +46,13 @@ import com.bobclaw.ui.theme.LocalBoBClawColors
 import kotlin.math.round
 
 /** The Settings sub-nav sections (DESIGN §5). Only [Pane.APPEARANCE] is functional in lane 4a. */
-private enum class Pane(val label: String) {
-    APPEARANCE("Appearance"),
-    ACCOUNT("Account"),
-    MODELS("Models & backends"),
-    CONNECTIONS("Connections"),
-    APPROVALS("Approval defaults"),
-    ADVANCED("Advanced"),
+private enum class Pane(val labelRes: StringResource) {
+    APPEARANCE(Res.string.settings_pane_appearance),
+    ACCOUNT(Res.string.settings_pane_account),
+    MODELS(Res.string.settings_pane_models),
+    CONNECTIONS(Res.string.settings_pane_connections),
+    APPROVALS(Res.string.settings_pane_approvals),
+    ADVANCED(Res.string.settings_pane_advanced),
 }
 
 /** UI-scale stepper increment (0.05× per tap — DESIGN §5). */
@@ -84,7 +90,7 @@ fun SettingsScreen(
             Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 when (pane) {
                     Pane.APPEARANCE -> AppearancePane(prefs = prefs, onPrefsChange = onPrefsChange)
-                    else -> NotConfiguredPane(pane.label)
+                    else -> NotConfiguredPane(stringResource(pane.labelRes))
                 }
             }
         }
@@ -106,7 +112,7 @@ private fun SettingsSubNav(
             .padding(12.dp),
     ) {
         Text(
-            text = "SETTINGS",
+            text = stringResource(Res.string.settings_nav_title),
             style = BoBClawType.monoCaption,
             color = colors.textMuted,
         )
@@ -126,7 +132,7 @@ private fun SettingsSubNav(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = entry.label,
+                    text = stringResource(entry.labelRes),
                     style = BoBClawType.label,
                     color = if (isSelected) colors.accent else colors.textBody,
                 )
@@ -146,28 +152,28 @@ private fun AppearancePane(
             .fillMaxSize()
             .verticalScroll(rememberScrollState()),
     ) {
-        SettingsCard(caption = "INTERFACE") {
+        SettingsCard(caption = stringResource(Res.string.settings_interface)) {
             UiScaleRow(prefs = prefs, onPrefsChange = onPrefsChange)
         }
         Spacer(Modifier.height(12.dp))
-        SettingsCard(caption = "ACCENT") {
+        SettingsCard(caption = stringResource(Res.string.settings_accent)) {
             // Lane 4b — the user-settable accent picker. Writes prefs.accentName; App re-derives the
             // whole color set from it and the entire app re-skins live (and the choice persists).
             AccentPickerRow(prefs = prefs, onPrefsChange = onPrefsChange)
         }
         Spacer(Modifier.height(12.dp))
-        SettingsCard(caption = "THEME") {
+        SettingsCard(caption = stringResource(Res.string.settings_theme)) {
             // Stubbed/disabled per DESIGN §5 — visually present, not wired (no onPrefsChange).
             StubSelectorRow(
-                title = "Theme",
-                options = listOf("Dark", "Light", "System"),
-                selectedLabel = "Dark",
+                title = stringResource(Res.string.settings_theme_title),
+                options = listOf(stringResource(Res.string.settings_dark), stringResource(Res.string.settings_light), stringResource(Res.string.settings_system)),
+                selectedLabel = stringResource(Res.string.settings_dark),
             )
             Spacer(Modifier.height(12.dp))
             StubSelectorRow(
-                title = "Density",
-                options = listOf("Comfortable", "Compact"),
-                selectedLabel = "Comfortable",
+                title = stringResource(Res.string.settings_density_title),
+                options = listOf(stringResource(Res.string.settings_comfortable), stringResource(Res.string.settings_compact)),
+                selectedLabel = stringResource(Res.string.settings_comfortable),
             )
         }
     }
@@ -190,10 +196,10 @@ private fun UiScaleRow(
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("UI scale", style = BoBClawType.title, color = colors.textPrimary)
+                Text(stringResource(Res.string.settings_ui_scale), style = BoBClawType.title, color = colors.textPrimary)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "Rescales the entire interface.",
+                    stringResource(Res.string.settings_ui_scale_description),
                     style = BoBClawType.body,
                     color = colors.textSecondary,
                 )
@@ -226,7 +232,7 @@ private fun UiScaleRow(
         Spacer(Modifier.height(10.dp))
         // Reset-to-100% affordance (nice-to-have per DESIGN §5).
         Text(
-            text = "Reset to 100%",
+            text = stringResource(Res.string.settings_reset_to_100),
             style = BoBClawType.label,
             color = if (prefs.uiScale != 1.0f) colors.accent else colors.textMuted,
             modifier = Modifier
@@ -281,10 +287,10 @@ private fun AccentPickerRow(
 ) {
     val colors = LocalBoBClawColors
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text("Accent color", style = BoBClawType.title, color = colors.textPrimary)
+        Text(stringResource(Res.string.settings_accent_color), style = BoBClawType.title, color = colors.textPrimary)
         Spacer(Modifier.height(2.dp))
         Text(
-            "Re-skins the entire app.",
+            stringResource(Res.string.settings_accent_color_description),
             style = BoBClawType.body,
             color = colors.textSecondary,
         )
@@ -398,7 +404,7 @@ private fun NotConfiguredPane(name: String) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Not yet configured",
+                text = stringResource(Res.string.settings_not_yet_configured),
                 style = BoBClawType.monoCaption,
                 color = colors.textMuted,
                 textAlign = TextAlign.Center,

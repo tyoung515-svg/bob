@@ -34,6 +34,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ── Locale response directive (i18n S0) ───────────────────────────────────────
+# The ONE place the response-language directive text lives. Module-level so tests can
+# import and assert the exact bytes (guards drift). Injected front-most in execute_node
+# when state["locale"] is a known non-"en" locale.
+LOCALE_DIRECTIVE = {
+    "zh-Hans": "只用简体中文回答。无论用户消息或上下文使用何种语言，你的全部回复都必须是简体中文。",
+    "zh-Hant": "只用繁體中文回答。無論使用者訊息或上下文使用何種語言，你的全部回覆都必須是繁體中文。",
+}
+
+def locale_directive_message(locale) -> Optional[dict]:
+    """The front-most system directive for a response locale, or None to inject nothing.
+    None / "en" / unknown / non-string => None (byte-identical English path). The SINGLE
+    source of the locale-injection predicate; execute_node and the tests both call this."""
+    if isinstance(locale, str) and locale != "en" and locale in LOCALE_DIRECTIVE:
+        return {"role": "system", "content": LOCALE_DIRECTIVE[locale]}
+    return None
+
+
 # ── LangChain / LangGraph imports for the opt-in tool loop (P0) ────────────────
 # Imported locally so the rest of execute.py keeps running even if these
 # packages are not available; P0 adds langchain-openai as a required dep.
@@ -1116,6 +1134,12 @@ async def execute_node(state: "AgentState") -> dict:
     project_instructions = (state.get("project_instructions") or "").strip()
     if project_instructions:
         messages.insert(0, {"role": "system", "content": f"Project context:\n{project_instructions}"})
+    # This is the ONE locale injection point, front-most, covering both the HTTP join
+    # and the subprocess _messages_to_prompt (both concatenate role:"system" messages in order).
+    # locale_directive_message() is the single source of the guard (None => English, never raises).
+    _locale_directive = locale_directive_message(state.get("locale"))
+    if _locale_directive is not None:
+        messages.insert(0, _locale_directive)
 
     # ── Opt-in LangChain tool-calling loop (P0) ──────────────────────────────
     # Only fires for a tool-enabled face on a tool-capable backend. Every other

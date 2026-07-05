@@ -1,5 +1,10 @@
 package com.bobclaw.ui.components
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+import org.jetbrains.compose.resources.StringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,16 +30,18 @@ import com.bobclaw.ui.theme.BoBClawType
 import com.bobclaw.ui.theme.LocalBoBClawColors
 
 /** One rail destination: the enum value, its label, and a placeholder glyph (no icon font this lane). */
-private data class RailItem(val dest: RailDest, val label: String, val glyph: String)
+private data class RailItem(val dest: RailDest, val labelRes: StringResource, val glyph: String)
 
-/** Top destinations, in order (DESIGN §4: Chat · Council · Teams · Routing · Approvals · Dashboard). */
+/** Top destinations, in order (DESIGN §4: Chat · Council · Teams · Routing · Approvals · Dashboard).
+ * labelRes (not a raw String) so the label localizes — resolved via stringResource at render (the
+ * list is a top-level val, i.e. NOT a @Composable, so it can't call stringResource itself). */
 private val RAIL_ITEMS = listOf(
-    RailItem(RailDest.CHAT, "Chat", "💬"),
-    RailItem(RailDest.COUNCIL, "Council", "⚖"),
-    RailItem(RailDest.TEAMS, "Teams", "👥"),
-    RailItem(RailDest.ROUTING, "Routing", "🔀"),
-    RailItem(RailDest.APPROVALS, "Approvals", "✅"),
-    RailItem(RailDest.DASHBOARD, "Dashboard", "▦"),
+    RailItem(RailDest.CHAT, Res.string.nav_chat, "💬"),
+    RailItem(RailDest.COUNCIL, Res.string.nav_council, "⚖"),
+    RailItem(RailDest.TEAMS, Res.string.nav_teams, "👥"),
+    RailItem(RailDest.ROUTING, Res.string.nav_routing, "🔀"),
+    RailItem(RailDest.APPROVALS, Res.string.nav_approvals, "✅"),
+    RailItem(RailDest.DASHBOARD, Res.string.nav_dashboard, "▦"),
 )
 
 /**
@@ -66,7 +73,7 @@ fun NavRail(
         RAIL_ITEMS.forEach { item ->
             RailCell(
                 glyph = item.glyph,
-                label = item.label,
+                label = stringResource(item.labelRes),
                 active = item.dest == selected,
                 badge = if (item.dest == RailDest.APPROVALS && approvalsCount > 0) approvalsCount else null,
                 onClick = { onSelect(item.dest) },
@@ -88,12 +95,12 @@ fun NavRail(
         // Health indicator — mono, success dot (static OK; live health wiring is a later lane).
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(text = "●", style = BoBClawType.monoLabel, color = colors.success)
-            Text(text = "OK", style = BoBClawType.monoCaption, color = colors.textMuted)
+            Text(text = stringResource(Res.string.nav_ok), style = BoBClawType.monoCaption, color = colors.textMuted)
         }
         Spacer(Modifier.height(8.dp))
-        RailFooterButton(glyph = "⚙", label = "Settings", onClick = onSettings)
+        RailFooterButton(glyph = "⚙", label = stringResource(Res.string.nav_settings), onClick = onSettings)
         Spacer(Modifier.height(4.dp))
-        RailFooterButton(glyph = "⏻", label = "Logout", onClick = onLogout)
+        RailFooterButton(glyph = "⏻", label = stringResource(Res.string.nav_logout), onClick = onLogout)
     }
 }
 

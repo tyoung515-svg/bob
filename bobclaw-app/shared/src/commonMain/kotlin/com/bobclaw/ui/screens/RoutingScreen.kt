@@ -1,5 +1,11 @@
 package com.bobclaw.ui.screens
 
+import com.bobclaw.ui.i18n.roleLabel
+
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -82,11 +88,11 @@ fun RoutingScreen(
                 .padding(20.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Text("Routing", style = BoBClawType.title, color = colors.textPrimary)
+            Text(stringResource(Res.string.routing_title), style = BoBClawType.title, color = colors.textPrimary)
             Spacer(Modifier.height(4.dp))
             val current = view
             Text(
-                text = "JOAT v0 · active team: " + (current?.activeTeam ?: "default (per-face)"),
+                text = stringResource(Res.string.routing_active_team, current?.activeTeam ?: stringResource(Res.string.routing_default_team_fallback)),
                 style = BoBClawType.monoCaption,
                 color = colors.textSecondary,
             )
@@ -101,7 +107,7 @@ fun RoutingScreen(
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "declared mapping — not health-checked",
+                        text = stringResource(Res.string.routing_declared_mapping),
                         style = BoBClawType.monoCaption,
                         color = colors.textSecondary,
                     )
@@ -115,7 +121,7 @@ fun RoutingScreen(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    TeamChip("default", selectedTeam == null) { selectedTeam = null }
+                    TeamChip(stringResource(Res.string.routing_default_team), selectedTeam == null) { selectedTeam = null }
                     current.teams.forEach { team ->
                         TeamChip(team, selectedTeam == team) { selectedTeam = team }
                     }
@@ -126,11 +132,11 @@ fun RoutingScreen(
 
             when {
                 loading && current == null ->
-                    Text("Loading routing view…", style = BoBClawType.body, color = colors.textSecondary)
+                    Text(stringResource(Res.string.routing_loading), style = BoBClawType.body, color = colors.textSecondary)
                 error != null && current == null ->
                     Text("Failed: $error", style = BoBClawType.body, color = ErrorRed)
                 current == null || current.faces.isEmpty() ->
-                    Text("No faces registered", style = BoBClawType.body, color = colors.textSecondary)
+                    Text(stringResource(Res.string.routing_no_faces), style = BoBClawType.body, color = colors.textSecondary)
                 else -> RoutingTable(current.faces)
             }
         }
@@ -160,11 +166,11 @@ private fun RoutingTable(faces: List<RoutingFace>) {
     val colors = LocalBoBClawColors
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            HeaderCell("FACE", 2f)
-            HeaderCell("ROLE", 1f)
-            HeaderCell("RESOLVED", 2f)
-            HeaderCell("ESCALATION", 3f)
-            HeaderCell("TOOLS", 1f)
+            HeaderCell(stringResource(Res.string.routing_header_face), 2f)
+            HeaderCell(stringResource(Res.string.routing_header_role), 1f)
+            HeaderCell(stringResource(Res.string.routing_header_resolved), 2f)
+            HeaderCell(stringResource(Res.string.routing_header_escalation), 3f)
+            HeaderCell(stringResource(Res.string.routing_header_tools), 1f)
         }
         Spacer(Modifier.fillMaxWidth().height(1.dp).background(colors.borderSection))
         faces.forEach { face ->
@@ -173,14 +179,14 @@ private fun RoutingTable(faces: List<RoutingFace>) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 BodyCell(face.id, 2f, colors.textPrimary, FontWeight.Medium)
-                BodyCell(face.role ?: "—", 1f, colors.textSecondary)
+                BodyCell(face.role?.let { roleLabel(it) } ?: "—", 1f, colors.textSecondary)
                 BodyCell(face.resolvedBackend.ifBlank { "—" }, 2f, colors.accent, FontWeight.Medium)
                 BodyCell(
                     if (face.escalationChain.isEmpty()) "—" else face.escalationChain.joinToString(" → "),
                     3f,
                     colors.textSecondary,
                 )
-                BodyCell(if (face.toolCapable) "yes" else "", 1f, colors.success)
+                BodyCell(if (face.toolCapable) stringResource(Res.string.routing_yes) else "", 1f, colors.success)
             }
             Spacer(Modifier.fillMaxWidth().height(1.dp).background(colors.borderSection))
         }

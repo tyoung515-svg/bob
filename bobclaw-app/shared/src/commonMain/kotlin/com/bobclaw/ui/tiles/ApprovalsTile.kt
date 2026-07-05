@@ -1,5 +1,9 @@
 package com.bobclaw.ui.tiles
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -73,11 +77,11 @@ fun ApprovalsTile(
     val pending = items?.filter { it.status == "pending" } ?: emptyList()
 
     if (narrow) {
-        Tile(title = "Approvals", modifier = modifier) {
+        Tile(title = stringResource(Res.string.approvals_title), modifier = modifier) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = when {
-                        loading && items == null -> "..."
+                        loading && items == null -> stringResource(Res.string.approvals_loading_dots)
                         error != null && items == null -> "?"
                         else -> "${pending.size} pending"
                     },
@@ -92,16 +96,16 @@ fun ApprovalsTile(
             }
         }
     } else {
-        Tile(title = "Approvals", modifier = modifier) {
+        Tile(title = stringResource(Res.string.approvals_title), modifier = modifier) {
             when {
                 loading && items == null -> {
-                    Text("Loading approvals...", color = BoBClawColors.TextSecondary, fontSize = 13.sp)
+                    Text(stringResource(Res.string.approvals_loading), color = BoBClawColors.TextSecondary, fontSize = 13.sp)
                 }
                 error != null && items == null -> {
                     Text("Failed: $error", color = DenyRed, fontSize = 12.sp)
                 }
                 pending.isEmpty() -> {
-                    Text("No pending approvals", color = BoBClawColors.TextSecondary, fontSize = 13.sp)
+                    Text(stringResource(Res.string.approvals_no_pending), color = BoBClawColors.TextSecondary, fontSize = 13.sp)
                 }
                 else -> {
                     Column(
@@ -155,7 +159,7 @@ private fun ApprovalCard(approval: ApprovalItem, restClient: RestClient?) {
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = "Approve",
+                text = stringResource(Res.string.approvals_approve),
                 color = BoBClawColors.KpiGreen,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -174,7 +178,7 @@ private fun ApprovalCard(approval: ApprovalItem, restClient: RestClient?) {
                     .padding(horizontal = 10.dp, vertical = 3.dp),
             )
             Text(
-                text = "Deny",
+                text = stringResource(Res.string.approvals_deny),
                 color = DenyRed,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,

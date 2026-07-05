@@ -1,5 +1,9 @@
 package com.bobclaw.ui
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +24,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -87,6 +92,7 @@ fun App(
     sessionStore: SessionStore = NoopSessionStore,
     prefStore: PrefStore = NoopPrefStore,
     artifactRenderer: @Composable (html: String?, url: String?, modifier: Modifier) -> Unit = { _, _, _ -> },
+    applyPlatformLocale: (String) -> Unit = {},
 ) {
     // ONE RestClient instance, shared by AuthManager (it stores tokens into it) and all REST calls.
     val restClient = remember { RestClient(Config.BASE_URL) }
@@ -120,6 +126,10 @@ fun App(
     // prefs.accentName here re-skins the entire app live whenever the Settings swatch picker writes
     // a new accentName (prefs is reactive root state). Both overrides live on the SAME provider.
     val baseDensity = LocalDensity.current
+    // Restart-free locale (i18n): apply the platform locale, then re-key the tree so Compose
+    // Resources re-resolve to values-zh-rCN / values-zh-rTW with NO app restart.
+    remember(prefs.locale) { applyPlatformLocale(prefs.locale); prefs.locale }
+    key(prefs.locale) {
     CompositionLocalProvider(
         LocalBoBClawColorSet provides bobclawColors(accentColorFor(prefs.accentName)),
         LocalDensity provides Density(baseDensity.density * prefs.uiScale, baseDensity.fontScale),
@@ -161,6 +171,7 @@ fun App(
                 artifactRenderer = artifactRenderer,
             )
         }
+    }
     }
 }
 
@@ -216,6 +227,8 @@ private fun LoggedInShell(
                     restClient = restClient,
                     webSocket = webSocket,
                     onLogout = onLogout,
+                    locale = prefs.locale,
+                    onSetLocale = { tag -> onPrefsChange(prefs.copy(locale = tag)) },
                     // ChatScreen's in-chat dashboard button now just switches the rail destination
                     // (the rail also has Dashboard). ChatScreen's signature is unchanged.
                     onOpenDashboard = { onSelectDest(RailDest.DASHBOARD) },
@@ -226,10 +239,10 @@ private fun LoggedInShell(
                     restClient = restClient,
                     onOpenConversation = onOpenConversation,
                 )
-                railDest == RailDest.COUNCIL -> PlaceholderScreen("Council")
+                railDest == RailDest.COUNCIL -> PlaceholderScreen(stringResource(Res.string.app_council))
                 railDest == RailDest.TEAMS -> TeamsScreen(restClient = restClient)
                 railDest == RailDest.ROUTING -> RoutingScreen(restClient = restClient)
-                railDest == RailDest.APPROVALS -> PlaceholderScreen("Approvals")
+                railDest == RailDest.APPROVALS -> PlaceholderScreen(stringResource(Res.string.app_approvals))
             }
         }
     }
@@ -242,7 +255,7 @@ private fun RestoringScreen() {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = BoBClawColors.AccentGreen)
                 Spacer(Modifier.height(12.dp))
-                Text("Restoring session...", color = BoBClawColors.TextSecondary)
+                Text(stringResource(Res.string.app_restoring_session), color = BoBClawColors.TextSecondary)
             }
         }
     }
@@ -307,30 +320,30 @@ private fun KpiStrip(restClient: RestClient) {
 
 @Composable
 private fun RowScope.WideZoneSection(restClient: RestClient, onOpenConversation: (String) -> Unit) {
-    ZoneColumn(title = "Coding", modifier = Modifier.weight(1f)) {
+    ZoneColumn(title = stringResource(Res.string.app_coding), modifier = Modifier.weight(1f)) {
         ConversationListTile(restClient = restClient, onOpenConversation = onOpenConversation)
     }
     Spacer(Modifier.width(12.dp))
-    ZoneColumn(title = "Orchestration", modifier = Modifier.weight(1f)) {
+    ZoneColumn(title = stringResource(Res.string.app_orchestration), modifier = Modifier.weight(1f)) {
         BackendHealthTile(restClient = restClient)
     }
     Spacer(Modifier.width(12.dp))
-    ZoneColumn(title = "Cognitive", modifier = Modifier.weight(1f)) {
+    ZoneColumn(title = stringResource(Res.string.app_cognitive), modifier = Modifier.weight(1f)) {
         IdeaInboxTile(restClient = restClient)
     }
 }
 
 @Composable
 private fun ColumnScope.CompactZoneSection(restClient: RestClient, onOpenConversation: (String) -> Unit) {
-    ZoneColumn(title = "Coding", modifier = Modifier.fillMaxWidth()) {
+    ZoneColumn(title = stringResource(Res.string.app_coding), modifier = Modifier.fillMaxWidth()) {
         ConversationListTile(restClient = restClient, onOpenConversation = onOpenConversation)
     }
     Spacer(Modifier.height(12.dp))
-    ZoneColumn(title = "Orchestration", modifier = Modifier.fillMaxWidth()) {
+    ZoneColumn(title = stringResource(Res.string.app_orchestration), modifier = Modifier.fillMaxWidth()) {
         BackendHealthTile(restClient = restClient)
     }
     Spacer(Modifier.height(12.dp))
-    ZoneColumn(title = "Cognitive", modifier = Modifier.fillMaxWidth()) {
+    ZoneColumn(title = stringResource(Res.string.app_cognitive), modifier = Modifier.fillMaxWidth()) {
         IdeaInboxTile(restClient = restClient)
     }
 }
@@ -365,13 +378,13 @@ private fun InsightStrip() {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Tile(title = "System Health", modifier = Modifier.weight(1f)) {
-            Text("All systems nominal", color = BoBClawColors.KpiGreen)
+        Tile(title = stringResource(Res.string.app_system_health), modifier = Modifier.weight(1f)) {
+            Text(stringResource(Res.string.app_all_systems_nominal), color = BoBClawColors.KpiGreen)
         }
-        Tile(title = "Recent Events", modifier = Modifier.weight(1f)) {
+        Tile(title = stringResource(Res.string.app_recent_events), modifier = Modifier.weight(1f)) {
             Text("3 alerts in 24h", color = BoBClawColors.TextSecondary)
         }
-        Tile(title = "Alert Summary", modifier = Modifier.weight(1f)) {
+        Tile(title = stringResource(Res.string.app_alert_summary), modifier = Modifier.weight(1f)) {
             Text("1 critical, 2 warning", color = BoBClawColors.TextSecondary)
         }
     }

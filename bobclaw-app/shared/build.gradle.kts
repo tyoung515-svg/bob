@@ -20,6 +20,7 @@ kotlin {
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(compose.material3)
+                implementation(compose.components.resources)
 
                 implementation("io.ktor:ktor-client-core:2.3.12")
                 implementation("io.ktor:ktor-client-websockets:2.3.12")
@@ -64,6 +65,12 @@ kotlin {
             }
         }
     }
+}
+
+compose.resources {
+    publicResClass = true
+    packageOfResClass = "com.bobclaw.shared.resources"
+    generateResClass = always
 }
 
 android {

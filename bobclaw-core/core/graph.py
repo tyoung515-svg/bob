@@ -68,6 +68,8 @@ class AgentState(TypedDict):
     task: str
     # Stable BoBClaw conversation id from the HTTP request.
     conversation_id: Optional[str]
+    # the response-language locale (BCP-47-ish: "en" | "zh-Hans" | "zh-Hant"); optional, default "en"; absent/"en" => no directive => byte-identical.
+    locale: Optional[str]
     # Gateway-derived user identity (JWT subject). Threaded into tool contextvars.
     user_id: Optional[str]
     # Active face / persona

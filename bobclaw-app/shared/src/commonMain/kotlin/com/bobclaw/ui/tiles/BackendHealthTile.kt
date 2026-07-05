@@ -1,5 +1,9 @@
 package com.bobclaw.ui.tiles
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -62,10 +66,10 @@ fun BackendHealthTile(
         }
     }
 
-    SectionTile(title = "Backend Health", modifier = modifier) {
+    SectionTile(title = stringResource(Res.string.backend_health_title), modifier = modifier) {
         if (loading && healthList == null) {
             Text(
-                "Checking backends...",
+                stringResource(Res.string.backend_health_checking_backends),
                 color = BoBClawColors.TextSecondary,
                 fontSize = 13.sp,
             )
@@ -79,7 +83,7 @@ fun BackendHealthTile(
             val items = healthList
             if (items.isNullOrEmpty()) {
                 Text(
-                    "No backends registered",
+                    stringResource(Res.string.backend_health_no_backends_registered),
                     color = BoBClawColors.TextSecondary,
                     fontSize = 13.sp,
                 )

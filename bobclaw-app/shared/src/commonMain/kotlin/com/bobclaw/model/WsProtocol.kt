@@ -11,7 +11,8 @@ sealed class ClientMessage {
     data class ChatMessage(
         @SerialName("conversation_id") val conversationId: String,
         val content: String,
-        @SerialName("face_id") val faceId: String? = null
+        @SerialName("face_id") val faceId: String? = null,
+        val locale: String? = null
     ) : ClientMessage() {
         companion object {
             const val TYPE = "message"
@@ -50,6 +51,17 @@ sealed class ClientMessage {
     ) : ClientMessage() {
         companion object {
             const val TYPE = "switch_profile"
+        }
+    }
+
+    @Serializable
+    @SerialName("switch_locale")
+    data class SwitchLocale(
+        @SerialName("conversation_id") val conversationId: String,
+        val locale: String,
+    ) : ClientMessage() {
+        companion object {
+            const val TYPE = "switch_locale"
         }
     }
 

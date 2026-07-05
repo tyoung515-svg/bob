@@ -1,5 +1,9 @@
 package com.bobclaw.ui.screens
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -34,7 +38,7 @@ fun PlaceholderScreen(name: String, modifier: Modifier = Modifier) {
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "coming soon",
+                    text = stringResource(Res.string.placeholder_coming_soon),
                     style = BoBClawType.monoCaption,
                     color = colors.textMuted,
                     textAlign = TextAlign.Center,

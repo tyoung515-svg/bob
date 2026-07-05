@@ -1,5 +1,9 @@
 package com.bobclaw.ui.tiles
 
+import com.bobclaw.shared.resources.*
+
+import org.jetbrains.compose.resources.stringResource
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -60,10 +64,10 @@ fun ConversationListTile(
         }
     }
 
-    SectionTile(title = "Conversations", modifier = modifier) {
+    SectionTile(title = stringResource(Res.string.conv_list_conversations), modifier = modifier) {
         if (loading && conversations == null) {
             Text(
-                "Loading conversations...",
+                stringResource(Res.string.conv_list_loading_conversations),
                 color = BoBClawColors.TextSecondary,
                 fontSize = 13.sp,
             )
@@ -77,7 +81,7 @@ fun ConversationListTile(
             val items = conversations
             if (items.isNullOrEmpty()) {
                 Text(
-                    "No conversations yet",
+                    stringResource(Res.string.conv_list_no_conversations_yet),
                     color = BoBClawColors.TextSecondary,
                     fontSize = 13.sp,
                 )
@@ -106,7 +110,7 @@ private fun ConversationRow(conv: Conversation, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = conv.title ?: "Untitled",
+                text = conv.title ?: stringResource(Res.string.conv_list_untitled),
                 color = BoBClawColors.TextPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,

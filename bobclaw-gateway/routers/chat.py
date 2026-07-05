@@ -254,6 +254,7 @@ async def _stream_chat_to_client(ws, conversation_id: str, payload: dict, conv_s
         "model": payload.get("model") or conv_session.get("model") or (conv_row["model_preference"] if conv_row else None),
         "backend": conv_session.get("backend") or (conv_row["backend_preference"] if conv_row else None),
         "profile": payload.get("profile") or conv_session.get("profile"),
+        "locale": payload.get("locale") or conv_session.get("locale") or "en",  # absent => "en"
         "project_instructions": project_context,
         "history": history or [],
         "user_id": user_id,
@@ -457,6 +458,23 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
             conv_session = get_conversation_session(request.app, user_id, conversation_id)
             conv_session["profile"] = profile or None
             await ws.send_json({"type": "profile_switched", "profile": profile or None})
+            return True
+
+        if message_type == "switch_locale":
+            # Pin a locale to this conversation. Session-only (no DB column yet) —
+            # empty clears it (defaults to "en" upstream). The next turn's upstream
+            # payload reads conv_session["locale"].
+            locale = str(data.get("locale") or "").strip()
+            conversation_id = str(data.get("conversation_id") or "").strip()
+            if not conversation_id:
+                await _send_ws_error(ws, "conversation_id is required", "invalid_conversation")
+                return True
+            if not await _verify_conversation_access(pool, conversation_id, user_id):
+                await _send_ws_error(ws, "Conversation not found or access denied", "not_found")
+                return True
+            conv_session = get_conversation_session(request.app, user_id, conversation_id)
+            conv_session["locale"] = locale or None
+            await ws.send_json({"type": "locale_switched", "locale": locale or None})
             return True
 
         if message_type == "switch_model":
