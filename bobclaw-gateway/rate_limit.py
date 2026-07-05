@@ -19,11 +19,9 @@ from client_ip import client_ip
 
 # Paths the rate limiter does not see. /health is skipped to avoid throttling
 # k8s liveness probes; /ws/chat is a long-lived WS handshake (rate-limit per
-# connection makes no sense — message-level limits would be a different layer);
-# /ui static assets are public files (not API actions) and a single page load
-# pulls several — rate-limiting them only risks throttling legitimate loads.
+# connection makes no sense — message-level limits would be a different layer).
 _BYPASS_PATHS: frozenset[str] = frozenset({"/health"})
-_BYPASS_PREFIXES: tuple[str, ...] = ("/ws/chat", "/ui")
+_BYPASS_PREFIXES: tuple[str, ...] = ("/ws/chat",)
 
 
 class TokenBucket:

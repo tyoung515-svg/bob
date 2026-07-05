@@ -238,8 +238,8 @@ async def authenticate_ws(
 async def auth_middleware(request: web.Request, handler):
     """
     Validate JWT Bearer tokens on all routes except /auth/*, /health,
-    /ws/chat, /ws/approvals, the root redirect (/), and the static web UI
-    (/ui, /ui/*). Browsers can't set an Authorization header on a WebSocket
+    /ws/chat, /ws/approvals, and the root info route (/).
+    Browsers can't set an Authorization header on a WebSocket
     upgrade, so both WS endpoints do their own Pattern-2 first-frame auth and
     must be exempt here or the upgrade is 401'd before that runs. The UI
     assets and login page must load before any token exists; every request the
@@ -254,8 +254,6 @@ async def auth_middleware(request: web.Request, handler):
         or path == "/ws/chat"
         or path == "/ws/approvals"
         or path == "/"
-        or path == "/ui"
-        or path.startswith("/ui/")
     ):
         return await handler(request)
 

@@ -112,27 +112,15 @@ def build_app(state_overrides: dict[web.AppKey, Any] | None = None) -> web.Appli
     app.router.add_routes(teams_router)
     app.router.add_routes(system_router)
 
-    # Static web UI (Path A: served by the gateway, same-origin, no CORS).
-    # Auth-exempt via auth.py so the login page loads tokenless; everything
-    # the page then fetches still carries a Bearer token. Registered before
-    # the CORS loop below so static routes are covered if ALLOWED_ORIGINS set.
-    _ui_dir = pathlib.Path(__file__).parent / "ui"
-    _ui_dir.mkdir(exist_ok=True)
+    # Web UI REMOVED (2026-07-02): the Preact stopgap wrapper was deprecated in favor of the
+    # KMM desktop app. Only the JSON/WS API remains; `/` returns a tiny info response.
+    async def _root(_request: web.Request) -> web.StreamResponse:
+        return web.json_response(
+            {"service": "bobclaw-gateway", "ui": "removed — use the desktop app",
+             "api": ["/api/*", "/ws/chat", "/auth"]}
+        )
 
-    async def _root_redirect(_request: web.Request) -> web.StreamResponse:
-        raise web.HTTPFound("/ui/")
-
-    async def _ui_index(_request: web.Request) -> web.StreamResponse:
-        # add_static won't serve index.html for the bare dir "/ui/" (it 403s
-        # with show_index=False), so serve the SPA entry point explicitly.
-        return web.FileResponse(_ui_dir / "index.html")
-
-    app.router.add_get("/", _root_redirect)
-    # Explicit UI index routes MUST be registered before add_static so the
-    # bare "/ui" and "/ui/" resolve here, not to the static dir handler.
-    app.router.add_get("/ui", _root_redirect)
-    app.router.add_get("/ui/", _ui_index)
-    app.router.add_static("/ui", _ui_dir, show_index=False)
+    app.router.add_get("/", _root)
 
     # CORS — explicit allowlist (empty list in dev means no CORS headers)
     if config.ALLOWED_ORIGINS:
