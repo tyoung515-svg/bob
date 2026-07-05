@@ -100,7 +100,7 @@ _HTTP_CLIENT_BACKENDS: frozenset[str] = frozenset({
     "gemini_deep_research",
     "claude_code",   # subprocess `claude --version`
     "agy_code",      # subprocess `agy --version`
-    "codex_code",    # subprocess `codex --version` + LiteLLM proxy liveness
+    "codex_code",    # subprocess `codex --version` (CLI-only; not gated on the LiteLLM proxy)
     "kimi_cli",      # subprocess `kimi --version`
 })
 _SPECIAL_BACKENDS: frozenset[str] = frozenset({"local", "opencode_serve"})

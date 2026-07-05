@@ -12,15 +12,16 @@ All notable changes to BoB are documented here. This project adheres to
   per-turn `locale`: when it is non-`en`, the model is directed to reply in that language
   (the desktop app sends the locale per-turn; a `switch_locale` WS message can also pin it
   to a conversation). Absent / `en` ⇒ byte-identical to before.
-- **Pick which GPT model on the Codex planner.** A UI model selection now binds on the
-  `gpt` / codex planner tier, so a `gpt`-profile face can run a chosen GPT model (e.g.
-  `gpt-5.5`) natively under a ChatGPT login instead of only the profile's default — without
-  being forced through the LiteLLM proxy.
-- **Faces know they're running inside BoB.** An opt-in spawn-identity card
-  (`BOB_IDENTITY_ENABLED`, on in the shipped `.env`) prepends a system line to every turn
-  naming the platform, the face (name / role), and the backend serving it — so a face answers
-  "I'm BoB's General Assistant, served by …" instead of "I have no idea I'm deployed." Off ⇒
-  byte-identical; `BOB_IDENTITY_TEXT` overrides the card.
+- **Codex planner honors an explicitly-pinned model.** When a specific model is pinned on the
+  `gpt` / codex planner tier (via `switch_model` / `state.model_override`), a `gpt`-profile
+  face now runs that chosen GPT model (e.g. `gpt-5.5`) natively under a ChatGPT login instead
+  of only the profile's default — without being forced through the LiteLLM proxy. (The desktop
+  app pins the backend/face today; a model *picker* control in the GUI is a follow-up.)
+- **Faces know they're running inside BoB.** A spawn-identity card prepends a system line to
+  every turn naming the platform, the face (name / role), and the backend serving it — so a
+  face answers "I'm BoB's General Assistant, served by …" instead of "I have no idea I'm
+  deployed." The code default is **off** (`BOB_IDENTITY_ENABLED`, byte-identical); the shipped
+  `.env` deliberately **opts in** (set it false for a bare model). `BOB_IDENTITY_TEXT` overrides.
 
 ### Changed
 - **Removed the preview web UI — the desktop app is the GUI.** The Preact browser stopgap

@@ -214,9 +214,9 @@ class BoBClawConfig:
     # profiles) so spawns don't touch the user's interactive codex config. Unset /
     # missing ⇒ inherit the real CODEX_HOME (uses the user's profiles).
     CODEX_HOME: str = os.getenv("CODEX_HOME", "")
-    # The local LiteLLM proxy codex routes through. codex_code.health_check probes
-    # it — codex is dead without it (all providers route through it). The JOAT
-    # health-walk uses this to route codex_code → opencode_serve when :4000 is down.
+    # The local LiteLLM proxy codex routes non-OpenAI providers (glm/deepseek/qwen) through.
+    # NOTE: codex_code.health_check is CLI-only and does NOT gate on this proxy (native gpt
+    # needs no proxy); a litellm-routed profile that hits a down proxy escalates at runtime.
     # 127.0.0.1, NOT localhost — aiohttp may resolve localhost→::1 and miss the
     # IPv4-bound proxy (the project-wide IPv4 rule; codex's own config can keep
     # localhost since its HTTP client handles both).
