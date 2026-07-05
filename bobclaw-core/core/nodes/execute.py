@@ -52,6 +52,47 @@ def locale_directive_message(locale) -> Optional[dict]:
     return None
 
 
+# The default spawn-identity card. Front-most system message telling a face it runs inside BoB
+# + who it is, so it stops answering "I have no idea I'm deployed in bob". Placeholders are
+# filled per turn; BOB_IDENTITY_TEXT can override the whole thing. Module-level so tests assert it.
+BOB_IDENTITY_CARD = (
+    "You are running inside **BoB** (Build · Orchestrate · Bind), a self-hosted multi-agent "
+    "orchestration platform — not a bare chat endpoint. You are the \"{face_name}\" face{role_clause}, "
+    "and this reply is being served through the \"{backend}\" backend that BoB's router selected. "
+    "BoB routes turns to different faces, fans work out to a worker fleet, convenes a deliberating "
+    "council, and runs a build→verify pipeline; you are one voice in that system. If the user asks "
+    "how you're deployed or how you're talking to them, answer from THIS — you are BoB's "
+    "\"{face_name}\", served by \"{backend}\" — rather than claiming you can't see your environment."
+)
+
+
+def bob_identity_message(state: dict) -> Optional[dict]:
+    """A front-most system card telling the face it's running inside BoB + who it is (name / role /
+    backend). Returns None when BOB_IDENTITY_ENABLED is off (default) ⇒ byte-identical. Rides the
+    same splice rail as the project-context + locale messages, so it reaches every backend.
+    Best-effort: any lookup failure degrades to a minimal card, never raises."""
+    if not config.BOB_IDENTITY_ENABLED:
+        return None
+    face_id = state.get("face_id") or "assistant"
+    face_name, role = face_id, None
+    try:
+        from core.faces.registry import get_default_registry
+        face = get_default_registry().get_face(face_id)
+        face_name = getattr(face, "name", None) or face_id
+        role = getattr(face, "role", None)
+    except Exception:  # noqa: BLE001 — identity is best-effort; never break the turn
+        pass
+    backend = state.get("backend") or "the routed"
+    role_clause = f" (a {role}-role voice)" if role else ""
+    template = config.BOB_IDENTITY_TEXT.strip() or BOB_IDENTITY_CARD
+    try:
+        content = template.format(face_name=face_name, role_clause=role_clause, backend=backend)
+    except Exception:  # noqa: BLE001 — a bad custom template must not break the turn
+        content = BOB_IDENTITY_CARD.format(
+            face_name=face_name, role_clause=role_clause, backend=backend)
+    return {"role": "system", "content": content}
+
+
 # ── LangChain / LangGraph imports for the opt-in tool loop (P0) ────────────────
 # Imported locally so the rest of execute.py keeps running even if these
 # packages are not available; P0 adds langchain-openai as a required dep.
@@ -1140,6 +1181,11 @@ async def execute_node(state: "AgentState") -> dict:
     _locale_directive = locale_directive_message(state.get("locale"))
     if _locale_directive is not None:
         messages.insert(0, _locale_directive)
+    # Spawn-identity card (front-most so it frames who the face is), on the SAME rail so it reaches
+    # every backend. None when BOB_IDENTITY_ENABLED is off ⇒ byte-identical.
+    _identity = bob_identity_message(state)
+    if _identity is not None:
+        messages.insert(0, _identity)
 
     # ── Opt-in LangChain tool-calling loop (P0) ──────────────────────────────
     # Only fires for a tool-enabled face on a tool-capable backend. Every other

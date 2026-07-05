@@ -58,6 +58,16 @@ class BoBClawConfig:
     ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
 
+    # Spawn-identity card: when on, every face gets a front-most system message telling it it's
+    # running inside BoB + who it is (name / role / backend), so a face never says "I have no
+    # idea I'm deployed in bob". Default OFF ⇒ byte-identical (no message added); the shipped
+    # install turns it on via .env. BOB_IDENTITY_TEXT overrides the built-in card (supports the
+    # {face_name} / {role_clause} / {backend} placeholders); empty ⇒ the default card.
+    BOB_IDENTITY_ENABLED: bool = (
+        os.getenv("BOB_IDENTITY_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    BOB_IDENTITY_TEXT: str = os.getenv("BOB_IDENTITY_TEXT", "")
+
     # ── Gemini (cloud, REST API) ──────────────────────────
     GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
     GEMINI_PRO_MODEL: str = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
