@@ -55,8 +55,6 @@ import logging
 import os
 from typing import Any, AsyncIterator, Optional
 
-import aiohttp
-
 from core.config import config
 
 logger = logging.getLogger(__name__)
@@ -349,11 +347,15 @@ class CodexCodeClient:
     # ── health check ─────────────────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
-        """True if ``codex --version`` succeeds AND the LiteLLM proxy is reachable.
+        """True iff the codex CLI is present and runnable (``codex --version``).
 
-        codex_code is useless without the proxy (all providers route through it),
-        so the health-walk must route AWAY from codex_code when :4000 is down —
-        that's the JOAT v1 synergy (codex_code → opencode_serve fallback).
+        The backend's liveness is the CLI, NOT the optional LiteLLM proxy: the native
+        ``gpt`` profile (ChatGPT login) needs no proxy, so gating the whole backend on the
+        proxy wrongly marked native faces unhealthy under a team health-walk (a false
+        negative that stranded planner-gpt whenever :4000 was down). A litellm-routed
+        profile (glm/deepseek/qwen) that hits a down proxy fails and escalates at RUNTIME
+        via the existing 429/transient chain — the proxy is a per-profile runtime
+        dependency, not a backend-liveness signal.
         """
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -374,31 +376,7 @@ class CodexCodeClient:
             except ProcessLookupError:
                 pass
             return False
-        if proc.returncode != 0 or not stdout.decode("utf-8", errors="replace").strip():
-            return False
-        return await self._litellm_reachable()
-
-    async def _litellm_reachable(self) -> bool:
-        """Probe the LiteLLM proxy's FAST liveness (fail-closed: unreachable ⇒ False).
-
-        Uses ``/health/liveliness`` — NOT ``/health`` (which actively pings every
-        backend model, incl. dead local LM Studio endpoints, and hangs). Base must
-        be IPv4 (127.0.0.1): aiohttp on ``localhost`` may resolve ::1 and miss the
-        IPv4-bound proxy.
-        """
-        base = (config.LITELLM_BASE_URL or "").rstrip("/")
-        if not base:
-            return True  # no proxy configured ⇒ don't gate on it
-        if base.endswith("/v1"):
-            base = base[:-3]
-        url = base + "/health/liveliness"
-        try:
-            timeout = aiohttp.ClientTimeout(total=5, connect=3)
-            async with aiohttp.ClientSession(timeout=timeout) as s:
-                async with s.get(url) as resp:
-                    return resp.status == 200
-        except Exception:
-            return False
+        return proc.returncode == 0 and bool(stdout.decode("utf-8", errors="replace").strip())
 
     # ── internals ──────────────────────────────────────────────────────────────
 

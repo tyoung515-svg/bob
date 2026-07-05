@@ -227,23 +227,16 @@ async def test_chat_missing_binary_raises(tmp_path, monkeypatch):
 # ─── health_check ─────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_health_check_true(tmp_path, monkeypatch):
+async def test_health_check_true_is_cli_only(tmp_path, monkeypatch):
+    """CLI reachable ⇒ healthy. NOTE: no ``_litellm_reachable`` patch — health_check is the
+    codex-CLI liveness ONLY (the LiteLLM proxy is a per-profile runtime dependency now, not a
+    backend-liveness signal). This doubles as the regression guard for the native-gpt fix: a
+    re-added proxy gate would call the real probe here (:4000) and flake, failing this test."""
     c = _client(tmp_path, monkeypatch)
     proc = _fake_proc(stdout=b"codex-cli 0.142.3\n", rc=0)
     with patch("core.backends.codex_code.asyncio.create_subprocess_exec",
-               AsyncMock(return_value=proc)), \
-         patch.object(CodexCodeClient, "_litellm_reachable", AsyncMock(return_value=True)):
-        assert await c.health_check() is True
-
-
-@pytest.mark.asyncio
-async def test_health_check_false_when_proxy_down(tmp_path, monkeypatch):
-    c = _client(tmp_path, monkeypatch)
-    proc = _fake_proc(stdout=b"codex-cli 0.142.3\n", rc=0)
-    with patch("core.backends.codex_code.asyncio.create_subprocess_exec",
-               AsyncMock(return_value=proc)), \
-         patch.object(CodexCodeClient, "_litellm_reachable", AsyncMock(return_value=False)):
-        assert await c.health_check() is False  # codex ok but proxy down ⇒ unavailable
+               AsyncMock(return_value=proc)):
+        assert await c.health_check() is True  # proxy state is irrelevant to backend health
 
 
 @pytest.mark.asyncio
