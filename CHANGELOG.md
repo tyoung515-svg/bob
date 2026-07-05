@@ -16,6 +16,11 @@ All notable changes to BoB are documented here. This project adheres to
   `gpt` / codex planner tier, so a `gpt`-profile face can run a chosen GPT model (e.g.
   `gpt-5.5`) natively under a ChatGPT login instead of only the profile's default — without
   being forced through the LiteLLM proxy.
+- **Faces know they're running inside BoB.** An opt-in spawn-identity card
+  (`BOB_IDENTITY_ENABLED`, on in the shipped `.env`) prepends a system line to every turn
+  naming the platform, the face (name / role), and the backend serving it — so a face answers
+  "I'm BoB's General Assistant, served by …" instead of "I have no idea I'm deployed." Off ⇒
+  byte-identical; `BOB_IDENTITY_TEXT` overrides the card.
 
 ### Changed
 - **Removed the preview web UI — the desktop app is the GUI.** The Preact browser stopgap

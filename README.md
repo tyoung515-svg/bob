@@ -121,6 +121,10 @@ MiniMax), subscription CLIs run under your own login (`claude`, `codex`, `agy`,
 `kimi`), and fully-local model servers (Ollama, LM Studio, llama.cpp). All model IDs
 are configurable — set your provider's current model in `.secrets/bobclaw.env`.
 
+Every face is told, on each turn, that it's running inside BoB — its name, role, and the
+backend serving it — so it answers from its real deployment rather than "I have no idea where
+I'm running." This is on by default (`BOB_IDENTITY_ENABLED`; set it false for a bare model).
+
 ## Documentation
 
 - **[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — step-by-step / agent-runnable install
