@@ -241,9 +241,7 @@ async def auth_middleware(request: web.Request, handler):
     /ws/chat, /ws/approvals, and the root info route (/).
     Browsers can't set an Authorization header on a WebSocket
     upgrade, so both WS endpoints do their own Pattern-2 first-frame auth and
-    must be exempt here or the upgrade is 401'd before that runs. The UI
-    assets and login page must load before any token exists; every request the
-    page then makes still carries a Bearer token.
+    must be exempt here or the upgrade is 401'd before that runs.
     Sets request["user"] to the decoded payload on success.
     """
     path = request.path

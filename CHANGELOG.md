@@ -6,9 +6,9 @@ All notable changes to BoB are documented here. This project adheres to
 ## [0.97.0]
 
 ### Added
-- **Chinese localization (Simplified + Traditional).** The desktop app is fully
-  localizable — 172 UI strings in en / zh-Hans (简) / zh-Hant (繁), a restart-free header
-  language toggle (EN → 简 → 繁), and a role-label map. The backend threads an optional
+- **Chinese localization (Simplified + Traditional).** The desktop app's UI is localized
+  — 172 UI strings in en / zh-Hans (简) / zh-Hant (繁), a restart-free header language
+  toggle (EN → 简 → 繁), and a role-label map. The backend threads an optional
   per-turn `locale`: when it is non-`en`, the model is directed to reply in that language
   (the desktop app sends the locale per-turn; a `switch_locale` WS message can also pin it
   to a conversation). Absent / `en` ⇒ byte-identical to before.
@@ -38,6 +38,8 @@ All notable changes to BoB are documented here. This project adheres to
   LiteLLM-via-Codex worker path remain user-validated.
 - The language directive is applied on the apex/synthesis reply; fan-out worker sub-turns
   don't yet inherit the conversation locale (a follow-up — the surfaced answer is localized).
+- A few interpolated / parameterized status strings in the app still render English (a
+  `%s`-formatting follow-up); the 172 static UI strings are fully translated.
 
 ## [0.96.0] — first public release
 

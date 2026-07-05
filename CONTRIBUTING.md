@@ -1,7 +1,7 @@
 # Contributing
 
-Thanks for looking at BoB. This is a **v0.96** release — headless-first, GUI-preview —
-so expect rough edges and a moving target.
+Thanks for looking at BoB. This is a **v0.97** release — headless-first, desktop-GUI
+(no browser UI) — so expect rough edges and a moving target.
 
 ## Project layout
 

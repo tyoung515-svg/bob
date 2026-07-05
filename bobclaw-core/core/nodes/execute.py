@@ -1414,8 +1414,10 @@ async def execute_node(state: "AgentState") -> dict:
         # model_override; mirror it here so an explicit pick binds. Combined with
         # codex_code._build_argv, a gpt-profile face runs the chosen gpt model
         # natively (no litellm). Council-shape overrides divert before execute,
-        # so a model_override reaching this backend is a genuine model id.
-        model_override = (state.get("model_override") or "").strip()
+        # so a model_override reaching this backend is a genuine model id. str() first:
+        # a malformed direct-to-core payload could send a non-string model, and a bare
+        # .strip() would crash the node instead of being ignored.
+        model_override = str(state.get("model_override") or "").strip()
         if model_override:
             posture = {**posture, "model": model_override}
         conversation_id = (state.get("conversation_id") or "").strip()

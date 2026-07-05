@@ -14,9 +14,10 @@ routing work to the right model, fanning it out across many, deliberating in a
 council, and — the part most tools skip — **verifying** the result before it reaches
 you.
 
-> **v0.96 — headless-first.** The CLI / MCP / agent front door is usable today. The
-> web and desktop GUIs ship as a **preview**. Hardening and GUI polish are tracked to
-> v1.0. This is an honest early release: read `SECURITY.md` before exposing the gateway.
+> **v0.97 — headless-first.** The CLI / MCP / agent front door is usable today; the
+> **desktop app** is the GUI (Android preview — there is no browser UI). Hardening and
+> GUI polish are tracked to v1.0. This is an honest early release: read `SECURITY.md`
+> before exposing the gateway.
 
 ## Why BoB
 
