@@ -230,7 +230,17 @@ class CodexCodeClient:
         model = posture.get("model")
         if profile:
             argv += ["-p", str(profile)]
+            # A profile already selects the provider (e.g. `gpt` = native OpenAI /
+            # ChatGPT login, NOT the LiteLLM proxy). Honour an explicit model pick
+            # WITHIN that profile's provider — do NOT force model_provider=litellm
+            # here (that would break gpt-native and re-route it through the proxy).
+            # This is what lets a `gpt`-profile face run a *chosen* gpt model
+            # (e.g. gpt-5.5) instead of only the profile's default.
+            if model:
+                argv += ["-m", str(model)]
         elif model:
+            # Bare model, no profile = the LiteLLM-routed worker path
+            # (glm / deepseek / qwen); force the litellm provider.
             argv += ["-m", str(model), "-c", "model_provider=litellm"]
 
         # Sandbox + working root. Scratch-write reads the repo but writes only the

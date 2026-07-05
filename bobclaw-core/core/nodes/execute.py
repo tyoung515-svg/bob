@@ -1382,6 +1382,18 @@ async def execute_node(state: "AgentState") -> dict:
                 posture = dict(face.codex_posture or {})
             except Exception:
                 posture = {}
+        # Honour a UI-picked model on the planner tier: a `switch_model` /
+        # model-pin lands in state.model_override (api/server.py → state), but the
+        # planner posture only carries a `profile` (e.g. gpt), so without this the
+        # pick was silently dropped — you could enter "gpt mode" but never choose
+        # WHICH gpt model. The stateless fan-out (worker) path already threads
+        # model_override; mirror it here so an explicit pick binds. Combined with
+        # codex_code._build_argv, a gpt-profile face runs the chosen gpt model
+        # natively (no litellm). Council-shape overrides divert before execute,
+        # so a model_override reaching this backend is a genuine model id.
+        model_override = (state.get("model_override") or "").strip()
+        if model_override:
+            posture = {**posture, "model": model_override}
         conversation_id = (state.get("conversation_id") or "").strip()
         resume_id = state.get("codex_resume_session_id")
         if conversation_id and not resume_id:

@@ -112,6 +112,18 @@ def test_build_argv_model_routes_litellm(tmp_path, monkeypatch):
     assert "model_provider=litellm" in argv
 
 
+def test_build_argv_profile_plus_model_stays_native(tmp_path, monkeypatch):
+    """A profile + an explicit model = pick that model within the profile's
+    provider (gpt-native), WITHOUT forcing the litellm proxy — the fix that lets
+    a `gpt`-profile face run a chosen gpt model instead of only the default."""
+    c = _client(tmp_path, monkeypatch)
+    argv = c._build_argv(posture={"profile": "gpt", "model": "gpt-5.5"},
+                         outfile="/o.txt", work_dir="/w", resume_thread=None)
+    assert argv[argv.index("-p") + 1] == "gpt"
+    assert argv[argv.index("-m") + 1] == "gpt-5.5"
+    assert "model_provider=litellm" not in argv
+
+
 def test_build_argv_scratch_write_locks_network(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch, cwd="/repo")
     argv = c._build_argv(posture={"mode": "scratch_write", "profile": "deepseek"},
@@ -326,6 +338,27 @@ async def test_execute_node_codex_code_success(mock_redis):
     _, kwargs = fake.chat.call_args
     assert kwargs["posture"] == {"profile": "glm", "brief": True}
     rec.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_node_codex_code_model_override_binds(mock_redis):
+    """A UI-picked model (state.model_override) threads into the codex posture so
+    a gpt-mode (profile=gpt) turn runs the CHOSEN gpt model, not only the default."""
+    fake = MagicMock()
+    fake.chat = AsyncMock(return_value={"text": "gpt plan", "session_id": "th2"})
+    fake.last_session_id = "th2"
+    with patch("core.backends.codex_code.CodexCodeClient", return_value=fake), \
+         patch("core.codex_sessions._lookup_codex_session", AsyncMock(return_value=None)), \
+         patch("core.codex_sessions._record_codex_session", AsyncMock()):
+        await execute_module.execute_node({
+            "task": "plan y", "backend": "codex_code", "messages": [],
+            "codex_posture": {"profile": "gpt", "brief": True},
+            "model_override": "gpt-5.5",
+            "escalation_backend": "claude_api", "conversation_id": "conv-gpt",
+        })
+    _, kwargs = fake.chat.call_args
+    # profile preserved, picked model threaded in alongside it
+    assert kwargs["posture"] == {"profile": "gpt", "brief": True, "model": "gpt-5.5"}
 
 
 @pytest.mark.asyncio
