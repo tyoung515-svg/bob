@@ -41,6 +41,30 @@ def _is_complex(task: str) -> bool:
     return len(task) > _COMPLEX_THRESHOLD or bool(_COMPLEX_KEYWORDS.search(task))
 
 
+def _is_council_turn(state: "AgentState") -> bool:
+    """Return True when this turn will divert to the council subgraph.
+
+    The council branch (graph._route_after_recall) never reads ``subtasks``,
+    so decomposing first would JIT-load a local model whose output is
+    discarded — pure VRAM churn on every council run.  Mirrors route_node's
+    two council triggers: the council-max face, and a profile with a council
+    ``shape``.
+    """
+    from core.nodes.route import _COUNCIL_FACE_ID
+
+    if state.get("face_id") == _COUNCIL_FACE_ID:
+        return True
+    profile_name = state.get("profile_name")
+    if profile_name:
+        try:
+            from core import teams
+            prof = teams.load_profile(profile_name)
+        except Exception:  # pragma: no cover - defensive
+            return False
+        return bool(prof and prof.get("shape"))
+    return False
+
+
 # ─── LLM call (injectable) ────────────────────────────────────────────────────
 
 async def _default_call_llm(task: str, backend: str) -> list[str]:
@@ -117,6 +141,15 @@ async def decompose_node(state: "AgentState") -> dict:
         return {
             "messages": [
                 {"role": "system", "content": f"Simple task (no decomposition needed): {task}"}
+            ],
+        }
+
+    if _is_council_turn(state):
+        # Council turns divert at recall and never consume subtasks — skip the
+        # decompose LLM call entirely instead of loading a model for nothing.
+        return {
+            "messages": [
+                {"role": "system", "content": f"Council turn (decomposition skipped): {task}"}
             ],
         }
 
