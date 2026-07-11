@@ -22,6 +22,21 @@ def _reset_bootstrap_globals() -> None:
     bootstrap_mod._bootstrap_config_snapshot = None
 
 
+@pytest.fixture(autouse=True)
+def _armed_write_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[MagicMock, MagicMock]:
+    """Keep general bootstrap tests offline while asserting the fence seam is wired."""
+    fence = MagicMock(name="write_fence")
+    builder = MagicMock(name="build_write_fence", return_value=fence)
+    monkeypatch.setattr(
+        bootstrap_mod,
+        "_maybe_build_write_fence",
+        builder,
+    )
+    return builder, fence
+
+
 @pytest.fixture
 def stores_toml(tmp_path: Path) -> Path:
     path = tmp_path / "test_stores.toml"
@@ -81,6 +96,45 @@ class TestBootstrapIdempotent:
         assert s1 is s2
 
 
+class TestBootstrapWriteFenceInvariant:
+    @patch("core.memory.bootstrap.QdrantClient")
+    def test_memory_enabled_arms_write_fence(
+        self,
+        mock_qdrant_cls: MagicMock,
+        stores_toml: Path,
+        sqlite_path: Path,
+        _armed_write_fence: tuple[MagicMock, MagicMock],
+    ) -> None:
+        mock_qdrant_cls.return_value.get_collections.return_value = MagicMock()
+        fence_builder, fence = _armed_write_fence
+
+        singletons = bootstrap_memory(_make_config(sqlite_path, stores_toml))
+
+        fence_builder.assert_called_once_with(
+            singletons.slot_resolver,
+            "test_",
+            "http://localhost:16333",
+        )
+        assert singletons.write_fence is fence
+        assert singletons.indexer._provider._write_fence is fence
+
+    @patch("core.memory.bootstrap.QdrantClient")
+    def test_write_fence_construction_failure_refuses_memory_bootstrap(
+        self,
+        mock_qdrant_cls: MagicMock,
+        stores_toml: Path,
+        sqlite_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_qdrant_cls.return_value.get_collections.return_value = MagicMock()
+        monkeypatch.setattr(
+            bootstrap_mod,
+            "_maybe_build_write_fence",
+            MagicMock(side_effect=RuntimeError("lock setup failed")),
+        )
+
+        with pytest.raises(MemoryConfigError, match="write fence"):
+            bootstrap_memory(_make_config(sqlite_path, stores_toml))
 class TestBootstrapRejectsDifferentConfig:
     @patch("core.memory.bootstrap.QdrantClient")
     def test_bootstrap_rejects_different_config(

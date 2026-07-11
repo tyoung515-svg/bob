@@ -132,7 +132,8 @@ async def test_health_surfaces_degraded_write_fence(client, monkeypatch):
         lambda: SimpleNamespace(
             write_fence=SimpleNamespace(
                 degraded=True,
-                resource_identity="http://localhost:6333|bobclaw__768",
+                degraded_reason="permission",
+                resource_identity="http://localhost:6333|bobclaw_",
             )
         ),
     )
@@ -144,9 +145,10 @@ async def test_health_surfaces_degraded_write_fence(client, monkeypatch):
     assert body["memory_write_fence_degraded"] is True
     assert body["memory_write_fence"]["writes_refused"] is True
     assert body["memory_write_fence"]["resource"] == (
-        "http://localhost:6333|bobclaw__768"
+        "http://localhost:6333|bobclaw_"
     )
 
+    assert body["memory_write_fence"]["reason"] == "permission"
 # ─── /api/faces ───────────────────────────────────────────────────────────────
 
 async def test_list_faces_returns_all_profiles(client):

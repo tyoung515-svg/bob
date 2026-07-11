@@ -163,21 +163,20 @@ def _maybe_build_write_fence(
     collection_prefix: str,
     qdrant_url: str = "http://localhost:6333",
 ):
-    """Build a default-OFF single-writer ``WriteFence``.
+    """Build the mandatory family-scoped ``WriteFence`` for a memory bootstrap.
 
-    When enabled, the registry entry and the held OS lock both target the provider's live
-    ``f"{collection_prefix}_{dim}"`` collection. The lock identity also includes the live
-    ``qdrant_url``, so separate install roots targeting one Qdrant resource contend.
+    ``MEMORY_ENABLED=true`` reaches this seam unconditionally. The fence flag is
+    default-on-with-memory; setting it to any explicit non-``true`` value is a
+    configuration conflict, never an unfenced writer opt-out.
     """
     import os
 
-    if not (
-        _consolidation_enabled()
-        or os.environ.get("MEMORY_WRITE_FENCE_ENABLED", "false").strip().lower() in (
-            "1", "true", "yes", "on",
+    fence_flag = os.environ.get("MEMORY_WRITE_FENCE_ENABLED", "").strip().lower()
+    if fence_flag and fence_flag != "true":
+        raise MemoryConfigError(
+            "MEMORY_ENABLED=true requires MEMORY_WRITE_FENCE_ENABLED=true; "
+            "MEMORY_WRITE_FENCE_ENABLED=false cannot start an unfenced writer"
         )
-    ):
-        return None
 
     from core.ledger.federation import FederationRegistry, default_registry_path
     from core.memory.fingerprint import fingerprint_from_slot
@@ -186,11 +185,13 @@ def _maybe_build_write_fence(
     registry = FederationRegistry(default_registry_path()).load()
     fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
     collection = f"{collection_prefix}_{fingerprint.dim}"
+    # Preserve exact collection uniqueness for the current store. Family collision
+    # protection is enforced by WriteFence across every historical dimension.
     register_bobclaw_memory(registry, fingerprint, collection=collection, overwrite=True)
     return WriteFence(
         registry,
         qdrant_url=qdrant_url,
-        collection=collection,
+        collection_prefix=collection_prefix,
         owner="bobclaw",
     )
 
@@ -322,11 +323,20 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             )
 
         first_pid, first_pconf = next(iter(providers_raw.items()))
-        # MS2-C4: build the single-writer write fence (default-OFF; None ⇒ legacy bootstrap byte-identical).
+        # MS2-C4/R3: memory-on bootstrap MUST arm a family fence or refuse to start.
         _collection_prefix = first_pconf.get("collection_prefix", "bobclaw_")
-        write_fence = _maybe_build_write_fence(
-            slot_resolver, _collection_prefix, config.qdrant_url
-        )
+        try:
+            write_fence = _maybe_build_write_fence(
+                slot_resolver, _collection_prefix, config.qdrant_url
+            )
+        except MemoryConfigError:
+            raise
+        except Exception as exc:
+            raise MemoryConfigError(
+                f"memory write fence could not be armed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if write_fence is None:
+            raise MemoryConfigError("memory write fence could not be armed")
         provider = QdrantRetrievalProvider(
             provider_id=first_pid,
             locality=first_pconf.get("locality", "local"),

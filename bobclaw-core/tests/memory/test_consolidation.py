@@ -29,6 +29,9 @@ class _FakeRegistry:
     def load(self):
         return self
 
+    def list(self):
+        return []
+
 
 class _FakeRegistryCls:
     """Mock class for FederationRegistry."""
@@ -93,13 +96,6 @@ def test_flag_off_assert_is_noop(monkeypatch):
     assert result is None
 
 
-def test_flag_off_fence_gate_returns_none(monkeypatch):
-    """Both flags off -> _maybe_build_write_fence returns None without touching slot resolver."""
-    monkeypatch.delenv("MEMORY_SINGLE_QDRANT", raising=False)
-    monkeypatch.delenv("MEMORY_WRITE_FENCE_ENABLED", raising=False)
-    slot = object()  # bare object safe because gate returns before using it
-    result = _maybe_build_write_fence(slot, "bobclaw_")
-    assert result is None
 
 
 @pytest.mark.parametrize(
@@ -152,8 +148,8 @@ def test_whitespace_tolerance(monkeypatch):
     assert _consolidation_enabled() is True
 
 
-def test_consolidation_forces_fence(monkeypatch):
-    """MEMORY_SINGLE_QDRANT=true, MEMORY_WRITE_FENCE_ENABLED unset -> WriteFence built."""
+def test_memory_bootstrap_arms_fence_when_flag_is_unset(monkeypatch):
+    """The fence is default-on with memory; no consolidation flag is required."""
     monkeypatch.setenv("MEMORY_SINGLE_QDRANT", "true")
     monkeypatch.delenv("MEMORY_WRITE_FENCE_ENABLED", raising=False)
 
@@ -180,8 +176,8 @@ def test_consolidation_forces_fence(monkeypatch):
     assert isinstance(out, WriteFence)
 
 
-def test_write_fence_enabled_alone_builds_fence(monkeypatch):
-    """MEMORY_WRITE_FENCE_ENABLED=true, MEMORY_SINGLE_QDRANT unset -> WriteFence built (C4 path)."""
+def test_explicit_true_write_fence_flag_builds_fence(monkeypatch):
+    """An explicit true value agrees with the default-on memory bootstrap."""
     monkeypatch.delenv("MEMORY_SINGLE_QDRANT", raising=False)
     monkeypatch.setenv("MEMORY_WRITE_FENCE_ENABLED", "true")
 

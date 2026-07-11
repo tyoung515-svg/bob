@@ -21,6 +21,7 @@ from aiohttp import web
 
 import core.config as _config
 import start
+from core.ledger.federation import FederationRegistry
 
 
 async def test_on_startup_reads_build_sandbox_without_attributeerror(monkeypatch):
@@ -46,3 +47,28 @@ async def test_on_startup_reads_build_sandbox_without_attributeerror(monkeypatch
     # And the hook wired up the pool + graph it built.
     assert app[start.POOL_KEY] is not None
     assert app[start.GRAPH_KEY] is not None
+
+
+async def test_on_startup_memory_off_keeps_registry_unloaded(monkeypatch):
+    """MEMORY_ENABLED=false keeps the legacy boot path free of fence/registry work."""
+    monkeypatch.setattr(start, "init_sqlite", AsyncMock())
+    monkeypatch.setattr(
+        start,
+        "init_postgres",
+        AsyncMock(return_value=MagicMock(name="pool")),
+    )
+    monkeypatch.setattr(
+        start,
+        "create_graph",
+        AsyncMock(return_value=MagicMock(name="graph")),
+    )
+    monkeypatch.setattr("core.health_probe.install_live_probe", lambda: None)
+    monkeypatch.setattr("core.build.sandbox.docker_ready", lambda: False)
+    monkeypatch.setattr(start.config, "MEMORY_ENABLED", False, raising=False)
+    monkeypatch.setenv("BOBCLAW_HEALTH_PROBE_REDIS", "0")
+
+    def fail_registry_load(self):
+        raise AssertionError("memory-off startup must not load the federation registry")
+
+    monkeypatch.setattr(FederationRegistry, "load", fail_registry_load)
+    await start._on_startup(web.Application())
