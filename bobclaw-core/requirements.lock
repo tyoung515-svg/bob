@@ -67,6 +67,8 @@ distro==1.9.0
     #   openai
 docstring-parser==0.18.0
     # via anthropic
+filelock==3.29.5
+    # via -r requirements.txt
 frozenlist==1.8.0
     # via
     #   aiohttp

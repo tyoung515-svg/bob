@@ -38,6 +38,7 @@ for ($i = 0; $i -lt 120; $i++) {
 # Same memory-module env as start-core.ps1 (set here, NOT in .secrets — config.py
 # load_dotenv(override=True) would leak these into pytest and break the baseline).
 $env:MEMORY_ENABLED = 'true'
+$env:MEMORY_WRITE_FENCE_ENABLED = 'true'
 $env:MEMORY_L1_EXTRACTION_ENABLED = 'true'
 $env:MEMORY_QDRANT_URL = 'http://localhost:6353'
 

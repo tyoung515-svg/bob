@@ -121,6 +121,32 @@ async def test_health_returns_ok(client):
     assert await resp.json() == {"status": "ok"}
 
 
+async def test_health_surfaces_degraded_write_fence(client, monkeypatch):
+    import api.server as server_mod
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(server_mod.config, "MEMORY_ENABLED", True)
+    monkeypatch.setattr(
+        server_mod,
+        "get_memory",
+        lambda: SimpleNamespace(
+            write_fence=SimpleNamespace(
+                degraded=True,
+                resource_identity="http://localhost:6333|bobclaw__768",
+            )
+        ),
+    )
+
+    resp = await client.get("/health")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["status"] == "ok"
+    assert body["memory_write_fence_degraded"] is True
+    assert body["memory_write_fence"]["writes_refused"] is True
+    assert body["memory_write_fence"]["resource"] == (
+        "http://localhost:6333|bobclaw__768"
+    )
+
 # ─── /api/faces ───────────────────────────────────────────────────────────────
 
 async def test_list_faces_returns_all_profiles(client):

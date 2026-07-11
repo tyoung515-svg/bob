@@ -1,8 +1,7 @@
-import atexit
 import asyncio
+import hashlib
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -32,6 +31,7 @@ from core.memory.acl import ACLRegistry
 # Helpers (from spec)
 # ---------------------------------------------------------------------------
 DIM = 768
+ENDPOINT = "http://localhost:6333"
 
 
 def fp(model="model-a", dim=DIM):
@@ -42,6 +42,10 @@ def reg_with_bob(tmp_path):
     reg = FederationRegistry(tmp_path / "reg.json")
     register_bobclaw_memory(reg, fp())
     return reg
+
+
+def _fence(registry, collection, **kwargs):
+    return WriteFence(registry, qdrant_url=ENDPOINT, collection=collection, **kwargs)
 
 
 def add_instance(reg, name, collection, *, meta):
@@ -69,17 +73,49 @@ _PROCESS_FENCE_SCRIPT = textwrap.dedent(
     from pathlib import Path
 
     from core.ledger.federation import FederationRegistry
+    from core.memory.providers.qdrant_provider import QdrantRetrievalProvider
     from core.memory.write_fence import WriteFence, WriteFenceViolation
 
-    registry_path, collection, outcome_path, ready_path, release_path, mutation_path, role = sys.argv[1:]
+    class _ReadACL:
+        def enforce(self, *args):
+            return None
+
+    class _ReadClient:
+        def collection_exists(self, collection):
+            return True
+
+        def query_points(self, **kwargs):
+            return type("Result", (), {"points": []})()
+
+    (
+        registry_path,
+        endpoint,
+        collection,
+        outcome_path,
+        ready_path,
+        release_path,
+        mutation_path,
+        read_path,
+        role,
+    ) = sys.argv[1:]
     registry = FederationRegistry(Path(registry_path)).load()
+    fence = WriteFence(registry, qdrant_url=endpoint, collection=collection)
 
     try:
-        fence = WriteFence(registry)
         fence.assert_writable(collection)
     except WriteFenceViolation as exc:
         Path(outcome_path).write_text(f"refused: {exc}\n", encoding="utf-8")
-        print("REFUSED", flush=True)
+        reader = QdrantRetrievalProvider(
+            provider_id="p",
+            locality="local",
+            collection_prefix=collection.rsplit("_", 1)[0],
+            acl_registry=_ReadACL(),
+            client=_ReadClient(),
+            write_fence=fence,
+        )
+        reader.query_vector("store", [0.1] * 768)
+        Path(read_path).write_text("read-ok\n", encoding="utf-8")
+        print("REFUSED_READ_OK", flush=True)
         raise SystemExit(0)
 
     with Path(mutation_path).open("a", encoding="utf-8") as mutation:
@@ -97,7 +133,6 @@ _PROCESS_FENCE_SCRIPT = textwrap.dedent(
     """
 ).strip()
 
-
 _CRASHING_FENCE_SCRIPT = textwrap.dedent(
     r"""
     import os
@@ -107,15 +142,14 @@ _CRASHING_FENCE_SCRIPT = textwrap.dedent(
     from core.ledger.federation import FederationRegistry
     from core.memory.write_fence import WriteFence
 
-    registry_path, collection = sys.argv[1:]
+    registry_path, endpoint, collection = sys.argv[1:]
     registry = FederationRegistry(Path(registry_path)).load()
-    fence = WriteFence(registry)
+    fence = WriteFence(registry, qdrant_url=endpoint, collection=collection)
     fence.assert_writable(collection)
     print("ACQUIRED", flush=True)
     os._exit(0)
     """
 ).strip()
-
 
 def _subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
@@ -126,20 +160,26 @@ def _subprocess_env() -> dict[str, str]:
     return env
 
 
-def _process_root(label: str) -> Path:
-    root = Path(__file__).resolve().parents[2] / f".g2-process-{label}-{os.getpid()}"
+@pytest.fixture(autouse=True)
+def _fence_lock_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BOBCLAW_WRITE_FENCE_LOCK_DIR", str(tmp_path / "locks"))
+
+
+def _process_root(tmp_path: Path, label: str) -> Path:
+    root = tmp_path / f"g2-process-{label}"
     root.mkdir()
-    atexit.register(shutil.rmtree, root, ignore_errors=True)
     return root
 
 
 def _process_args(
     registry_path: Path,
+    endpoint: str,
     collection: str,
     outcome_path: Path,
     ready_path: Path,
     release_path: Path,
     mutation_path: Path,
+    read_path: Path,
     role: str,
 ) -> list[str]:
     return [
@@ -147,14 +187,15 @@ def _process_args(
         "-c",
         _PROCESS_FENCE_SCRIPT,
         str(registry_path),
+        endpoint,
         collection,
         str(outcome_path),
         str(ready_path),
         str(release_path),
         str(mutation_path),
+        str(read_path),
         role,
     ]
-
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -203,7 +244,7 @@ class TestWriteFence:
     # 4
     def test_owned_write_allowed(self, tmp_path: Path):
         reg = reg_with_bob(tmp_path)
-        assert WriteFence(reg).assert_writable("bobclaw__768") is None
+        assert _fence(reg, "bobclaw__768").assert_writable("bobclaw__768") is None
 
     # 5
     def test_cross_write_refused(self, tmp_path: Path):
@@ -213,20 +254,20 @@ class TestWriteFence:
             meta={"acl": {"writer": "lks", "readers": ["bobclaw"], "mode": "ro"}},
         )
         with pytest.raises(WriteFenceViolation):
-            WriteFence(reg).assert_writable("wiki_chunks")
+            _fence(reg, "wiki_chunks").assert_writable("wiki_chunks")
 
     # 6
     def test_unregistered_refused_failclosed(self, tmp_path: Path):
         reg = reg_with_bob(tmp_path)
         with pytest.raises(WriteFenceViolation):
-            WriteFence(reg).assert_writable("never_registered_999")
+            _fence(reg, "never_registered_999").assert_writable("never_registered_999")
 
     # 7
     def test_no_acl_refused_failclosed(self, tmp_path: Path):
         reg = FederationRegistry(tmp_path / "r.json")
         add_instance(reg, "x", "c_x", meta={"note": "no acl here"})
         with pytest.raises(WriteFenceViolation):
-            WriteFence(reg).assert_writable("c_x")
+            _fence(reg, "c_x").assert_writable("c_x")
 
     # 8
     def test_garbled_acl_refused_failclosed(self, tmp_path: Path):
@@ -237,7 +278,7 @@ class TestWriteFence:
             # audit r1 (accepted): the refusal type is UNIFORM — a garbled ACL raises WriteFenceViolation
             # (which IS an ACLViolation, so base-class catchers still work).
             with pytest.raises(WriteFenceViolation):
-                WriteFence(reg).assert_writable(coll)
+                _fence(reg, coll).assert_writable(coll)
 
     # 8b — audit r1 (rejected finding A, pinned as an invariant): the registered bobclaw-memory collection
     # equals the provider's computed collection for the prod prefix, so the fence ALLOWS BoB's real write
@@ -249,7 +290,7 @@ class TestWriteFence:
         )
         assert prov._collection_name(768) == BOBCLAW_MEMORY_COLLECTION == "bobclaw__768"
         reg = reg_with_bob(tmp_path)
-        assert WriteFence(reg).assert_writable(prov._collection_name(768)) is None  # owned -> allowed
+        assert _fence(reg, prov._collection_name(768)).assert_writable(prov._collection_name(768)) is None  # owned -> allowed
 
     # 9
     def test_non_write_mode_refused(self, tmp_path: Path):
@@ -259,7 +300,7 @@ class TestWriteFence:
             meta={"acl": {"writer": "bobclaw", "readers": ["bobclaw"], "mode": "ro"}},
         )
         with pytest.raises(WriteFenceViolation):
-            WriteFence(reg).assert_writable("c_ro")
+            _fence(reg, "c_ro").assert_writable("c_ro")
         # enforce_write_acl directly
         acl = read_instance_acl(
             {"acl": {"writer": "bobclaw", "readers": ["bobclaw"], "mode": "ro"}}
@@ -272,7 +313,7 @@ class TestWriteFence:
         reg = reg_with_bob(tmp_path)
         for bad in ("", "   "):
             with pytest.raises(WriteFenceViolation):
-                WriteFence(reg).assert_writable(bad)
+                _fence(reg, bad).assert_writable(bad)
 
     # 11
     def test_provider_seam_cross_write_refused_no_mutation(self, tmp_path: Path):
@@ -281,7 +322,7 @@ class TestWriteFence:
             reg, "lksinst", "_t_lks_768",
             meta={"acl": {"writer": "lks", "readers": ["bobclaw"], "mode": "ro"}},
         )
-        fence = WriteFence(reg)
+        fence = _fence(reg, "_t_lks_768")
         client = MagicMock()
         prov = QdrantRetrievalProvider(
             provider_id="p",
@@ -303,7 +344,7 @@ class TestWriteFence:
     def test_provider_seam_owned_write_proceeds(self, tmp_path: Path):
         reg = FederationRegistry(tmp_path / "r.json")
         register_bobclaw_memory(reg, fp(), collection="_t_own_768")
-        fence = WriteFence(reg)
+        fence = _fence(reg, "_t_own_768")
         client = MagicMock()
         client.get_collection.return_value = MagicMock()  # exists
         prov = QdrantRetrievalProvider(
@@ -387,12 +428,12 @@ class TestWriteFence:
         )
         reg = FederationRegistry(p).load()
         with pytest.raises(WriteFenceViolation):
-            WriteFence(reg).assert_writable("c_null")
+            _fence(reg, "c_null").assert_writable("c_null")
         # (b) the default meta ({} from register) — no acl key — also refuses
         reg2 = FederationRegistry(tmp_path / "r2.json")
         reg2.register("m", "C:/d", collection="c_empty", dim=768)  # meta defaults to {}
         with pytest.raises(WriteFenceViolation):
-            WriteFence(reg2).assert_writable("c_empty")
+            _fence(reg2, "c_empty").assert_writable("c_empty")
 
     # 17 — audit r2 (accepted): a multi-dim index is fail-closed ATOMIC — one non-owned dim aborts the
     # whole index BEFORE any create/upsert (no partial write across collections).
@@ -400,7 +441,7 @@ class TestWriteFence:
         reg = FederationRegistry(tmp_path / "r.json")
         register_bobclaw_memory(reg, fp(), collection="_t_own_768")  # dim-768 coll owned
         # "_t_own_3" (dim-3 coll) is left UNREGISTERED → fence refuses it
-        fence = WriteFence(reg)
+        fence = _fence(reg, "_t_own_768")
         client = MagicMock()
         client.get_collection.return_value = MagicMock()
         prov = QdrantRetrievalProvider(
@@ -431,7 +472,7 @@ class TestWriteFence:
         )
         prov = QdrantRetrievalProvider(
             provider_id="p", locality="local", collection_prefix="_t_lks",
-            acl_registry=permissive_acl_registry(tmp_path), client=client, write_fence=WriteFence(reg),
+            acl_registry=permissive_acl_registry(tmp_path), client=client, write_fence=_fence(reg, "_t_lks_768"),
         )
         with pytest.raises(WriteFenceViolation):
             prov.delete("s", ["id1"])
@@ -446,7 +487,7 @@ class TestWriteFence:
         )
         prov = QdrantRetrievalProvider(
             provider_id="p", locality="local", collection_prefix="_t_own",
-            acl_registry=permissive_acl_registry(tmp_path), client=client, write_fence=WriteFence(reg),
+            acl_registry=permissive_acl_registry(tmp_path), client=client, write_fence=_fence(reg, "_t_own_768"),
         )
         prov.delete("s", ["id1"])
         client.delete.assert_called_once()
@@ -513,7 +554,7 @@ class TestWriteFence:
             reg, "spaced", "c_spaced",
             meta={"acl": {"writer": "  bobclaw  ", "readers": ["bobclaw"], "mode": "  rw  "}},
         )
-        assert WriteFence(reg, owner="bobclaw").assert_writable("c_spaced") is None
+        assert _fence(reg, "c_spaced", owner="bobclaw").assert_writable("c_spaced") is None
         # enforce_write_acl directly with spaced values
         acl = read_instance_acl({"acl": {"writer": " bobclaw ", "readers": ["bobclaw"], "mode": " rw "}})
         assert enforce_write_acl(acl, " bobclaw ") is None
@@ -523,7 +564,7 @@ class TestWriteFence:
     def test_unparseable_meta_type_refused_failclosed(self):
         stub_registry = types.SimpleNamespace(by_collection=lambda coll: {"meta": 42})
         with pytest.raises(WriteFenceViolation):
-            WriteFence(stub_registry).assert_writable("anything")
+            _fence(stub_registry, "anything").assert_writable("anything")
 
     # 23 — audit r5 (accepted): a corrupted WRITER on an existing bobclaw-memory registration (right
     # collection, wrong writer) is RECONCILED on bootstrap, so it can't false-positive-deny the owned write.
@@ -553,33 +594,90 @@ class TestWriteFence:
         # reconciled to writer=bobclaw -> the owned write is allowed
         assert fence.assert_writable("bobclaw__768") is None
 
-    def test_same_writer_processes_have_exactly_one_write_authority(self):
-        """Gate G-2 proof: two real processes contend on one instance-root lock."""
-        root = _process_root("contention")
-        registry_path = root / "ledger_instances.json"
-        registry = FederationRegistry(registry_path)
-        register_bobclaw_memory(registry, fp(), collection="shared_collection")
-        registry.save()
+    def test_lock_path_uses_canonical_resource_identity(self, tmp_path: Path):
+        reg = reg_with_bob(tmp_path)
+        first = _fence(reg, "bobclaw__768")
+        expected = hashlib.sha256(
+            "http://localhost:6333|bobclaw__768".encode("utf-8")
+        ).hexdigest()
+        assert first.lock_path.parent == tmp_path / "locks"
+        assert first.lock_path.name == expected
+        assert first.resource_identity == "http://localhost:6333|bobclaw__768"
+        first.close()
+
+        equivalent = WriteFence(
+            reg,
+            qdrant_url="http://LOCALHOST/",
+            collection="bobclaw__768",
+        )
+        assert equivalent.lock_path.name == expected
+        equivalent.close()
+
+    def test_lock_directory_failure_is_loud_and_never_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        reg = reg_with_bob(tmp_path)
+        bad_path = tmp_path / "lock-file"
+        bad_path.write_text("not a directory", encoding="utf-8")
+        monkeypatch.setenv("BOBCLAW_WRITE_FENCE_LOCK_DIR", str(bad_path))
+        with pytest.raises(WriteFenceViolation) as exc_info:
+            _fence(reg, "bobclaw__768")
+        escaped_path = str(bad_path).replace("\\", "\\\\")
+        assert escaped_path in str(exc_info.value)
+        assert "lock" in str(exc_info.value).lower()
+
+    def test_assert_writable_refuses_a_different_collection(self, tmp_path: Path):
+        reg = reg_with_bob(tmp_path)
+        add_instance(
+            reg,
+            "other-owned",
+            "other_owned_768",
+            meta={"acl": {"writer": "bobclaw", "readers": [], "mode": "rw"}},
+        )
+        fence = _fence(reg, "bobclaw__768")
+        with pytest.raises(WriteFenceViolation, match="resource mismatch"):
+            fence.assert_writable("other_owned_768")
+        fence.close()
+
+    def test_same_writer_processes_from_different_install_roots_contend(
+        self, tmp_path: Path
+    ):
+        """Two install roots still share one machine-global resource lock."""
+        root = _process_root(tmp_path, "contention")
+        holder_root = root / "holder-install"
+        contender_root = root / "contender-install"
+        holder_root.mkdir()
+        contender_root.mkdir()
+        collection = "shared_collection"
+        holder_registry_path = holder_root / "ledger_instances.json"
+        contender_registry_path = contender_root / "ledger_instances.json"
+        for registry_path in (holder_registry_path, contender_registry_path):
+            registry = FederationRegistry(registry_path)
+            register_bobclaw_memory(registry, fp(), collection=collection)
+            registry.save()
 
         holder_outcome = root / "holder.outcome"
         holder_ready = root / "holder.ready"
         holder_release = root / "holder.release"
         contender_outcome = root / "contender.outcome"
         contender_ready = root / "contender.ready"
+        contender_read = root / "contender.read"
         mutation_path = root / "store.mutations"
         env = _subprocess_env()
 
         holder = subprocess.Popen(
             _process_args(
-                registry_path,
-                "shared_collection",
+                holder_registry_path,
+                ENDPOINT,
+                collection,
                 holder_outcome,
                 holder_ready,
                 holder_release,
                 mutation_path,
+                root / "holder.read",
                 "holder",
             ),
-            cwd=Path(__file__).resolve().parents[2],
+            cwd=holder_root,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -592,23 +690,26 @@ class TestWriteFence:
 
             contender = subprocess.run(
                 _process_args(
-                    registry_path,
-                    "shared_collection",
+                    contender_registry_path,
+                    ENDPOINT,
+                    collection,
                     contender_outcome,
                     contender_ready,
                     holder_release,
                     mutation_path,
+                    contender_read,
                     "contender",
                 ),
-                cwd=Path(__file__).resolve().parents[2],
+                cwd=contender_root,
                 env=env,
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
             assert contender.returncode == 0, contender.stderr
-            assert contender.stdout.strip() == "REFUSED"
+            assert contender.stdout.strip() == "REFUSED_READ_OK"
             assert "exclusive write lock" in contender_outcome.read_text(encoding="utf-8")
+            assert contender_read.read_text(encoding="utf-8") == "read-ok\n"
             assert not contender_ready.exists()
             assert mutation_path.read_text(encoding="utf-8").splitlines() == ["holder"]
         finally:
@@ -617,9 +718,9 @@ class TestWriteFence:
             assert holder.returncode == 0, holder_stderr
             assert holder_stdout.strip() == ""
 
-    def test_crashed_holder_does_not_leave_os_lock_held(self):
+    def test_crashed_holder_does_not_leave_os_lock_held(self, tmp_path: Path):
         """A process exit releases the OS handle, even if WriteFence.close() never runs."""
-        root = _process_root("crash")
+        root = _process_root(tmp_path, "crash")
         registry_path = root / "ledger_instances.json"
         registry = FederationRegistry(registry_path)
         register_bobclaw_memory(registry, fp(), collection="shared_collection")
@@ -632,9 +733,10 @@ class TestWriteFence:
                 "-c",
                 _CRASHING_FENCE_SCRIPT,
                 str(registry_path),
+                ENDPOINT,
                 "shared_collection",
             ],
-            cwd=Path(__file__).resolve().parents[2],
+            cwd=root,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -652,9 +754,10 @@ class TestWriteFence:
                 "-c",
                 _CRASHING_FENCE_SCRIPT,
                 str(registry_path),
+                ENDPOINT,
                 "shared_collection",
             ],
-            cwd=Path(__file__).resolve().parents[2],
+            cwd=root,
             env=env,
             capture_output=True,
             text=True,
@@ -663,11 +766,11 @@ class TestWriteFence:
         assert successor.returncode == 0, successor.stderr
         assert successor.stdout.strip() == "ACQUIRED"
 
-    def test_assert_writable_requires_held_lock(self):
-        root = _process_root("close")
+    def test_assert_writable_requires_held_lock(self, tmp_path: Path):
+        root = _process_root(tmp_path, "close")
         registry = FederationRegistry(root / "ledger_instances.json")
         register_bobclaw_memory(registry, fp(), collection="shared_collection")
-        fence = WriteFence(registry)
+        fence = _fence(registry, "shared_collection")
         fence.close()
         with pytest.raises(WriteFenceViolation, match="lock is not held"):
             fence.assert_writable("shared_collection")

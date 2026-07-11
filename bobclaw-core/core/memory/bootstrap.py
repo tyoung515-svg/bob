@@ -96,6 +96,12 @@ class MemorySingletons:
     # Set by the recall path when it fails open (embedder/Qdrant unavailable);
     # cleared on the next healthy recall. Observable, mirrors last_extraction_error.
     last_recall_error: Exception | None = None
+    # The held write fence is retained for health visibility and lifecycle cleanup.
+    write_fence: Any = None
+
+    @property
+    def write_fence_degraded(self) -> bool:
+        return bool(self.write_fence is not None and self.write_fence.degraded)
 
     async def drain_extraction_tasks(self) -> None:
         tasks = list(self.pending_extraction_tasks)
@@ -152,16 +158,16 @@ def _consolidation_enabled() -> bool:
     return os.environ.get("MEMORY_SINGLE_QDRANT", "false").strip().lower() == "true"
 
 
-def _maybe_build_write_fence(slot_resolver: SlotResolver, collection_prefix: str):
-    """Build a default-OFF single-writer ``WriteFence`` (MS2-C4); ``None`` unless ``MEMORY_WRITE_FENCE_ENABLED``.
+def _maybe_build_write_fence(
+    slot_resolver: SlotResolver,
+    collection_prefix: str,
+    qdrant_url: str = "http://localhost:6333",
+):
+    """Build a default-OFF single-writer ``WriteFence``.
 
-    Default (flag unset/false) returns ``None`` immediately so the legacy bootstrap + every existing test is
-    byte-identical (no registry load, no behaviour change). When enabled, load the federation registry (default
-    path / ``BOBCLAW_LEDGER_INSTANCES``), ensure the ``bobclaw-memory`` instance is registered for the SAME
-    collection the provider writes — ``f"{collection_prefix}_{dim}"`` (matching ``_collection_name``) so a
-    non-default ``collection_prefix`` can never cause a false-positive write denial — with an embed fingerprint
-    derived from the live ``embed_text`` slot (no model-name literal here), and return a ``WriteFence`` owned by
-    ``bobclaw`` so BoB's index/upsert/delete path writes ONLY its own collection.
+    When enabled, the registry entry and the held OS lock both target the provider's live
+    ``f"{collection_prefix}_{dim}"`` collection. The lock identity also includes the live
+    ``qdrant_url``, so separate install roots targeting one Qdrant resource contend.
     """
     import os
 
@@ -175,24 +181,18 @@ def _maybe_build_write_fence(slot_resolver: SlotResolver, collection_prefix: str
 
     from core.ledger.federation import FederationRegistry, default_registry_path
     from core.memory.fingerprint import fingerprint_from_slot
-    from core.memory.write_fence import (
-        WriteFence,
-        register_bobclaw_memory,
-        BOBCLAW_MEMORY_INSTANCE,
-    )
+    from core.memory.write_fence import WriteFence, register_bobclaw_memory
 
     registry = FederationRegistry(default_registry_path()).load()
     fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
-    # derive the collection from the SAME prefix the provider uses (QdrantRetrievalProvider
-    # `_collection_name(dim)` == f"{collection_prefix}_{dim}") so the fence allows BoB's real write.
     collection = f"{collection_prefix}_{fingerprint.dim}"
-    # ALWAYS (re-)register the CANONICAL bobclaw-memory record (live collection, writer=bobclaw, mode=rw,
-    # fresh fingerprint). Reconciling unconditionally means a stale/corrupted entry — a prior dim, a changed
-    # prefix, a wrong writer, or a hand-edit — can NEVER false-positive-deny the provider's real writes; a
-    # genuine collection conflict (another instance owns this name) still surfaces loudly via register().
     register_bobclaw_memory(registry, fingerprint, collection=collection, overwrite=True)
-    return WriteFence(registry, owner="bobclaw")
-
+    return WriteFence(
+        registry,
+        qdrant_url=qdrant_url,
+        collection=collection,
+        owner="bobclaw",
+    )
 
 def _maybe_build_lks_adapter(slot_resolver: SlotResolver, qdrant_client):
     """Build a default-OFF LKS-first read seam (MS2-C5); ``(None, None, False)`` unless ``MEMORY_LKS_FIRST``.
@@ -324,7 +324,9 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
         first_pid, first_pconf = next(iter(providers_raw.items()))
         # MS2-C4: build the single-writer write fence (default-OFF; None ⇒ legacy bootstrap byte-identical).
         _collection_prefix = first_pconf.get("collection_prefix", "bobclaw_")
-        write_fence = _maybe_build_write_fence(slot_resolver, _collection_prefix)
+        write_fence = _maybe_build_write_fence(
+            slot_resolver, _collection_prefix, config.qdrant_url
+        )
         provider = QdrantRetrievalProvider(
             provider_id=first_pid,
             locality=first_pconf.get("locality", "local"),
@@ -378,6 +380,7 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             acl_registry=acl_registry,
             slot_resolver=slot_resolver,
             extractor=extractor,
+            write_fence=write_fence,
         )
 
         _bootstrap_singleton = singletons

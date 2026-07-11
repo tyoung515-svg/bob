@@ -111,8 +111,26 @@ def _rough_tokens(text: str) -> int:
 
 @routes.get("/health")
 async def health(_: web.Request) -> web.Response:
-    """Liveness probe used by docker-compose and the gateway."""
-    return web.json_response({"status": "ok"})
+    """Liveness probe plus observable memory write-fence degradation state."""
+    payload = {"status": "ok"}
+    if config.MEMORY_ENABLED:
+        try:
+            mem = get_memory()
+        except MemoryConfigError:
+            pass
+        else:
+            fence = getattr(mem, "write_fence", None)
+            degraded = bool(getattr(fence, "degraded", False))
+            payload["memory_write_fence_degraded"] = degraded
+            payload["memory_write_fence"] = {
+                "writes_refused": degraded,
+                "resource": getattr(fence, "resource_identity", None),
+            }
+            if degraded:
+                payload["memory_write_fence"]["reason"] = getattr(
+                    fence, "degraded_reason", "write lock is held by another writer"
+                )
+    return web.json_response(payload)
 
 
 @routes.get("/api/faces")

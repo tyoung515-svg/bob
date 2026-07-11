@@ -14,6 +14,10 @@ from core.memory.indexer import MemoryIndexer
 from core.memory.models import Fact, ConfidenceStub, IndexStats, ChunkRecord, Chunk
 
 
+@pytest.fixture(autouse=True)
+def fence_lock_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("BOBCLAW_WRITE_FENCE_LOCK_DIR", str(tmp_path / "locks"))
+
 # ---------- helper mocks for tests 7, 8 ----------
 class _FP:
     """Minimal fingerprint with .dim attribute."""
