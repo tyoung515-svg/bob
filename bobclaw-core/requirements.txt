@@ -19,6 +19,7 @@ redis>=5.0
 python-frontmatter>=1,<2
 markdown-it-py>=3,<4
 tiktoken>=0.5,<1
+filelock>=3.12
 
 qdrant-client>=1.12
 

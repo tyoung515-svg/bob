@@ -1,5 +1,11 @@
+import atexit
 import asyncio
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import textwrap
 import types
 from unittest.mock import MagicMock
 
@@ -55,6 +61,99 @@ def permissive_acl_registry(tmp_path):
 
 def vec768(seed=0.1):
     return [seed] + [0.0] * (DIM - 1)
+
+_PROCESS_FENCE_SCRIPT = textwrap.dedent(
+    r"""
+    import sys
+    import time
+    from pathlib import Path
+
+    from core.ledger.federation import FederationRegistry
+    from core.memory.write_fence import WriteFence, WriteFenceViolation
+
+    registry_path, collection, outcome_path, ready_path, release_path, mutation_path, role = sys.argv[1:]
+    registry = FederationRegistry(Path(registry_path)).load()
+
+    try:
+        fence = WriteFence(registry)
+        fence.assert_writable(collection)
+    except WriteFenceViolation as exc:
+        Path(outcome_path).write_text(f"refused: {exc}\n", encoding="utf-8")
+        print("REFUSED", flush=True)
+        raise SystemExit(0)
+
+    with Path(mutation_path).open("a", encoding="utf-8") as mutation:
+        mutation.write(f"{role}\n")
+    Path(outcome_path).write_text("acquired\n", encoding="utf-8")
+    Path(ready_path).write_text("ready\n", encoding="utf-8")
+    print("ACQUIRED", flush=True)
+
+    if role == "holder":
+        deadline = time.monotonic() + 10
+        while not Path(release_path).exists():
+            if time.monotonic() >= deadline:
+                raise SystemExit("holder timed out waiting for release")
+            time.sleep(0.01)
+    """
+).strip()
+
+
+_CRASHING_FENCE_SCRIPT = textwrap.dedent(
+    r"""
+    import os
+    import sys
+    from pathlib import Path
+
+    from core.ledger.federation import FederationRegistry
+    from core.memory.write_fence import WriteFence
+
+    registry_path, collection = sys.argv[1:]
+    registry = FederationRegistry(Path(registry_path)).load()
+    fence = WriteFence(registry)
+    fence.assert_writable(collection)
+    print("ACQUIRED", flush=True)
+    os._exit(0)
+    """
+).strip()
+
+
+def _subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    repo_root = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (repo_root, env.get("PYTHONPATH")) if part
+    )
+    return env
+
+
+def _process_root(label: str) -> Path:
+    root = Path(__file__).resolve().parents[2] / f".g2-process-{label}-{os.getpid()}"
+    root.mkdir()
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
+    return root
+
+
+def _process_args(
+    registry_path: Path,
+    collection: str,
+    outcome_path: Path,
+    ready_path: Path,
+    release_path: Path,
+    mutation_path: Path,
+    role: str,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-c",
+        _PROCESS_FENCE_SCRIPT,
+        str(registry_path),
+        collection,
+        str(outcome_path),
+        str(ready_path),
+        str(release_path),
+        str(mutation_path),
+        role,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -453,3 +552,122 @@ class TestWriteFence:
         fence = _maybe_build_write_fence(stub, "bobclaw_")
         # reconciled to writer=bobclaw -> the owned write is allowed
         assert fence.assert_writable("bobclaw__768") is None
+
+    def test_same_writer_processes_have_exactly_one_write_authority(self):
+        """Gate G-2 proof: two real processes contend on one instance-root lock."""
+        root = _process_root("contention")
+        registry_path = root / "ledger_instances.json"
+        registry = FederationRegistry(registry_path)
+        register_bobclaw_memory(registry, fp(), collection="shared_collection")
+        registry.save()
+
+        holder_outcome = root / "holder.outcome"
+        holder_ready = root / "holder.ready"
+        holder_release = root / "holder.release"
+        contender_outcome = root / "contender.outcome"
+        contender_ready = root / "contender.ready"
+        mutation_path = root / "store.mutations"
+        env = _subprocess_env()
+
+        holder = subprocess.Popen(
+            _process_args(
+                registry_path,
+                "shared_collection",
+                holder_outcome,
+                holder_ready,
+                holder_release,
+                mutation_path,
+                "holder",
+            ),
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert holder.stdout is not None
+            assert holder.stdout.readline().strip() == "ACQUIRED"
+            assert holder_ready.read_text(encoding="utf-8") == "ready\n"
+
+            contender = subprocess.run(
+                _process_args(
+                    registry_path,
+                    "shared_collection",
+                    contender_outcome,
+                    contender_ready,
+                    holder_release,
+                    mutation_path,
+                    "contender",
+                ),
+                cwd=Path(__file__).resolve().parents[2],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert contender.returncode == 0, contender.stderr
+            assert contender.stdout.strip() == "REFUSED"
+            assert "exclusive write lock" in contender_outcome.read_text(encoding="utf-8")
+            assert not contender_ready.exists()
+            assert mutation_path.read_text(encoding="utf-8").splitlines() == ["holder"]
+        finally:
+            holder_release.write_text("release\n", encoding="utf-8")
+            holder_stdout, holder_stderr = holder.communicate(timeout=10)
+            assert holder.returncode == 0, holder_stderr
+            assert holder_stdout.strip() == ""
+
+    def test_crashed_holder_does_not_leave_os_lock_held(self):
+        """A process exit releases the OS handle, even if WriteFence.close() never runs."""
+        root = _process_root("crash")
+        registry_path = root / "ledger_instances.json"
+        registry = FederationRegistry(registry_path)
+        register_bobclaw_memory(registry, fp(), collection="shared_collection")
+        registry.save()
+        env = _subprocess_env()
+
+        crashed = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _CRASHING_FENCE_SCRIPT,
+                str(registry_path),
+                "shared_collection",
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert crashed.stdout is not None
+        assert crashed.stdout.readline().strip() == "ACQUIRED"
+        crashed_stdout, crashed_stderr = crashed.communicate(timeout=10)
+        assert crashed.returncode == 0, crashed_stderr
+        assert crashed_stdout.strip() == ""
+
+        successor = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _CRASHING_FENCE_SCRIPT,
+                str(registry_path),
+                "shared_collection",
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert successor.returncode == 0, successor.stderr
+        assert successor.stdout.strip() == "ACQUIRED"
+
+    def test_assert_writable_requires_held_lock(self):
+        root = _process_root("close")
+        registry = FederationRegistry(root / "ledger_instances.json")
+        register_bobclaw_memory(registry, fp(), collection="shared_collection")
+        fence = WriteFence(registry)
+        fence.close()
+        with pytest.raises(WriteFenceViolation, match="lock is not held"):
+            fence.assert_writable("shared_collection")

@@ -13,7 +13,10 @@ existing ``FederationRegistry.register``/``update`` (federation.py is NOT edited
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 from typing import Iterable, Sequence
+
+from filelock import FileLock, Timeout
 
 from core.ledger.federation import FederationRegistry, FederationError
 from core.memory.exceptions import ACLViolation
@@ -71,15 +74,76 @@ def enforce_write_acl(acl: InstanceACL, writer_id: str, *, context: str = "") ->
 # ---------------------------------------------------------------------------
 
 class WriteFence:
-    """Refuse any write to a collection BoB does not own (single-writer-per-collection, OD#2/A)."""
+    """Hold an OS-enforced instance lock while authorizing writes."""
 
-    def __init__(self, registry: FederationRegistry, *, owner: str = "bobclaw") -> None:
-        """Bind the federation registry (read-only) and the single-writer owner identity."""
+    _LOCK_FILE_NAME = ".bobclaw-write.lock"
+
+    def __init__(
+        self,
+        registry: FederationRegistry,
+        *,
+        owner: str = "bobclaw",
+        instance_root: str | Path | None = None,
+    ) -> None:
+        """Bind ACL policy and acquire the instance-root lock for this fence lifetime."""
         self._registry = registry
         self._owner = owner
+        self._instance_root = self._resolve_instance_root(registry, instance_root)
+        self._lock_path = self._instance_root / self._LOCK_FILE_NAME
+        self._lock = FileLock(self._lock_path, timeout=0)
+        try:
+            self._lock.acquire()
+        except Timeout as exc:
+            raise WriteFenceViolation(
+                str(self._instance_root),
+                "exclusive write lock conflict: instance root is already held by another writer",
+            ) from exc
+        except Exception as exc:
+            raise WriteFenceViolation(
+                str(self._instance_root),
+                f"exclusive write lock unavailable at {self._lock_path!s}: {exc}",
+            ) from exc
+
+    @staticmethod
+    def _resolve_instance_root(
+        registry: FederationRegistry,
+        instance_root: str | Path | None,
+    ) -> Path:
+        if instance_root is not None:
+            return Path(instance_root).expanduser().resolve()
+        registry_path = getattr(registry, "path", None)
+        if registry_path is None:
+            return Path.cwd().resolve()
+        return Path(registry_path).expanduser().parent.resolve()
+
+    def _assert_lock_held(self, resource: str) -> None:
+        if not getattr(self, "_lock", None) or not self._lock.is_locked:
+            raise WriteFenceViolation(
+                resource,
+                f"exclusive write lock is not held for instance root {self._instance_root!s}",
+            )
+
+    def close(self) -> None:
+        """Release the held instance lock; safe to call more than once."""
+        lock = getattr(self, "_lock", None)
+        if lock is not None and lock.is_locked:
+            lock.release()
+
+    def __enter__(self) -> "WriteFence":
+        self._assert_lock_held(str(self._instance_root))
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def assert_writable(self, collection: str) -> None:
-        """Raise (fail-closed) unless `collection` resolves to an instance owned (writer) by self._owner."""
+        """Raise unless ACL authorization and the held instance lock both permit the write."""
         # 1. collection must be a non-empty string
         if not isinstance(collection, str) or not collection.strip():
             raise WriteFenceViolation(
@@ -87,6 +151,7 @@ class WriteFence:
                 "collection must be a non-empty string",
             )
         coll = collection.strip()
+        self._assert_lock_held(coll)
 
         # 2. Registry reverse lookup — an unknown/unregistered collection is always refused
         try:
@@ -122,8 +187,9 @@ class WriteFence:
                 "no acl declared for collection (fail-closed: refusing a write to an un-ACL'd collection)",
             )
 
-        # 5. Enforce the write ACL (single-writer, mode check)
+        # 5. Authorization remains the registry ACL; exclusion is the held OS lock.
         enforce_write_acl(acl, self._owner, context=coll)
+        self._assert_lock_held(coll)
 
 
 # ---------------------------------------------------------------------------
