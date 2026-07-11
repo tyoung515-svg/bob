@@ -40,6 +40,7 @@ from core import teams, team_proposer
 from core.faces.registry import FaceRegistry
 from core.memory.bootstrap import get_memory
 from core.memory.exceptions import L1ValidationFailed, MemoryConfigError
+from core.memory.write_fence import WriteFenceViolation
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,28 @@ def _rough_tokens(text: str) -> int:
 
 @routes.get("/health")
 async def health(_: web.Request) -> web.Response:
-    """Liveness probe used by docker-compose and the gateway."""
-    return web.json_response({"status": "ok"})
+    """Liveness probe plus observable memory write-fence degradation state."""
+    payload = {"status": "ok"}
+    if config.MEMORY_ENABLED:
+        try:
+            mem = get_memory()
+        except MemoryConfigError:
+            pass
+        else:
+            fence = getattr(mem, "write_fence", None)
+            degraded = bool(getattr(fence, "degraded", False))
+            lock_held = bool(getattr(fence, "lock_held", True))
+            writes_refused = degraded or not lock_held
+            payload["memory_write_fence_degraded"] = degraded
+            payload["memory_write_fence"] = {
+                "writes_refused": writes_refused,
+                "resource": getattr(fence, "resource_identity", None),
+            }
+            if writes_refused:
+                payload["memory_write_fence"]["reason"] = (
+                    getattr(fence, "degraded_reason", "") or "lock_not_held"
+                )
+    return web.json_response(payload)
 
 
 @routes.get("/api/faces")
@@ -474,6 +495,33 @@ def _fact_to_summary(fact) -> dict:
     }
 
 
+def _memory_write_refusal_reason(memory: Any) -> str | None:
+    """Return why this process cannot mutate memory, or None while armed."""
+    fence = getattr(memory, "write_fence", None)
+    if fence is None:
+        return None
+    if bool(getattr(fence, "degraded", False)):
+        return getattr(fence, "degraded_reason", "") or "contention"
+    if not bool(getattr(fence, "lock_held", True)):
+        return "lock_not_held"
+    return None
+
+
+def _memory_write_locked_response(
+    memory: Any,
+    exc: WriteFenceViolation | None = None,
+    *,
+    reason: str | None = None,
+) -> web.Response:
+    """Return the stable HTTP surface for a refused family write."""
+    refusal_reason = reason or _memory_write_refusal_reason(memory)
+    refusal_reason = refusal_reason or "write_fence_violation"
+    detail = str(exc) if exc is not None else f"memory writes refused: {refusal_reason}"
+    payload = error_event(detail, code="memory_write_locked")
+    payload["reason"] = refusal_reason
+    return web.json_response(payload, status=423)
+
+
 @routes.get("/api/memory/facts")
 async def list_memory_facts(request: web.Request) -> web.Response:
     """List L1 (auto-extracted) facts for the memory browser, newest-first.
@@ -532,6 +580,10 @@ async def forget_memory_fact(request: web.Request) -> web.Response:
             status=503,
         )
 
+    refusal_reason = _memory_write_refusal_reason(mem)
+    if refusal_reason is not None:
+        return _memory_write_locked_response(mem, reason=refusal_reason)
+
     try:
         await mem.fact_store.get(fact_id)
     except L1ValidationFailed:
@@ -540,10 +592,13 @@ async def forget_memory_fact(request: web.Request) -> web.Response:
             status=404,
         )
 
-    # 1) Qdrant vector(s) — scroll by source_fact_id payload → delete points.
-    await mem.indexer.drop_facts([fact_id])
-    # 2) SQLite row.
-    await mem.fact_store.delete(fact_id)
+    try:
+        # 1) Qdrant vector(s) — scroll by source_fact_id payload → delete points.
+        await mem.indexer.drop_facts([fact_id])
+        # 2) SQLite row.
+        await mem.fact_store.delete(fact_id)
+    except WriteFenceViolation as exc:
+        return _memory_write_locked_response(mem, exc)
     return web.json_response({"status": "forgotten", "fact_id": fact_id})
 
 

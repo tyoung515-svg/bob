@@ -14,6 +14,10 @@ from core.memory.indexer import MemoryIndexer
 from core.memory.models import Fact, ConfidenceStub, IndexStats, ChunkRecord, Chunk
 
 
+@pytest.fixture(autouse=True)
+def fence_lock_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("BOBCLAW_WRITE_FENCE_LOCK_DIR", str(tmp_path / "locks"))
+
 # ---------- helper mocks for tests 7, 8 ----------
 class _FP:
     """Minimal fingerprint with .dim attribute."""
@@ -24,6 +28,9 @@ class _FakeRegistry:
     """Minimal registry that does nothing."""
     def load(self):
         return self
+
+    def list(self):
+        return []
 
 
 class _FakeRegistryCls:
@@ -89,13 +96,6 @@ def test_flag_off_assert_is_noop(monkeypatch):
     assert result is None
 
 
-def test_flag_off_fence_gate_returns_none(monkeypatch):
-    """Both flags off -> _maybe_build_write_fence returns None without touching slot resolver."""
-    monkeypatch.delenv("MEMORY_SINGLE_QDRANT", raising=False)
-    monkeypatch.delenv("MEMORY_WRITE_FENCE_ENABLED", raising=False)
-    slot = object()  # bare object safe because gate returns before using it
-    result = _maybe_build_write_fence(slot, "bobclaw_")
-    assert result is None
 
 
 @pytest.mark.parametrize(
@@ -148,8 +148,8 @@ def test_whitespace_tolerance(monkeypatch):
     assert _consolidation_enabled() is True
 
 
-def test_consolidation_forces_fence(monkeypatch):
-    """MEMORY_SINGLE_QDRANT=true, MEMORY_WRITE_FENCE_ENABLED unset -> WriteFence built."""
+def test_memory_bootstrap_arms_fence_when_flag_is_unset(monkeypatch):
+    """The fence is default-on with memory; no consolidation flag is required."""
     monkeypatch.setenv("MEMORY_SINGLE_QDRANT", "true")
     monkeypatch.delenv("MEMORY_WRITE_FENCE_ENABLED", raising=False)
 
@@ -176,8 +176,32 @@ def test_consolidation_forces_fence(monkeypatch):
     assert isinstance(out, WriteFence)
 
 
-def test_write_fence_enabled_alone_builds_fence(monkeypatch):
-    """MEMORY_WRITE_FENCE_ENABLED=true, MEMORY_SINGLE_QDRANT unset -> WriteFence built (C4 path)."""
+@pytest.mark.parametrize("fence_flag", ["", "   "])
+def test_blank_write_fence_flag_arms_fence(monkeypatch, fence_flag):
+    """Blank/whitespace is unset, so memory still arms the mandatory fence."""
+    monkeypatch.setenv("MEMORY_WRITE_FENCE_ENABLED", fence_flag)
+    monkeypatch.setattr(
+        "core.memory.fingerprint.fingerprint_from_slot",
+        lambda res: _FP()
+    )
+    monkeypatch.setattr(
+        "core.ledger.federation.FederationRegistry",
+        _FakeRegistryCls,
+    )
+    monkeypatch.setattr(
+        "core.ledger.federation.default_registry_path",
+        lambda: Path("x"),
+    )
+    monkeypatch.setattr(
+        "core.memory.write_fence.register_bobclaw_memory",
+        lambda *a, **k: None,
+    )
+
+    assert isinstance(_maybe_build_write_fence(_Slot(), "bobclaw_"), WriteFence)
+
+
+def test_explicit_true_write_fence_flag_builds_fence(monkeypatch):
+    """An explicit true value agrees with the default-on memory bootstrap."""
     monkeypatch.delenv("MEMORY_SINGLE_QDRANT", raising=False)
     monkeypatch.setenv("MEMORY_WRITE_FENCE_ENABLED", "true")
 

@@ -22,6 +22,21 @@ def _reset_bootstrap_globals() -> None:
     bootstrap_mod._bootstrap_config_snapshot = None
 
 
+@pytest.fixture(autouse=True)
+def _armed_write_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[MagicMock, MagicMock]:
+    """Keep general bootstrap tests offline while asserting the fence seam is wired."""
+    fence = MagicMock(name="write_fence")
+    builder = MagicMock(name="build_write_fence", return_value=fence)
+    monkeypatch.setattr(
+        bootstrap_mod,
+        "_maybe_build_write_fence",
+        builder,
+    )
+    return builder, fence
+
+
 @pytest.fixture
 def stores_toml(tmp_path: Path) -> Path:
     path = tmp_path / "test_stores.toml"
@@ -79,6 +94,78 @@ class TestBootstrapIdempotent:
         s1 = bootstrap_memory(config)
         s2 = bootstrap_memory(config)
         assert s1 is s2
+
+
+class TestBootstrapWriteFenceInvariant:
+    @patch("core.memory.bootstrap.QdrantClient")
+    def test_memory_enabled_arms_write_fence(
+        self,
+        mock_qdrant_cls: MagicMock,
+        stores_toml: Path,
+        sqlite_path: Path,
+        _armed_write_fence: tuple[MagicMock, MagicMock],
+    ) -> None:
+        mock_qdrant_cls.return_value.get_collections.return_value = MagicMock()
+        fence_builder, fence = _armed_write_fence
+
+        singletons = bootstrap_memory(_make_config(sqlite_path, stores_toml))
+
+        fence_builder.assert_called_once_with(
+            singletons.slot_resolver,
+            "test_",
+            "http://localhost:16333",
+        )
+        assert singletons.write_fence is fence
+        assert singletons.indexer._provider._write_fence is fence
+
+    @patch("core.memory.bootstrap.QdrantClient")
+    def test_write_fence_construction_failure_refuses_memory_bootstrap(
+        self,
+        mock_qdrant_cls: MagicMock,
+        stores_toml: Path,
+        sqlite_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_qdrant_cls.return_value.get_collections.return_value = MagicMock()
+        monkeypatch.setattr(
+            bootstrap_mod,
+            "_maybe_build_write_fence",
+            MagicMock(side_effect=RuntimeError("lock setup failed")),
+        )
+
+        with pytest.raises(MemoryConfigError, match="write fence"):
+            bootstrap_memory(_make_config(sqlite_path, stores_toml))
+
+
+@patch("core.memory.bootstrap.QdrantClient")
+async def test_cleanup_then_rebootstrap_builds_fresh_armed_fence(
+    mock_qdrant_cls: MagicMock,
+    stores_toml: Path,
+    sqlite_path: Path,
+    _armed_write_fence: tuple[MagicMock, MagicMock],
+) -> None:
+    """Cleanup clears the closed singleton so the next bootstrap arms a new fence."""
+    from aiohttp import web
+    import start
+
+    mock_qdrant_cls.return_value.get_collections.return_value = MagicMock()
+    fence_builder, first_fence = _armed_write_fence
+    second_fence = MagicMock(name="fresh_write_fence")
+    fence_builder.side_effect = [first_fence, second_fence]
+    config = _make_config(sqlite_path, stores_toml)
+
+    first = bootstrap_memory(config)
+    await start._on_cleanup(web.Application())
+
+    first_fence.close.assert_called_once_with()
+    with pytest.raises(MemoryConfigError, match="not bootstrapped"):
+        get_memory()
+
+    second = bootstrap_memory(config)
+    assert second is not first
+    assert second.write_fence is second_fence
+    assert second.indexer._provider._write_fence is second_fence
+    assert fence_builder.call_count == 2
 
 
 class TestBootstrapRejectsDifferentConfig:

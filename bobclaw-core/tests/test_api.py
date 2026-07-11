@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -119,6 +120,68 @@ async def test_health_returns_ok(client):
     resp = await client.get("/health")
     assert resp.status == 200
     assert await resp.json() == {"status": "ok"}
+
+
+async def test_health_surfaces_degraded_write_fence(client, monkeypatch):
+    import api.server as server_mod
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(server_mod.config, "MEMORY_ENABLED", True)
+    monkeypatch.setattr(
+        server_mod,
+        "get_memory",
+        lambda: SimpleNamespace(
+            write_fence=SimpleNamespace(
+                degraded=True,
+                degraded_reason="permission",
+                resource_identity="http://localhost:6333|bobclaw_",
+            )
+        ),
+    )
+
+    resp = await client.get("/health")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["status"] == "ok"
+    assert body["memory_write_fence_degraded"] is True
+    assert body["memory_write_fence"]["writes_refused"] is True
+    assert body["memory_write_fence"]["resource"] == (
+        "http://localhost:6333|bobclaw_"
+    )
+
+    assert body["memory_write_fence"]["reason"] == "permission"
+
+
+async def test_health_reports_closed_fence_as_writes_refused(
+    client, monkeypatch, tmp_path: Path,
+):
+    """A released lock is closed/read-only even though it is not degraded."""
+    import api.server as server_mod
+    from core.ledger.federation import FederationRegistry
+    from core.memory.write_fence import WriteFence
+
+    fence = WriteFence(
+        FederationRegistry(tmp_path / "registry.json"),
+        qdrant_url="http://localhost:6353",
+        collection_prefix="bobclaw_",
+        lock_dir=tmp_path / "locks",
+    )
+    fence.close()
+    assert fence.degraded is False
+    assert fence.lock_held is False
+    monkeypatch.setattr(server_mod.config, "MEMORY_ENABLED", True)
+    monkeypatch.setattr(
+        server_mod,
+        "get_memory",
+        lambda: SimpleNamespace(write_fence=fence),
+    )
+
+    resp = await client.get("/health")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["memory_write_fence_degraded"] is False
+    assert body["memory_write_fence"]["writes_refused"] is True
+    assert body["memory_write_fence"]["reason"] == "lock_not_held"
 
 
 # ─── /api/faces ───────────────────────────────────────────────────────────────
@@ -351,6 +414,135 @@ async def test_forget_fact_deletes_vector_then_sqlite(client, monkeypatch):
     assert mem.indexer.dropped == [["f1"]]
     assert mem.fact_store.deleted == ["f1"]
     assert mem.order == ["vector_drop", "sqlite_delete"]
+
+
+async def test_forget_fact_write_fence_exception_mapping_remains_backstop(
+    client, monkeypatch,
+):
+    from core.memory.write_fence import WriteFenceViolation
+
+    mem = _FakeMem([_l1_fact("f1", "locked")])
+    mem.write_fence = SimpleNamespace(
+        degraded=False,
+        degraded_reason="",
+        lock_held=True,
+    )
+
+    async def refuse(_fact_ids):
+        raise WriteFenceViolation("bobclaw__768", "lock lost during write")
+
+    mem.indexer.drop_facts = refuse
+    _enable_memory(monkeypatch, mem)
+
+    resp = await client.delete("/api/memory/facts/f1")
+    assert resp.status == 423
+    body = await resp.json()
+    assert body["reason"] == "write_fence_violation"
+    assert mem.fact_store.deleted == []
+
+
+def _build_real_degraded_memory(tmp_path: Path, monkeypatch, *, points):
+    from core.ledger.federation import FederationRegistry
+    from core.memory.acl import ACLRegistry
+    from core.memory.indexer import MemoryIndexer
+    from core.memory.providers.qdrant_provider import QdrantRetrievalProvider
+    from core.memory.write_fence import WriteFence
+
+    monkeypatch.setenv("BOBCLAW_WRITE_FENCE_LOCK_DIR", str(tmp_path / "locks"))
+    holder = WriteFence(
+        FederationRegistry(tmp_path / "holder-registry.json"),
+        qdrant_url="http://localhost:6353",
+        collection_prefix="bobclaw_",
+    )
+    degraded = WriteFence(
+        FederationRegistry(tmp_path / "contender-registry.json"),
+        qdrant_url="http://127.0.0.1:6353",
+        collection_prefix="bobclaw_",
+    )
+    assert degraded.degraded_reason == "contention"
+
+    acl_path = tmp_path / "stores.toml"
+    acl_path.write_text(
+        "[store.s]\n"
+        'allowed_locality = ["local"]\n'
+        'allowed_provider_ids = ["p"]\n'
+        'allowed_capability_classes = ["text_dense"]\n',
+        encoding="utf-8",
+    )
+    qdrant = MagicMock()
+    qdrant.get_collections.return_value = SimpleNamespace(
+        collections=[SimpleNamespace(name="bobclaw__768")]
+    )
+    qdrant.scroll.return_value = (points, None)
+    provider = QdrantRetrievalProvider(
+        provider_id="p",
+        locality="local",
+        collection_prefix="bobclaw_",
+        acl_registry=ACLRegistry(acl_path),
+        client=qdrant,
+        write_fence=degraded,
+    )
+    fact_store = _FakeFactStore([_l1_fact("f1", "locked")], [])
+    indexer = MemoryIndexer(
+        fact_store=fact_store,
+        embedder=MagicMock(),
+        provider=provider,
+        store_id="s",
+        slot_resolver=MagicMock(),
+    )
+    mem = SimpleNamespace(
+        fact_store=fact_store,
+        indexer=indexer,
+        write_fence=degraded,
+    )
+    return holder, degraded, mem, qdrant, fact_store
+
+
+async def test_forget_fact_with_real_degraded_fence_returns_423(
+    client, monkeypatch, tmp_path: Path,
+):
+    holder, degraded, mem, qdrant, fact_store = _build_real_degraded_memory(
+        tmp_path,
+        monkeypatch,
+        points=[SimpleNamespace(id="chunk:f1:old")],
+    )
+    _enable_memory(monkeypatch, mem)
+
+    try:
+        resp = await client.delete("/api/memory/facts/f1")
+        assert resp.status == 423
+        body = await resp.json()
+        assert body["code"] == "memory_write_locked"
+        assert body["reason"] == "contention"
+        assert fact_store.deleted == []
+        qdrant.delete.assert_not_called()
+    finally:
+        degraded.close()
+        holder.close()
+
+
+async def test_forget_fact_degraded_fence_zero_vector_hits_refuses_before_sqlite(
+    client, monkeypatch, tmp_path: Path,
+):
+    """Auditor premise: zero matching vectors cannot bypass degraded read-only state."""
+    holder, degraded, mem, qdrant, fact_store = _build_real_degraded_memory(
+        tmp_path,
+        monkeypatch,
+        points=[],
+    )
+    _enable_memory(monkeypatch, mem)
+
+    try:
+        resp = await client.delete("/api/memory/facts/f1")
+        assert resp.status == 423
+        body = await resp.json()
+        assert body["reason"] == "contention"
+        assert fact_store.deleted == []
+        qdrant.scroll.assert_not_called()
+        qdrant.delete.assert_not_called()
+    finally:
+        degraded.close()
+        holder.close()
 
 
 async def test_forget_unknown_fact_returns_404(client, monkeypatch):

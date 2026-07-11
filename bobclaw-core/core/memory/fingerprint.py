@@ -263,7 +263,10 @@ def sentinel_vector(dim: int) -> List[float]:
 
 
 def write_sentinel(client: Any, collection: str, fp: EmbedFingerprint) -> None:
-    """Upsert the reserved sentinel point (id=SENTINEL_POINT_ID, vector + fingerprint payload)."""
+    """Upsert the reserved sentinel point (id, vector, and fingerprint payload).
+
+    Call only while the writer holds the collection family fence.
+    """
     # Lazy import so the module imports without qdrant_client installed.
     from qdrant_client.http.models import PointStruct
 
@@ -328,7 +331,10 @@ def assert_sentinel_matches(
 
 
 def ensure_sentinel(client: Any, collection: str, fp: EmbedFingerprint) -> None:
-    """Idempotent stamp-on-first-write: write the sentinel if absent, else assert it matches *fp*."""
+    """Write the sentinel if absent, otherwise assert it matches *fp*.
+
+    Call only while the writer holds the collection family fence.
+    """
     stored = read_sentinel(client, collection)
     if stored is None:
         write_sentinel(client, collection, fp)
