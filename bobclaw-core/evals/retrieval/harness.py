@@ -1,8 +1,8 @@
 """L-EVAL retrieval ceiling harness for the repository-local technical corpus.
 
 The corpus builder is deterministic and follows the lane source policy. Retrieval
-is brute-force cosine over NumPy arrays so this measures the embedding ceiling,
-not a vector-store implementation.
+is exact brute-force cosine over NumPy arrays so this measures the embedding
+ceiling, not a vector-store implementation.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import argparse
 import ast
 import asyncio
 import json
+import math
 import re
 import sys
 import textwrap
@@ -37,6 +38,19 @@ ROOT_MARKDOWN_FILES = (
     "CONTRIBUTING.md",
     "CHANGELOG.md",
 )
+CONTENT_TOKEN_RE = re.compile(r"[a-z0-9]+")
+CONTENT_STOPWORDS = frozenset(
+    """
+    a about above after again against all am an and any are as at be because been before
+    being below between both but by can could did do does doing down during each few for
+    from further had has have having he her here hers herself him himself his how i if in
+    into is it its itself just me more most my myself no nor not now of off on once only or
+    other our ours ourselves out over own same she should so some such than that the their
+    theirs them themselves then there these they this those through to too under until up
+    very was we were what when where which while who whom why will with would you your yours
+    yourself yourselves
+    """.split()
+)
 
 
 @dataclass(frozen=True)
@@ -59,7 +73,8 @@ def _clean_text(text: str) -> str:
 
 def _env_comments(path: Path) -> str:
     return "\n".join(
-        line for line in path.read_text(encoding="utf-8").splitlines()
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
         if line.lstrip().startswith("#")
     )
 
@@ -152,7 +167,10 @@ def _pack_source(text: str) -> list[str]:
         if index and len(chunks[index - 1]) + 1 + len(chunks[index]) <= MAX_CHUNK_CHARS:
             chunks[index - 1] = f"{chunks[index - 1]} {chunks.pop(index)}"
             continue
-        if index + 1 < len(chunks) and len(chunks[index]) + 1 + len(chunks[index + 1]) <= MAX_CHUNK_CHARS:
+        if (
+            index + 1 < len(chunks)
+            and len(chunks[index]) + 1 + len(chunks[index + 1]) <= MAX_CHUNK_CHARS
+        ):
             chunks[index : index + 2] = [f"{chunks[index]} {chunks[index + 1]}"]
             continue
         index += 1
@@ -165,24 +183,44 @@ def build_corpus(repo_root: Path = REPO_ROOT) -> list[CorpusChunk]:
     for source, text in iter_sources(repo_root):
         source_key = re.sub(r"[^a-z0-9]+", "-", source.lower()).strip("-")
         for ordinal, chunk_text in enumerate(_pack_source(text), start=1):
-            chunks.append(CorpusChunk(f"{source_key}-{ordinal:03d}", source, ordinal, chunk_text))
+            chunks.append(
+                CorpusChunk(
+                    chunk_id=f"{source_key}-{ordinal:03d}",
+                    source=source,
+                    ordinal=ordinal,
+                    text=chunk_text,
+                )
+            )
     return chunks
+
+
+def content_tokens(text: str) -> set[str]:
+    """Return lowercase non-stopword tokens used by the leakage guard."""
+    return {
+        token
+        for token in CONTENT_TOKEN_RE.findall(text.casefold())
+        if token not in CONTENT_STOPWORDS and len(token) > 1
+    }
 
 
 def load_eval_set(path: Path = DEFAULT_EVAL_SET) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         if not line.strip():
             continue
         try:
             row = json.loads(line)
         except json.JSONDecodeError as exc:
             raise ValueError(f"{path}:{line_number}: invalid JSON: {exc}") from exc
-        missing = {"query", "relevant_chunk_id", "distractor_chunk_ids"} - row.keys()
+        missing = {"id", "query", "relevant_chunk_id", "distractor_chunk_ids"} - row.keys()
         if missing:
             raise ValueError(f"{path}:{line_number}: missing fields: {sorted(missing)}")
         if not isinstance(row["distractor_chunk_ids"], list):
-            raise ValueError(f"{path}:{line_number}: distractor_chunk_ids must be a list")
+            raise ValueError(
+                f"{path}:{line_number}: distractor_chunk_ids must be a list"
+            )
         rows.append(row)
     if not rows:
         raise ValueError(f"{path}: eval set is empty")
@@ -190,28 +228,66 @@ def load_eval_set(path: Path = DEFAULT_EVAL_SET) -> list[dict[str, Any]]:
 
 
 def validate_eval_set(rows: list[dict[str, Any]], corpus: list[CorpusChunk]) -> None:
-    corpus_ids = {chunk.chunk_id for chunk in corpus}
+    chunk_by_id = {chunk.chunk_id: chunk for chunk in corpus}
+    seen_ids: set[str] = set()
     seen_queries: set[str] = set()
     for index, row in enumerate(rows, start=1):
+        eval_id = row["id"]
         query = row["query"]
         relevant = row["relevant_chunk_id"]
         distractors = row["distractor_chunk_ids"]
+        if not isinstance(eval_id, str) or not eval_id.strip():
+            raise ValueError(f"eval row {index}: id must be non-empty text")
+        if eval_id in seen_ids:
+            raise ValueError(f"eval row {index}: duplicate id {eval_id!r}")
+        seen_ids.add(eval_id)
         if not isinstance(query, str) or not query.strip():
             raise ValueError(f"eval row {index}: query must be non-empty text")
         if query in seen_queries:
             raise ValueError(f"eval row {index}: duplicate query")
         seen_queries.add(query)
-        if relevant not in corpus_ids:
+        if relevant not in chunk_by_id:
             raise ValueError(f"eval row {index}: unknown relevant chunk {relevant!r}")
         if not 2 <= len(distractors) <= 3:
             raise ValueError(f"eval row {index}: expected 2-3 distractors")
         if len(set(distractors)) != len(distractors):
             raise ValueError(f"eval row {index}: duplicate distractor")
         if relevant in distractors:
-            raise ValueError(f"eval row {index}: relevant chunk also listed as distractor")
-        unknown = set(distractors) - corpus_ids
+            raise ValueError(
+                f"eval row {index}: relevant chunk also listed as distractor"
+            )
+        unknown = set(distractors) - chunk_by_id.keys()
         if unknown:
             raise ValueError(f"eval row {index}: unknown distractors {sorted(unknown)}")
+        if row.get("author_blind") is True:
+            overlap = content_tokens(query) & content_tokens(chunk_by_id[relevant].text)
+            if overlap:
+                raise ValueError(
+                    f"eval row {index}: author-blind content-token overlap: "
+                    f"{sorted(overlap)}"
+                )
+            if not isinstance(row.get("source_query_id"), str):
+                raise ValueError(
+                    f"eval row {index}: author-blind row needs source_query_id"
+                )
+
+
+def wilson_interval(successes: int, total: int, z: float = 1.959963984540054) -> tuple[float, float]:
+    """Return a two-sided 95% Wilson score interval for a binomial proportion."""
+    if total <= 0:
+        raise ValueError("Wilson interval requires a positive sample size")
+    proportion = successes / total
+    z2 = z * z
+    denominator = 1.0 + z2 / total
+    center = (proportion + z2 / (2.0 * total)) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            proportion * (1.0 - proportion) / total + z2 / (4.0 * total * total)
+        )
+        / denominator
+    )
+    return max(0.0, center - margin), min(1.0, center + margin)
 
 
 def _apply_template(text: str, template: str | None) -> str:
@@ -221,8 +297,16 @@ def _apply_template(text: str, template: str | None) -> str:
 
 
 class EmbeddingClient:
-    def __init__(self, endpoint: str, model: str, *, timeout_seconds: float, batch_size: int,
-                 query_template: str | None, doc_template: str | None) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        model: str,
+        *,
+        timeout_seconds: float,
+        batch_size: int,
+        query_template: str | None,
+        doc_template: str | None,
+    ) -> None:
         self.url = f"{endpoint.rstrip('/')}/v1/embeddings"
         self.model = model
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -230,12 +314,19 @@ class EmbeddingClient:
         self.query_template = query_template
         self.doc_template = doc_template
 
-    async def _embed(self, session: aiohttp.ClientSession, texts: list[str],
-                     template: str | None) -> list[list[float]]:
+    async def _embed(
+        self,
+        session: aiohttp.ClientSession,
+        texts: list[str],
+        template: str | None,
+    ) -> list[list[float]]:
         if not texts:
             return []
-        request_texts = [_apply_template(text, template) if text.strip() else text for text in texts]
-        async with session.post(self.url, json={"model": self.model, "input": request_texts}) as response:
+        request_texts = [
+            _apply_template(text, template) if text.strip() else text for text in texts
+        ]
+        payload = {"model": self.model, "input": request_texts}
+        async with session.post(self.url, json=payload) as response:
             response.raise_for_status()
             body = await response.json(content_type=None)
         data = body.get("data") if isinstance(body, dict) else None
@@ -260,7 +351,8 @@ class EmbeddingClient:
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
             vectors: list[list[float]] = []
             for start in range(0, len(texts), self.batch_size):
-                vectors.extend(await self._embed(session, texts[start:start + self.batch_size], self.doc_template))
+                batch = texts[start : start + self.batch_size]
+                vectors.extend(await self._embed(session, batch, self.doc_template))
             return vectors
 
     async def embed_query(self, text: str) -> list[float]:
@@ -268,20 +360,25 @@ class EmbeddingClient:
             return (await self._embed(session, [text], self.query_template))[0]
 
 
-def _cosine_top_k(query_vector: np.ndarray, document_matrix: np.ndarray, k: int) -> list[int]:
+def _cosine_scores(query_vector: np.ndarray, document_matrix: np.ndarray) -> np.ndarray:
     query_norm = np.linalg.norm(query_vector)
     if query_norm == 0:
         raise ValueError("query embedding is zero/degenerate")
-    scores = document_matrix @ (query_vector / query_norm)
-    top_k = min(k, len(scores))
-    candidates = np.argpartition(-scores, top_k - 1)[:top_k]
-    return candidates[np.argsort(-scores[candidates])].tolist()
+    return document_matrix @ (query_vector / query_norm)
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
     corpus = build_corpus()
     eval_rows = load_eval_set(args.eval_set)
     validate_eval_set(eval_rows, corpus)
+    id_to_index = {chunk.chunk_id: index for index, chunk in enumerate(corpus)}
     client = EmbeddingClient(
         args.endpoint,
         args.model,
@@ -308,36 +405,71 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 
     query_latencies_ms: list[float] = []
     hits_at_10 = 0
+    distractor_wins = 0
     row_results: list[dict[str, Any]] = []
     for row in eval_rows:
         start = time.perf_counter()
-        query_vector = np.asarray(await client.embed_query(row["query"]), dtype=np.float32)
-        ranked_indices = _cosine_top_k(query_vector, matrix, 10)
+        query_vector = np.asarray(
+            await client.embed_query(row["query"]), dtype=np.float32
+        )
+        scores = _cosine_scores(query_vector, matrix)
+        ranked_indices = np.argsort(-scores, kind="stable")
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         query_latencies_ms.append(elapsed_ms)
-        ranked_ids = [corpus[index].chunk_id for index in ranked_indices]
-        hit = row["relevant_chunk_id"] in ranked_ids
-        hits_at_10 += int(hit)
-        row_results.append({
-            "query": row["query"],
-            "relevant_chunk_id": row["relevant_chunk_id"],
-            "rank": ranked_ids.index(row["relevant_chunk_id"]) + 1 if hit else None,
-            "top_10": ranked_ids,
-        })
 
+        relevant_index = id_to_index[row["relevant_chunk_id"]]
+        target_rank = int(np.flatnonzero(ranked_indices == relevant_index)[0]) + 1
+        hit = target_rank <= 10
+        hits_at_10 += int(hit)
+        top_10 = [corpus[index].chunk_id for index in ranked_indices[:10]]
+        target_score = float(scores[relevant_index])
+        distractor_winner_ids = [
+            distractor_id
+            for distractor_id in row["distractor_chunk_ids"]
+            if float(scores[id_to_index[distractor_id]]) > target_score
+        ]
+        distractor_win = bool(distractor_winner_ids)
+        distractor_wins += int(distractor_win)
+        row_results.append(
+            {
+                "distractor_win": distractor_win,
+                "distractor_winner_ids": distractor_winner_ids,
+                "embed_plus_search_ms": round(elapsed_ms, 3),
+                "eval_id": row["id"],
+                "eval_set": args.eval_set.stem,
+                "hit_at_10": hit,
+                "model": args.model,
+                "pair_id": row.get("source_query_id", row["id"]),
+                "query": row["query"],
+                "rank": target_rank,
+                "relevant_chunk_id": row["relevant_chunk_id"],
+                "top_10": top_10,
+            }
+        )
+
+    _write_jsonl(args.results_jsonl, row_results)
+    total = len(eval_rows)
+    recall_ci = wilson_interval(hits_at_10, total)
+    distractor_ci = wilson_interval(distractor_wins, total)
     p95 = float(np.percentile(np.asarray(query_latencies_ms), 95))
     return {
         "status": "ok",
         "endpoint": args.endpoint,
         "model": args.model,
+        "eval_set": str(args.eval_set),
+        "results_jsonl": str(args.results_jsonl),
         "query_template": args.query_template,
         "doc_template": args.doc_template,
-        "eval_rows": len(eval_rows),
+        "eval_rows": total,
         "corpus_chunks": len(corpus),
         "embedding_dimension": dimension,
         "document_embed_ms": round(doc_embed_ms, 3),
-        "recall_at_10": hits_at_10 / len(eval_rows),
         "hits_at_10": hits_at_10,
+        "recall_at_10": hits_at_10 / total,
+        "recall_at_10_wilson_95": [round(value, 6) for value in recall_ci],
+        "distractor_wins": distractor_wins,
+        "distractor_win_rate": distractor_wins / total,
+        "distractor_win_wilson_95": [round(value, 6) for value in distractor_ci],
         "p95_embed_plus_search_ms": round(p95, 3),
         "query_latency_ms": {
             "min": round(min(query_latencies_ms), 3),
@@ -345,7 +477,6 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             "p95": round(p95, 3),
             "max": round(max(query_latencies_ms), 3),
         },
-        "rows": row_results,
     }
 
 
@@ -354,6 +485,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--endpoint", default="http://127.0.0.1:1234")
     parser.add_argument("--model", required=True)
     parser.add_argument("--eval-set", type=Path, default=DEFAULT_EVAL_SET)
+    parser.add_argument("--results-jsonl", type=Path, required=True)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     parser.add_argument("--query-template")
@@ -381,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
             "status": "error",
             "endpoint": args.endpoint,
             "model": args.model,
+            "eval_set": str(args.eval_set),
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
@@ -389,6 +522,7 @@ def main(argv: list[str] | None = None) -> int:
     encoded = json.dumps(result, indent=2)
     print(encoded)
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded + "\n", encoding="utf-8")
     return 0
 
