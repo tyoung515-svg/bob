@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tomllib
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -66,6 +69,19 @@ def _write_zvec_stores(path: Path, instance_root: Path) -> None:
         f'instance_root = "{_toml_path(instance_root)}"\n'
         'collection_prefix = "zvec_test_"\n'
         'capability_classes = ["text_dense"]\n',
+        encoding="utf-8",
+    )
+
+
+def _write_inline_zvec_stores(path: Path, instance_root: Path) -> None:
+    path.write_text(
+        "[stores]\n"
+        'test_store = { acl_allowed_providers = ["zvec_local"] }\n'
+        "\n"
+        "[providers]\n"
+        'zvec_local = { kind = "zvec", locality = "local", '
+        f'instance_root = "{_toml_path(instance_root)}", '
+        'collection_prefix = "zvec_test_", capability_classes = ["text_dense"] }\n',
         encoding="utf-8",
     )
 
@@ -147,6 +163,35 @@ def test_zvec_selection_arms_fence_initializes_layout_and_stamps_compatible_fing
         reset_memory()
 
 
+def test_inline_table_zvec_selection_never_contacts_qdrant(
+    workspace_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    instance_root = workspace_path / "inline-zvec-root"
+    stores_path = workspace_path / "inline-memory_stores.toml"
+    _write_inline_zvec_stores(stores_path, instance_root)
+    monkeypatch.setenv(
+        "BOBCLAW_LEDGER_INSTANCES", str(workspace_path / "inline-registry.json")
+    )
+    monkeypatch.setenv(
+        "BOBCLAW_WRITE_FENCE_LOCK_DIR", str(workspace_path / "inline-locks")
+    )
+
+    with patch(
+        "core.memory.bootstrap.QdrantClient",
+        side_effect=AssertionError("inline-table zvec must not contact Qdrant"),
+    ):
+        singletons = bootstrap_memory(_config(workspace_path, stores_path))
+
+    try:
+        assert isinstance(singletons.indexer._provider, ZvecRetrievalProvider)
+        assert singletons.write_fence.lock_held is True
+        assert (instance_root / "instances" / "test_store" / "manifest").is_dir()
+    finally:
+        singletons.indexer._provider.close()
+        singletons.write_fence.close()
+        reset_memory()
+
+
 def test_zvec_instance_root_spelling_maps_to_one_family_lock(
     workspace_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -174,6 +219,69 @@ def test_zvec_instance_root_spelling_maps_to_one_family_lock(
     finally:
         contender.close()
         holder.close()
+
+
+def test_zvec_junction_alias_maps_to_target_family_lock(
+    workspace_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv(
+        "BOBCLAW_WRITE_FENCE_LOCK_DIR", str(workspace_path / "junction-locks")
+    )
+    target_root = workspace_path / "junction-target"
+    alias_root = workspace_path / "junction-alias"
+    target_root.mkdir()
+    result = subprocess.run(
+        ["cmd.exe", "/c", "mklink", "/J", str(alias_root), str(target_root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    holder = WriteFence(
+        FederationRegistry(workspace_path / "junction-holder-registry.json"),
+        zvec_instance_root=target_root,
+        collection_prefix="zvec_test_",
+    )
+    contender = WriteFence(
+        FederationRegistry(workspace_path / "junction-contender-registry.json"),
+        zvec_instance_root=alias_root,
+        collection_prefix="zvec_test_",
+    )
+    try:
+        assert canonicalize_zvec_instance_root(alias_root) == (
+            canonicalize_zvec_instance_root(target_root)
+        )
+        assert contender.lock_path == holder.lock_path
+        assert contender.degraded_reason == "contention"
+    finally:
+        contender.close()
+        holder.close()
+
+
+def test_foreign_collision_refusal_does_not_create_zvec_root(
+    workspace_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv(
+        "BOBCLAW_WRITE_FENCE_LOCK_DIR", str(workspace_path / "collision-locks")
+    )
+    registry = FederationRegistry(workspace_path / "collision-registry.json")
+    registry.register(
+        "foreign-owner",
+        "C:/foreign",
+        collection="zvec_test__768",
+        dim=768,
+    )
+    instance_root = workspace_path / "must-not-exist"
+
+    with pytest.raises(WriteFenceViolation, match="registry collision"):
+        WriteFence(
+            registry,
+            zvec_instance_root=instance_root,
+            collection_prefix="zvec_test_",
+        )
+
+    assert not instance_root.exists()
 
 
 def test_absent_zvec_instance_root_case_variants_map_to_one_family_lock(
@@ -292,20 +400,40 @@ def test_zvec_second_boot_refuses_mismatched_fingerprint(
     assert json.loads(fingerprint_path.read_text(encoding="utf-8")) == mismatched
 
 
-def test_zvec_fingerprint_stamp_is_invalidated_when_fence_is_lost_mid_write(
+def test_zvec_fingerprint_loss_leaves_identical_successor_stamp(
     workspace_path: Path,
 ):
-    class SelfReleasingFence:
+    instance_root = workspace_path / "successor-stamp-root"
+    fingerprint_path = (
+        instance_root
+        / "instances"
+        / "test_store"
+        / "manifest"
+        / "embed_fingerprint.json"
+    )
+
+    class SuccessorFence:
         def __init__(self):
             self.calls = 0
             self.held = True
+            self.successor_stat = None
+
+        @property
+        def lock_held(self):
+            return self.held
 
         def assert_writable(self, collection):
             self.calls += 1
+            if self.calls == 3:
+                written = fingerprint_path.read_bytes()
+                successor = fingerprint_path.with_suffix(".successor")
+                successor.write_bytes(written)
+                self.held = False
+                os.replace(successor, fingerprint_path)
+                self.successor_stat = fingerprint_path.stat()
+                raise WriteFenceViolation(collection, "successor acquired the fence")
             if not self.held:
                 raise WriteFenceViolation(collection, "test fence was released")
-            if self.calls == 2:
-                self.held = False
 
     slot_resolver = MagicMock()
     slot_resolver.get.return_value = SlotResolution(
@@ -315,10 +443,9 @@ def test_zvec_fingerprint_stamp_is_invalidated_when_fence_is_lost_mid_write(
         endpoint="http://127.0.0.1:1/v1",
         embedding_dimension=768,
     )
-    instance_root = workspace_path / "lost-fence-root"
-    fence = SelfReleasingFence()
+    fence = SuccessorFence()
 
-    with pytest.raises(WriteFenceViolation, match="test fence was released"):
+    with pytest.raises(WriteFenceViolation, match="successor acquired the fence"):
         bootstrap_mod._initialize_zvec_instance(
             fence,
             slot_resolver,
@@ -327,6 +454,18 @@ def test_zvec_fingerprint_stamp_is_invalidated_when_fence_is_lost_mid_write(
             "zvec_test_",
         )
 
+    assert fence.calls == 3
+    assert fingerprint_path.exists()
+    assert os.path.samestat(fingerprint_path.stat(), fence.successor_stat)
+    assert json.loads(fingerprint_path.read_text(encoding="utf-8"))["embed"][
+        "model_id"
+    ] == "test-embedder"
+
+
+def test_zvec_fingerprint_rollback_removes_owned_stamp_while_fence_is_held(
+    workspace_path: Path,
+):
+    instance_root = workspace_path / "owned-rollback-root"
     fingerprint_path = (
         instance_root
         / "instances"
@@ -334,7 +473,38 @@ def test_zvec_fingerprint_stamp_is_invalidated_when_fence_is_lost_mid_write(
         / "manifest"
         / "embed_fingerprint.json"
     )
-    assert fence.calls == 3
+
+    class HeldFence:
+        lock_held = True
+
+        def __init__(self):
+            self.calls = 0
+
+        def assert_writable(self, collection):
+            self.calls += 1
+            if self.calls == 3:
+                raise WriteFenceViolation(collection, "synthetic post-check failure")
+
+    slot_resolver = MagicMock()
+    slot_resolver.get.return_value = SlotResolution(
+        slot_name="embed_text",
+        model="test-embedder",
+        backend="openai_compatible",
+        endpoint="http://127.0.0.1:1/v1",
+        embedding_dimension=768,
+    )
+    fence = HeldFence()
+
+    with pytest.raises(WriteFenceViolation, match="synthetic post-check failure"):
+        bootstrap_mod._initialize_zvec_instance(
+            fence,
+            slot_resolver,
+            instance_root,
+            "test_store",
+            "zvec_test_",
+        )
+
+    assert fence.calls == 4
     assert not fingerprint_path.exists()
 
 
@@ -384,44 +554,97 @@ def test_config_without_zvec_keeps_the_legacy_qdrant_construction_path(
     zvec_provider.assert_not_called()
 
 
-def test_config_without_zvec_constructs_qdrant_before_store_parsing(
+@pytest.mark.parametrize(
+    ("case", "qdrant_fails", "expected_exception"),
+    [
+        ("valid", False, None),
+        ("malformed", False, tomllib.TOMLDecodeError),
+        ("missing", False, FileNotFoundError),
+        ("malformed", True, MemoryConfigError),
+        ("missing", True, MemoryConfigError),
+    ],
+)
+def test_legacy_single_parse_equivalence_corpus(
     workspace_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    qdrant_fails: bool,
+    expected_exception: type[BaseException] | None,
 ):
-    stores_path = workspace_path / "legacy-order-memory_stores.toml"
-    stores_path.write_text(
-        "[stores.test_store]\n"
-        'acl_allowed_providers = ["test_provider"]\n'
-        "\n"
-        "[providers.test_provider]\n"
-        'locality = "local"\n'
-        'collection_prefix = "test_"\n'
-        'capability_classes = ["text_dense"]\n',
-        encoding="utf-8",
+    stores_path = workspace_path / f"{case}-legacy-memory_stores.toml"
+    if case == "valid":
+        stores_path.write_text(
+            "[stores.test_store]\n"
+            'acl_allowed_providers = ["test_provider"]\n'
+            "\n"
+            "[providers.test_provider]\n"
+            'locality = "local"\n'
+            'collection_prefix = "test_"\n'
+            'capability_classes = ["text_dense"]\n',
+            encoding="utf-8",
+        )
+    elif case == "malformed":
+        stores_path.write_text("[providers.test_provider\n", encoding="utf-8")
+
+    monkeypatch.setenv(
+        "BOBCLAW_LEDGER_INSTANCES", str(workspace_path / f"{case}-registry.json")
     )
-    order = []
+    monkeypatch.setenv(
+        "BOBCLAW_WRITE_FENCE_LOCK_DIR", str(workspace_path / f"{case}-locks")
+    )
+    reads = []
+    real_read_text = Path.read_text
+
+    def track_stores_read(self, *args, **kwargs):
+        if self == stores_path:
+            reads.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", track_stores_read)
     client = MagicMock(name="qdrant_client")
     client.get_collections.return_value = MagicMock()
-    real_parse = bootstrap_mod._parse_stores_toml
+    fence = MagicMock(name="write_fence")
+    qdrant_error = RuntimeError("base-order qdrant failure")
+    qdrant_side_effect = qdrant_error if qdrant_fails else None
 
-    def construct_qdrant(*args, **kwargs):
-        order.append("qdrant")
-        return client
-
-    def parse_stores(path):
-        order.append("parse")
-        return real_parse(path)
-
+    context = (
+        pytest.raises(expected_exception)
+        if expected_exception is not None
+        else nullcontext()
+    )
     with (
-        patch("core.memory.bootstrap.QdrantClient", side_effect=construct_qdrant),
-        patch.object(bootstrap_mod, "_parse_stores_toml", side_effect=parse_stores),
+        patch(
+            "core.memory.bootstrap.QdrantClient",
+            return_value=client,
+            side_effect=qdrant_side_effect,
+        ) as qdrant_cls,
         patch.object(
-            bootstrap_mod, "_maybe_build_write_fence", return_value=MagicMock()
+            bootstrap_mod, "_maybe_build_write_fence", return_value=fence
         ),
-        patch.object(bootstrap_mod, "QdrantRetrievalProvider"),
+        patch.object(
+            bootstrap_mod, "QdrantRetrievalProvider"
+        ) as qdrant_provider,
+        context as captured,
     ):
         bootstrap_memory(_config(workspace_path, stores_path))
 
-    assert order == ["qdrant", "parse"]
+    assert len(reads) == 1
+    assert _config(workspace_path, stores_path).sqlite_path.is_file()
+    qdrant_cls.assert_called_once_with(url="http://localhost:16333", timeout=10)
+    if qdrant_fails:
+        assert "Qdrant unreachable" in str(captured.value)
+    else:
+        client.get_collections.assert_called_once_with()
+    if case == "valid":
+        qdrant_provider.assert_called_once()
+        provider_kwargs = qdrant_provider.call_args.kwargs
+        assert provider_kwargs["provider_id"] == "test_provider"
+        assert provider_kwargs["locality"] == "local"
+        assert provider_kwargs["collection_prefix"] == "test_"
+        assert provider_kwargs["client"] is client
+        assert provider_kwargs["write_fence"] is fence
+    else:
+        qdrant_provider.assert_not_called()
 
 
 def test_non_table_provider_block_raises_named_memory_config_error(

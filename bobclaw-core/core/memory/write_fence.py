@@ -156,22 +156,20 @@ def canonicalize_qdrant_url(qdrant_url: str) -> str:
 
 
 def canonicalize_zvec_instance_root(instance_root: str | Path) -> str:
-    """Return the existence-independent absolute Zvec family-lock token.
+    """Return the canonical absolute Zvec family-lock token.
 
-    Identity is exactly ``normcase(normpath(abspath(instance_root)))``. The
-    constructor expands ``~`` before calling this helper. This collapses relative
-    segments and Windows case variants
-    without consulting filesystem existence. UNC and drive-letter aliases are
-    intentionally not equated; deployments must use one canonical spelling.
+    The normalized absolute path is passed through ``realpath`` so an existing
+    junction or symlink alias shares the target's lock. For an absent first-boot
+    root, ``realpath`` remains existence-independent normalization and performs
+    no creation. UNC and drive-letter aliases are intentionally not equated.
     """
     if not isinstance(instance_root, (str, Path)):
         raise ValueError("zvec instance_root must be a path string or Path")
     raw_root = os.fspath(instance_root)
     if not raw_root.strip():
         raise ValueError("zvec instance_root must be a non-empty path")
-    return os.path.normcase(
-        os.path.normpath(os.path.abspath(raw_root))
-    )
+    absolute_root = os.path.normpath(os.path.abspath(raw_root))
+    return os.path.normcase(os.path.normpath(os.path.realpath(absolute_root)))
 
 
 def _resolve_lock_dir(lock_dir: str | Path | None) -> Path:
@@ -390,6 +388,7 @@ class WriteFence:
                 "resource",
                 "exactly one of qdrant_url or zvec_instance_root is required",
             )
+        zvec_root_to_create = None
         if qdrant_url is not None:
             try:
                 canonical_resource = canonicalize_qdrant_url(qdrant_url)
@@ -402,16 +401,12 @@ class WriteFence:
                 raw_root = os.fspath(zvec_instance_root)
                 if not raw_root.strip():
                     raise ValueError("zvec instance_root must be a non-empty path")
-                absolute_root = os.path.abspath(os.path.expanduser(raw_root))
-                os.makedirs(absolute_root, exist_ok=True)
-                canonical_resource = canonicalize_zvec_instance_root(absolute_root)
+                zvec_root_to_create = os.path.abspath(os.path.expanduser(raw_root))
+                canonical_resource = canonicalize_zvec_instance_root(
+                    zvec_root_to_create
+                )
             except ValueError as exc:
                 raise WriteFenceViolation(str(zvec_instance_root), str(exc)) from exc
-            except OSError as exc:
-                raise WriteFenceViolation(
-                    str(zvec_instance_root),
-                    f"zvec instance root could not be created: {exc}",
-                ) from exc
         self._resource_identity = f"{canonical_resource}|{self._collection_prefix}"
         self._assert_no_foreign_family_collision()
         self._lock_dir = _prepare_lock_dir(_resolve_lock_dir(lock_dir))
@@ -445,6 +440,16 @@ class WriteFence:
                 self._resource_identity,
                 f"exclusive write lock unavailable at {self._lock_path!s}: {exc}",
             ) from exc
+
+        if zvec_root_to_create is not None and self.lock_held:
+            try:
+                os.makedirs(zvec_root_to_create, exist_ok=True)
+            except OSError as exc:
+                self.close()
+                raise WriteFenceViolation(
+                    str(zvec_instance_root),
+                    f"zvec instance root could not be created: {exc}",
+                ) from exc
 
     def _assert_no_foreign_family_collision(self) -> None:
         """Refuse a family whose registry namespace is not exclusively BoB's."""
