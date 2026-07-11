@@ -182,7 +182,13 @@ class BobLKS:
             and (self._instance_dir / "l0").is_dir()
         )
         if fingerprint_path.is_file():
-            ensure_zvec_instance_fingerprint(manifest_dir, self._fingerprint)
+            ensure_zvec_instance_fingerprint(
+                manifest_dir,
+                self._fingerprint,
+                assert_writable=lambda: self._write_fence.assert_writable(
+                    self._collection
+                ),
+            )
             if layout_dirs_exist:
                 return
         if self._write_fence.degraded or not self._write_fence.lock_held:

@@ -426,7 +426,7 @@ async def test_fresh_degraded_boot_is_read_capable_and_ingest_is_423_shaped(
     try:
         assert contender.degraded is True
         lks = _build_lks(instance_root, contender, provider)
-        assert not instance_root.exists()
+        assert instance_root.is_dir()
 
         with pytest.raises(BobLKSWriteLocked) as raised:
             await lks.ingest([])
