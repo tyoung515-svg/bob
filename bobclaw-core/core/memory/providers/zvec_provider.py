@@ -5,6 +5,15 @@ uses that key in ``MemoryIndexer.drop_facts`` via ``scroll_payload``; the live
 recall path currently issues unfiltered vector searches. ``include_deprecated``
 is consumed by ``MemoryRetriever`` before provider dispatch. Any other provider
 filter fails closed so production call-site drift is visible.
+
+The canonical storage encoding is one declared ``source_fact_id_state`` field
+(``missing``, ``none``, or ``value``) plus the raw declared ``source_fact_id``
+string. ``payload_json`` stores only the remaining payload. Pre-release Zvec
+dev stores from earlier intermediate encodings have no upgrade contract: they
+are derived data and must be dropped and re-ingested before first release.
+Every index request is fully validated before its first upsert; a process crash
+or Zvec failure during later write batches can still leave a partial prefix
+because Zvec 0.5.1 has no transaction spanning batches.
 """
 
 from __future__ import annotations
@@ -44,12 +53,10 @@ _VECTOR_FIELD = "embedding"
 _SOURCE_FIELD = "source_fact_id"
 _CHUNK_FIELD = "chunk_id"
 _PAYLOAD_FIELD = "payload_json"
+_SOURCE_STATE_FIELD = "source_fact_id_state"
 _SOURCE_STATE_MISSING = "missing"
 _SOURCE_STATE_NONE = "none"
 _SOURCE_STATE_VALUE = "value"
-_SOURCE_TOKEN_MISSING = "M"
-_SOURCE_TOKEN_NONE = "N"
-_SOURCE_TOKEN_VALUE = "S"
 _PREFIX_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
@@ -595,8 +602,6 @@ class ZvecRetrievalProvider:
                 }
                 for dim, dim_items in by_dim.items()
             ]
-            paths = [batch["path"] for batch in batches]
-            self._call_with_reclaim("preflight_paths", paths=paths)
             response = self._call_with_reclaim("index", batches=batches)
             written = response.get("written")
             if written != len(items):
@@ -837,7 +842,12 @@ def _worker_dispatch(
             zvec.Query(field_name=_VECTOR_FIELD, vector=request["vector"]),
             topk=int(request["k"]),
             filter=_zvec_filter(request.get("source_fact_id")),
-            output_fields=[_SOURCE_FIELD, _CHUNK_FIELD, _PAYLOAD_FIELD],
+            output_fields=[
+                _SOURCE_FIELD,
+                _SOURCE_STATE_FIELD,
+                _CHUNK_FIELD,
+                _PAYLOAD_FIELD,
+            ],
         )
         return {"hits": [_worker_doc_result(doc) for doc in docs]}
     if operation == "delete":
@@ -899,71 +909,110 @@ def _worker_index(
 ) -> dict[str, Any]:
     if not isinstance(batches, list):
         raise ValueError("index batches must be a list")
-    total = sum(len(batch["items"]) for batch in batches)
-    confirmed = 0
+
+    prepared: list[tuple[dict[str, Any], list[Any]]] = []
+    total = 0
     for batch in batches:
-        collection = _worker_collection(
-            zvec,
-            collections,
-            path=batch["path"],
-            collection_name=batch["collection"],
-            dim=int(batch["dim"]),
-            create=True,
-        )
+        if not isinstance(batch, dict):
+            raise ValueError("each index batch must be an object")
+        dim = int(batch["dim"])
         items = batch["items"]
-        for offset in range(0, len(items), _MAX_UPSERT_BATCH):
-            raw_chunk = items[offset : offset + _MAX_UPSERT_BATCH]
+        if dim <= 0 or not isinstance(items, list):
+            raise ValueError("index batch dimension and items are invalid")
+        docs = [_worker_build_doc(zvec, item, dim) for item in items]
+        prepared.append((batch, docs))
+        total += len(docs)
+
+    acquired: list[tuple[Any, list[Any]]] = []
+    opened_here: list[str] = []
+    try:
+        for batch, docs in prepared:
+            path = batch["path"]
+            was_open = path in collections
+            collection = _worker_collection(
+                zvec,
+                collections,
+                path=path,
+                collection_name=batch["collection"],
+                dim=int(batch["dim"]),
+                create=True,
+            )
+            if not was_open:
+                opened_here.append(path)
+            acquired.append((collection, docs))
+    except Exception:
+        _worker_release_paths(collections, opened_here)
+        raise
+
+    confirmed = 0
+    for collection, docs in acquired:
+        for offset in range(0, len(docs), _MAX_UPSERT_BATCH):
+            write_batch = docs[offset : offset + _MAX_UPSERT_BATCH]
             try:
-                docs = [_worker_build_doc(zvec, item) for item in raw_chunk]
-            except Exception as exc:
-                if confirmed:
-                    raise RuntimeError(
-                        f"index partial write: confirmed {confirmed} of {total} docs written; "
-                        f"next chunk was rejected before write: {exc}"
-                    ) from exc
-                raise
-            try:
-                _assert_success(collection.upsert(docs))
+                _assert_success(collection.upsert(write_batch))
                 collection.flush()
             except Exception as exc:
                 raise RuntimeError(
                     f"index partial write: confirmed {confirmed} of {total} docs written; "
-                    f"outcome of failing {len(docs)}-doc chunk is unknown: {exc}"
+                    f"outcome of failing {len(write_batch)}-doc batch is unknown: {exc}"
                 ) from exc
-            confirmed += len(docs)
+            confirmed += len(write_batch)
     return {"written": confirmed}
 
 
-def _worker_build_doc(zvec, item: dict[str, Any]):
-    payload = dict(item["payload"])
+def _worker_release_paths(
+    collections: dict[str, Any],
+    paths: list[str],
+) -> None:
+    for path in reversed(paths):
+        collection = collections.pop(path, None)
+        if collection is not None:
+            del collection
+    gc.collect()
+
+
+def _worker_build_doc(zvec, item: dict[str, Any], dim: int):
+    if not isinstance(item, dict):
+        raise ValueError("each index item must be an object")
+    vector = item["vector"]
+    if (
+        not isinstance(vector, list)
+        or len(vector) != dim
+        or any(
+            not isinstance(value, (int, float)) or isinstance(value, bool)
+            for value in vector
+        )
+    ):
+        raise ValueError(f"embedding must contain exactly {dim} numeric values")
+    raw_payload = item["payload"]
+    if not isinstance(raw_payload, dict):
+        raise ValueError("payload must be an object")
+    payload = dict(raw_payload)
     source_present = _SOURCE_FIELD in payload
     source_fact_id = payload.pop(_SOURCE_FIELD, None)
     payload.pop(_CHUNK_FIELD, None)
     if not source_present:
         source_state = _SOURCE_STATE_MISSING
-        source_value = _SOURCE_TOKEN_MISSING
+        source_value = ""
     elif source_fact_id is None:
         source_state = _SOURCE_STATE_NONE
-        source_value = _SOURCE_TOKEN_NONE
+        source_value = ""
     elif isinstance(source_fact_id, str):
         source_state = _SOURCE_STATE_VALUE
-        source_value = _SOURCE_TOKEN_VALUE + source_fact_id
+        source_value = source_fact_id
     else:
         raise ValueError("source_fact_id must be a string or None when supplied")
-    envelope = {
-        "payload": payload,
-        "source_fact_id_state": source_state,
-    }
+    payload_json = json.dumps(payload, separators=(",", ":"))
     return zvec.Doc(
         id=str(_to_point_id(item["id"])),
-        vectors={_VECTOR_FIELD: item["vector"]},
+        vectors={_VECTOR_FIELD: vector},
         fields={
             _SOURCE_FIELD: source_value,
+            _SOURCE_STATE_FIELD: source_state,
             _CHUNK_FIELD: str(item["id"]),
-            _PAYLOAD_FIELD: json.dumps(envelope, separators=(",", ":")),
+            _PAYLOAD_FIELD: payload_json,
         },
     )
-
 
 def _worker_scroll(
     zvec,
@@ -1027,6 +1076,7 @@ def _worker_collection(
             ],
             fields=[
                 zvec.FieldSchema(_SOURCE_FIELD, zvec.DataType.STRING),
+                zvec.FieldSchema(_SOURCE_STATE_FIELD, zvec.DataType.STRING),
                 zvec.FieldSchema(_CHUNK_FIELD, zvec.DataType.STRING),
                 zvec.FieldSchema(_PAYLOAD_FIELD, zvec.DataType.STRING),
             ],
@@ -1055,43 +1105,33 @@ def _assert_success(statuses: Any) -> None:
 def _zvec_filter(source_fact_id: str | None) -> str | None:
     if source_fact_id is None:
         return None
-    encoded = _SOURCE_TOKEN_VALUE + source_fact_id
-    escaped = encoded.replace("'", "\\'")
-    return f"{_SOURCE_FIELD} = '{escaped}'"
+    escaped = source_fact_id.replace("'", "\\'")
+    return (
+        f"{_SOURCE_STATE_FIELD} = '{_SOURCE_STATE_VALUE}' AND "
+        f"{_SOURCE_FIELD} = '{escaped}'"
+    )
 
 
 def _worker_doc_result(doc) -> dict[str, Any]:
     fields = dict(doc.fields or {})
     payload_raw = fields.get(_PAYLOAD_FIELD, "{}")
-    decoded = json.loads(payload_raw)
-    if isinstance(decoded, dict) and set(decoded) >= {"payload", "source_fact_id_state"}:
-        raw_payload = decoded["payload"]
-        if not isinstance(raw_payload, dict):
-            raise ValueError("payload_json envelope payload must be an object")
-        payload = dict(raw_payload)
-        source_state = decoded["source_fact_id_state"]
-        source_value = fields.get(_SOURCE_FIELD, "")
-        if source_state == _SOURCE_STATE_NONE:
-            payload[_SOURCE_FIELD] = None
-        elif source_state == _SOURCE_STATE_VALUE:
-            if (
-                not isinstance(source_value, str)
-                or not source_value.startswith(_SOURCE_TOKEN_VALUE)
-            ):
-                raise ValueError("invalid encoded source_fact_id value")
-            payload[_SOURCE_FIELD] = source_value[len(_SOURCE_TOKEN_VALUE) :]
-        elif source_state != _SOURCE_STATE_MISSING:
-            raise ValueError(f"invalid source_fact_id state {source_state!r}")
-    elif isinstance(decoded, dict):
-        payload = decoded
-        source_value = fields.get(_SOURCE_FIELD)
-        if source_value not in (None, ""):
-            payload[_SOURCE_FIELD] = source_value
-    else:
+    payload = json.loads(payload_raw)
+    if not isinstance(payload, dict):
         raise ValueError("payload_json must decode to an object")
+
+    source_state = fields.get(_SOURCE_STATE_FIELD)
+    source_value = fields.get(_SOURCE_FIELD)
+    if source_state == _SOURCE_STATE_NONE:
+        payload[_SOURCE_FIELD] = None
+    elif source_state == _SOURCE_STATE_VALUE:
+        if not isinstance(source_value, str):
+            raise ValueError("canonical source_fact_id value must be a string")
+        payload[_SOURCE_FIELD] = source_value
+    elif source_state != _SOURCE_STATE_MISSING:
+        raise ValueError(f"invalid source_fact_id state {source_state!r}")
+
     payload[_CHUNK_FIELD] = fields.get(_CHUNK_FIELD, "")
     return {"id": str(doc.id), "score": float(doc.score or 0.0), "payload": payload}
-
 
 if __name__ == "__main__":
     if "--worker" not in sys.argv:

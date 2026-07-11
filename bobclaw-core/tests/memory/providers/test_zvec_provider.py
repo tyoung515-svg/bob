@@ -282,6 +282,55 @@ def test_multidim_lock_preflight_times_out_with_zero_mutation(
     assert list(locker.scroll_payload("s", {"source_fact_id": "new"})) == []
 
 
+def test_index_child_preflight_closes_create_and_lock_race(
+    tmp_path: Path, _close_providers
+):
+    seeder = _provider(tmp_path)
+    _close_providers.append(seeder)
+    seeder.index(
+        "s",
+        [_item("chunk:seed:three", [1.0, 0.0, 0.0], fact_id="seed")],
+    )
+    seeder.close()
+
+    locker = _provider(tmp_path)
+    writer = _provider(tmp_path, reclaim_timeout_s=0.75)
+    _close_providers.extend([locker, writer])
+    original_call = writer._call_with_reclaim
+    raced = False
+
+    def race_before_index(operation: str, **payload):
+        nonlocal raced
+        if operation == "index" and not raced:
+            locker.index(
+                "s",
+                [_item("chunk:lock:four", [0.0, 1.0, 0.0, 0.0], fact_id="lock")],
+            )
+            assert locker.query_vector("s", [0.0, 1.0, 0.0, 0.0], 1).hits
+            raced = True
+        return original_call(operation, **payload)
+
+    writer._call_with_reclaim = race_before_index
+    with pytest.raises(RetrievalProviderError, match="reclaim timed out"):
+        writer.index(
+            "s",
+            [
+                _item("chunk:new:three", [1.0, 0.0, 0.0], fact_id="new"),
+                _item("chunk:new:four", [0.0, 1.0, 0.0, 0.0], fact_id="new"),
+            ],
+        )
+
+    assert raced is True
+    writer.close()
+    reader = _provider(tmp_path)
+    _close_providers.append(reader)
+    assert reader.query_vector(
+        "s",
+        [1.0, 0.0, 0.0],
+        10,
+        filters={"source_fact_id": "new"},
+    ).hits == []
+
 def test_out_of_family_fence_refuses_mutation_before_zvec_write(
     tmp_path: Path, _close_providers
 ):
@@ -314,7 +363,7 @@ def test_write_batches_1100_docs_and_scrolls_bounded_pages(
     assert provider._last_stream_page_sizes == [128] * 8 + [76]
 
 
-def test_later_write_chunk_failure_reports_confirmed_partial_write(
+def test_late_invalid_document_is_rejected_before_any_upsert(
     tmp_path: Path, _close_providers
 ):
     provider = _provider(tmp_path)
@@ -331,11 +380,11 @@ def test_later_write_chunk_failure_reports_confirmed_partial_write(
 
     with pytest.raises(
         RetrievalProviderError,
-        match=r"confirmed 1024 of 1100 docs written",
+        match=r"source_fact_id must be a string or None",
     ):
         provider.index("s", items)
 
-    assert len(list(provider.scroll_payload("s", {"source_fact_id": "bulk"}))) == 1024
+    assert list(provider.scroll_payload("s", {"source_fact_id": "bulk"})) == []
 
 
 def test_source_fact_id_backslashes_round_trip_in_equality_filters(
@@ -379,42 +428,129 @@ def test_unsupported_filters_fail_closed_with_supported_key_detail(
         list(provider.scroll_payload("s", {"source_path": "fact://f1"}))
 
 
+def _literal_filter_keys(node: ast.AST) -> set[str] | None:
+    if isinstance(node, ast.Constant) and node.value is None:
+        return set()
+    if not isinstance(node, ast.Dict):
+        return None
+    keys: set[str] = set()
+    for key in node.keys:
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+            return None
+        keys.add(key.value)
+    return keys
+
+
+def _filter_drift_violations(source: str) -> tuple[set[str], list[str]]:
+    tree = ast.parse(source)
+    retriever_aliases = {"retriever"}
+    scroll_method_aliases: set[str] = set()
+    search_method_aliases: set[str] = set()
+
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            target_names = [target.id for target in targets if isinstance(target, ast.Name)]
+            if isinstance(value, ast.Name) and value.id in retriever_aliases:
+                before = len(retriever_aliases)
+                retriever_aliases.update(target_names)
+                changed = changed or len(retriever_aliases) != before
+            if isinstance(value, ast.Attribute) and value.attr == "scroll_payload":
+                before = len(scroll_method_aliases)
+                scroll_method_aliases.update(target_names)
+                changed = changed or len(scroll_method_aliases) != before
+            if (
+                isinstance(value, ast.Attribute)
+                and value.attr == "search"
+                and isinstance(value.value, ast.Name)
+                and value.value.id in retriever_aliases
+            ):
+                before = len(search_method_aliases)
+                search_method_aliases.update(target_names)
+                changed = changed or len(search_method_aliases) != before
+
+    observed_provider_keys: set[str] = set()
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        is_scroll = (
+            isinstance(node.func, ast.Attribute) and node.func.attr == "scroll_payload"
+        ) or (isinstance(node.func, ast.Name) and node.func.id in scroll_method_aliases)
+        if is_scroll:
+            keyword_filters = [
+                keyword.value
+                for keyword in node.keywords
+                if keyword.arg == "payload_filter"
+            ]
+            filter_node = keyword_filters[0] if keyword_filters else (
+                node.args[1] if len(node.args) >= 2 else None
+            )
+            keys = _literal_filter_keys(filter_node) if filter_node is not None else None
+            if keys is None:
+                violations.append("dynamic scroll_payload filter")
+            elif not keys <= {"source_fact_id"}:
+                violations.append(f"unsupported scroll_payload keys: {sorted(keys)!r}")
+            else:
+                observed_provider_keys.update(keys)
+
+        is_retriever_search = (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "search"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in retriever_aliases
+        ) or (isinstance(node.func, ast.Name) and node.func.id in search_method_aliases)
+        if is_retriever_search:
+            for keyword in node.keywords:
+                if keyword.arg != "filters":
+                    continue
+                keys = _literal_filter_keys(keyword.value)
+                if keys is None:
+                    violations.append("dynamic retriever filters")
+                elif not keys <= {"source_fact_id", "include_deprecated"}:
+                    violations.append(f"unsupported retriever keys: {sorted(keys)!r}")
+                else:
+                    observed_provider_keys.update(keys - {"include_deprecated"})
+
+    return observed_provider_keys, violations
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'provider.scroll_payload("s", payload_filter={"source_path": "x"})',
+        'provider.scroll_payload("s", payload_filter=dynamic_filters)',
+        'alias = retriever\nalias.search("q", filters={"source_path": "x"})',
+    ],
+)
+def test_filter_drift_guard_rejects_auditor_blind_spots(source: str):
+    _, violations = _filter_drift_violations(source)
+    assert violations
+
+
 def test_production_filter_call_sites_do_not_drift_beyond_supported_set():
     core_root = Path(__file__).resolve().parents[3] / "core"
     api_root = Path(__file__).resolve().parents[3] / "api"
-    supported = {"source_fact_id"}
-    observed_scroll_keys: set[str] = set()
-    search_filter_keywords = []
+    observed_provider_keys: set[str] = set()
+    violations: list[str] = []
 
     for path in [*core_root.rglob("*.py"), *api_root.rglob("*.py")]:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr == "scroll_payload" and len(node.args) >= 2:
-                filter_arg = node.args[1]
-                if isinstance(filter_arg, ast.Dict):
-                    observed_scroll_keys.update(
-                        key.value
-                        for key in filter_arg.keys
-                        if isinstance(key, ast.Constant) and isinstance(key.value, str)
-                    )
-            if (
-                node.func.attr == "search"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "retriever"
-            ):
-                search_filter_keywords.extend(
-                    keyword
-                    for keyword in node.keywords
-                    if keyword.arg == "filters"
-                )
+        observed, file_violations = _filter_drift_violations(
+            path.read_text(encoding="utf-8")
+        )
+        observed_provider_keys.update(observed)
+        violations.extend(f"{path}: {violation}" for violation in file_violations)
 
-    assert observed_scroll_keys == supported
-    assert search_filter_keywords == []
+    assert observed_provider_keys == {"source_fact_id"}
+    assert violations == []
 
 
-def test_source_fact_id_none_and_empty_string_reconstruct_distinctly(
+def test_canonical_source_fact_id_encoding_round_trips_all_three_states(
     tmp_path: Path, _close_providers
 ):
     provider = _provider(tmp_path)
@@ -422,8 +558,13 @@ def test_source_fact_id_none_and_empty_string_reconstruct_distinctly(
     provider.index(
         "s",
         [
-            _item("chunk:none", [1.0, 0.0, 0.0], fact_id=None),
-            _item("chunk:empty", [0.0, 1.0, 0.0], fact_id=""),
+            ChunkRecord(
+                id="chunk:missing",
+                vector=[1.0, 0.0, 0.0],
+                payload={"text": "missing"},
+            ),
+            _item("chunk:none", [0.0, 1.0, 0.0], fact_id=None),
+            _item("chunk:empty", [0.0, 0.0, 1.0], fact_id=""),
         ],
     )
 
@@ -431,14 +572,17 @@ def test_source_fact_id_none_and_empty_string_reconstruct_distinctly(
     payloads = {hit.payload["chunk_id"]: hit.payload for hit in hits}
     empty_hits = provider.query_vector(
         "s",
-        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
         10,
         filters={"source_fact_id": ""},
     ).hits
+    empty_ids = list(provider.scroll_payload("s", {"source_fact_id": ""}))
 
+    assert "source_fact_id" not in payloads["chunk:missing"]
     assert payloads["chunk:none"]["source_fact_id"] is None
     assert payloads["chunk:empty"]["source_fact_id"] == ""
     assert [hit.payload["chunk_id"] for hit in empty_hits] == ["chunk:empty"]
+    assert len(empty_ids) == 1
 
 
 def test_delete_and_scroll_exclude_out_of_family_lookalike_directories(
