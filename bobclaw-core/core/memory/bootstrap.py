@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 import tomllib
 from dataclasses import dataclass, field
@@ -118,6 +119,54 @@ def _parse_stores_toml(path: Path) -> dict[str, Any]:
         "stores": raw.get("stores", {}),
         "providers": raw.get("providers", {}),
     }
+
+
+_ACTIVE_ZVEC_KIND = re.compile(
+    r"kind\s*=\s*([\"\'])zvec\1\s*$", re.IGNORECASE
+)
+
+
+def _config_selects_zvec(path: Path, default_store_id: str) -> bool:
+    """Detect an explicitly selected Zvec provider without moving legacy parsing.
+
+    A cheap active-line check keeps configs with no uncommented Zvec kind on the
+    base Qdrant-before-``_parse_stores_toml`` path. Only an actual Zvec opt-in is
+    parsed early enough to suppress the legacy Qdrant connection.
+    """
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    active_zvec = any(
+        _ACTIVE_ZVEC_KIND.fullmatch(line.split("#", 1)[0].strip())
+        for line in raw_text.splitlines()
+    )
+    if not active_zvec:
+        return False
+
+    try:
+        raw = tomllib.loads(raw_text)
+        parsed = {
+            "stores": raw.get("stores", {}),
+            "providers": raw.get("providers", {}),
+        }
+        _, provider_conf = _select_provider(parsed, default_store_id)
+        return _provider_kind(provider_conf) == "zvec"
+    except (MemoryConfigError, tomllib.TOMLDecodeError):
+        # An active but invalid Zvec opt-in must fail during normal parsing,
+        # without first touching the legacy Qdrant endpoint.
+        return True
+
+
+def _validate_provider_blocks(parsed: dict[str, Any]) -> None:
+    providers_raw = parsed.get("providers", {})
+    if not isinstance(providers_raw, dict):
+        raise MemoryConfigError("provider block 'providers' must be a table")
+    for provider_id, provider_conf in providers_raw.items():
+        if not isinstance(provider_conf, dict):
+            raise MemoryConfigError(
+                f"provider block {provider_id!r} must be a table"
+            )
 
 
 def _build_store_acls(parsed: dict[str, Any]) -> dict[str, StoreACL]:
@@ -241,7 +290,11 @@ def _initialize_zvec_instance(
     manifest_dir = instance_dir / "manifest"
     for directory in (manifest_dir, instance_dir / "collections", instance_dir / "l0"):
         directory.mkdir(parents=True, exist_ok=True)
-    ensure_zvec_instance_fingerprint(manifest_dir, fingerprint)
+    ensure_zvec_instance_fingerprint(
+        manifest_dir,
+        fingerprint,
+        assert_writable=lambda: write_fence.assert_writable(collection),
+    )
 
 
 def _consolidation_enabled() -> bool:
@@ -393,6 +446,11 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             return _bootstrap_singleton
 
         log.info("Bootstrapping memory module")
+        zvec_selected = _config_selects_zvec(
+            config.stores_config_path, config.default_store_id
+        )
+        if not zvec_selected:
+            _assert_single_qdrant_endpoint(config.qdrant_url)
 
         log.info("Ensuring SQLite directory exists: %s", config.sqlite_path.parent)
         config.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
@@ -405,10 +463,22 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
                 f"SQLite schema init failed at {config.sqlite_path}: {exc}"
             ) from exc
 
+        qdrant_client = None
+        if not zvec_selected:
+            log.info("Connecting to Qdrant at %s", config.qdrant_url)
+            try:
+                qdrant_client = QdrantClient(url=config.qdrant_url, timeout=10)
+                qdrant_client.get_collections()
+            except Exception as exc:
+                raise MemoryConfigError(
+                    f"Qdrant unreachable at {config.qdrant_url} after 10s"
+                ) from exc
+
         log.info("Reading stores config: %s", config.stores_config_path)
         slots_path = _PROJECT_ROOT / "config" / "memory_slots.toml"
         slot_resolver = SlotResolver(slots_path)
         parsed = _parse_stores_toml(config.stores_config_path)
+        _validate_provider_blocks(parsed)
         store_acls = _build_store_acls(parsed)
 
         acl_registry = ACLRegistry(config.stores_config_path)
@@ -421,18 +491,18 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             raise MemoryConfigError("memory provider collection_prefix must be a non-empty string")
         collection_prefix = collection_prefix.strip()
 
-        qdrant_client = None
         zvec_instance_root = None
         if provider_kind == "qdrant":
-            _assert_single_qdrant_endpoint(config.qdrant_url)
-            log.info("Connecting to Qdrant at %s", config.qdrant_url)
-            try:
-                qdrant_client = QdrantClient(url=config.qdrant_url, timeout=10)
-                qdrant_client.get_collections()
-            except Exception as exc:
-                raise MemoryConfigError(
-                    f"Qdrant unreachable at {config.qdrant_url} after 10s"
-                ) from exc
+            if qdrant_client is None:
+                _assert_single_qdrant_endpoint(config.qdrant_url)
+                log.info("Connecting to Qdrant at %s", config.qdrant_url)
+                try:
+                    qdrant_client = QdrantClient(url=config.qdrant_url, timeout=10)
+                    qdrant_client.get_collections()
+                except Exception as exc:
+                    raise MemoryConfigError(
+                        f"Qdrant unreachable at {config.qdrant_url} after 10s"
+                    ) from exc
         else:
             zvec_instance_root = _resolve_zvec_instance_root(provider_conf)
             log.info("Selecting experimental Zvec memory provider at %s", zvec_instance_root)

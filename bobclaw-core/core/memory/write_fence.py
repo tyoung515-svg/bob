@@ -8,7 +8,9 @@ provider selection is always a subset of fence authorization.
 
 The fence is same-machine only. Cross-machine or containerized writers that reach the same endpoint
 remain outside the OSS single-user deployment boundary; distributed exclusion requires a store-side
-lease. Registry state is not a self-ACL for BoB's family: registration preserves collection uniqueness,
+lease. Zvec deployments must use one canonical instance-root spelling: UNC and drive-letter aliases are
+not equated, although case variants of the same spelling are. Registry state is not a self-ACL for BoB's
+family: registration preserves collection uniqueness,
 while construction fails closed if a non-BoB registry instance occupies any family collection. External
 corpora retain their registry ACL path through ``lks_adapter``.
 """
@@ -153,18 +155,23 @@ def canonicalize_qdrant_url(qdrant_url: str) -> str:
     return f"{scheme}://{host}:{port}{suffix}"
 
 
-def canonicalize_zvec_instance_root(instance_root: str | Path) -> Path:
-    """Return the resolved absolute Zvec root used in the family lock identity.
+def canonicalize_zvec_instance_root(instance_root: str | Path) -> str:
+    """Return the existence-independent absolute Zvec family-lock token.
 
-    ``expanduser().resolve()`` deliberately collapses equivalent spellings such
-    as ``root``, ``root/.``, and ``root/../root`` to one lock. The root need not
-    exist yet because first-boot layout creation happens after fence acquisition.
+    Identity is exactly ``normcase(normpath(abspath(instance_root)))``. The
+    constructor expands ``~`` before calling this helper. This collapses relative
+    segments and Windows case variants
+    without consulting filesystem existence. UNC and drive-letter aliases are
+    intentionally not equated; deployments must use one canonical spelling.
     """
     if not isinstance(instance_root, (str, Path)):
         raise ValueError("zvec instance_root must be a path string or Path")
-    if isinstance(instance_root, str) and not instance_root.strip():
+    raw_root = os.fspath(instance_root)
+    if not raw_root.strip():
         raise ValueError("zvec instance_root must be a non-empty path")
-    return Path(instance_root).expanduser().resolve()
+    return os.path.normcase(
+        os.path.normpath(os.path.abspath(raw_root))
+    )
 
 
 def _resolve_lock_dir(lock_dir: str | Path | None) -> Path:
@@ -390,11 +397,21 @@ class WriteFence:
                 raise WriteFenceViolation(str(qdrant_url), str(exc)) from exc
         else:
             try:
-                canonical_resource = str(
-                    canonicalize_zvec_instance_root(zvec_instance_root)
-                )
+                if not isinstance(zvec_instance_root, (str, Path)):
+                    raise ValueError("zvec instance_root must be a path string or Path")
+                raw_root = os.fspath(zvec_instance_root)
+                if not raw_root.strip():
+                    raise ValueError("zvec instance_root must be a non-empty path")
+                absolute_root = os.path.abspath(os.path.expanduser(raw_root))
+                os.makedirs(absolute_root, exist_ok=True)
+                canonical_resource = canonicalize_zvec_instance_root(absolute_root)
             except ValueError as exc:
                 raise WriteFenceViolation(str(zvec_instance_root), str(exc)) from exc
+            except OSError as exc:
+                raise WriteFenceViolation(
+                    str(zvec_instance_root),
+                    f"zvec instance root could not be created: {exc}",
+                ) from exc
         self._resource_identity = f"{canonical_resource}|{self._collection_prefix}"
         self._assert_no_foreign_family_collision()
         self._lock_dir = _prepare_lock_dir(_resolve_lock_dir(lock_dir))

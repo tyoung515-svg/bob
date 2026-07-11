@@ -18,10 +18,11 @@ import copy
 import dataclasses
 import hashlib
 import json
+import os
 from pathlib import Path
 import unicodedata
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.memory.models import SlotResolution
 
@@ -401,13 +402,17 @@ ZVEC_MANIFEST_FINGERPRINT_FILE = "embed_fingerprint.json"
 
 
 def ensure_zvec_instance_fingerprint(
-    manifest_dir: str | Path, fp: EmbedFingerprint
+    manifest_dir: str | Path,
+    fp: EmbedFingerprint,
+    *,
+    assert_writable: Callable[[], None],
 ) -> Path:
-    """Write a Zvec instance fingerprint if absent, otherwise assert compatibility.
+    """Write a Zvec fingerprint atomically while proving the fence stays held.
 
-    The manifest directory must already exist. Call only while the writer holds
-    the collection family fence; bootstrap creates the layout and invokes this
-    helper after ``WriteFence.assert_writable`` succeeds.
+    The manifest directory must already exist. The caller-supplied assertion is
+    invoked immediately before the mutation and immediately after ``os.replace``.
+    If the post-write assertion fails, the new stamp is invalidated and the fence
+    violation is surfaced. Call only from a held collection-family fence.
     """
     directory = Path(manifest_dir)
     if not directory.is_dir():
@@ -428,13 +433,25 @@ def ensure_zvec_instance_fingerprint(
         assert_compatible(stored, fp, context=f"zvec manifest {stamp_path}")
         return stamp_path
 
-    payload = {"embed": fp.to_dict()}
-    tmp_path = stamp_path.with_suffix(stamp_path.suffix + ".tmp")
+    encoded_payload = (
+        json.dumps({"embed": fp.to_dict()}, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    tmp_path = stamp_path.with_name(
+        f".{stamp_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    assert_writable()
     try:
-        tmp_path.write_text(
-            json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-        )
-        tmp_path.replace(stamp_path)
+        tmp_path.write_bytes(encoded_payload)
+        os.replace(tmp_path, stamp_path)
+        try:
+            assert_writable()
+        except Exception:
+            try:
+                if stamp_path.read_bytes() == encoded_payload:
+                    stamp_path.unlink()
+            except OSError:
+                pass
+            raise
     except OSError as exc:
         raise FingerprintError(
             f"could not write zvec fingerprint manifest {stamp_path}: {exc}"

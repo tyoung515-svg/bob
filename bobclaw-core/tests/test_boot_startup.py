@@ -77,8 +77,11 @@ async def test_on_startup_memory_off_keeps_registry_unloaded(monkeypatch):
 
 async def test_on_cleanup_releases_memory_fence_and_postgres(monkeypatch):
     """Shutdown deterministically releases the held family lock via singletons."""
+    close_order = []
     fence = MagicMock(name="write_fence")
+    fence.close.side_effect = lambda: close_order.append("fence")
     provider = MagicMock(name="memory_provider")
+    provider.close.side_effect = lambda: close_order.append("provider")
     pool = MagicMock(name="pool")
     pool.close = AsyncMock()
     monkeypatch.setattr(
@@ -95,4 +98,5 @@ async def test_on_cleanup_releases_memory_fence_and_postgres(monkeypatch):
 
     provider.close.assert_called_once_with()
     fence.close.assert_called_once_with()
+    assert close_order == ["provider", "fence"]
     pool.close.assert_awaited_once_with()
