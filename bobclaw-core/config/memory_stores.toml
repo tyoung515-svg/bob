@@ -9,3 +9,13 @@ acl_allowed_providers = ["qdrant_local"]
 locality = "local"
 collection_prefix = "bobclaw_"
 capability_classes = ["text_dense"]
+
+# Experimental zero-Docker provider. This block is intentionally commented so a
+# fresh install parses exactly as the Qdrant default above. To opt in, change
+# stores.bobclaw_default.acl_allowed_providers to ["zvec_local"] and enable:
+# [providers.zvec_local]
+# kind = "zvec"
+# locality = "local"
+# instance_root = ".memory/zvec"
+# collection_prefix = "bobclaw_"
+# capability_classes = ["text_dense"]

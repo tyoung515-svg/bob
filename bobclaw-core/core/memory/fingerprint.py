@@ -17,9 +17,12 @@ from __future__ import annotations
 import copy
 import dataclasses
 import hashlib
+import json
+import os
+from pathlib import Path
 import unicodedata
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.memory.models import SlotResolution
 
@@ -389,3 +392,86 @@ def ensure_sentinel(client: Any, collection: str, fp: EmbedFingerprint) -> None:
         write_sentinel(client, collection, fp)
     else:
         assert_compatible(stored, fp, context=f"collection {collection!r}")
+
+
+# ---------------------------------------------------------------------------
+# Zvec manifest sentinel (local equivalent of the Qdrant reserved point)
+# ---------------------------------------------------------------------------
+
+ZVEC_MANIFEST_FINGERPRINT_FILE = "embed_fingerprint.json"
+
+
+def ensure_zvec_instance_fingerprint(
+    manifest_dir: str | Path,
+    fp: EmbedFingerprint,
+    *,
+    assert_writable: Callable[[], None],
+) -> Path:
+    """Write a Zvec fingerprint atomically while proving the fence stays held.
+
+    The manifest directory must already exist. The caller-supplied assertion is
+    invoked immediately before the mutation and immediately after ``os.replace``.
+    If the post-write assertion fails, rollback uses retained file identity and
+    exact bytes to remove this call's replacement even after fence loss. An
+    atomically replaced successor-owned stamp has different identity and is kept.
+    """
+    directory = Path(manifest_dir)
+    if not directory.is_dir():
+        raise FingerprintError(f"zvec fingerprint manifest directory is missing: {directory}")
+    stamp_path = directory / ZVEC_MANIFEST_FINGERPRINT_FILE
+    if stamp_path.exists():
+        try:
+            payload = json.loads(stamp_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise FingerprintError(
+                f"zvec fingerprint manifest is unreadable or malformed: {stamp_path}"
+            ) from exc
+        if not isinstance(payload, dict) or "embed" not in payload:
+            raise FingerprintError(
+                f"zvec fingerprint manifest is missing its embed stamp: {stamp_path}"
+            )
+        stored = EmbedFingerprint.from_dict(payload["embed"])
+        assert_compatible(stored, fp, context=f"zvec manifest {stamp_path}")
+        return stamp_path
+
+    encoded_payload = (
+        json.dumps({"embed": fp.to_dict()}, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    tmp_path = stamp_path.with_name(
+        f".{stamp_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    assert_writable()
+    try:
+        tmp_path.write_bytes(encoded_payload)
+        retained_stat = tmp_path.stat()
+        os.replace(tmp_path, stamp_path)
+        try:
+            assert_writable()
+        except Exception:
+            try:
+                current_stat = stamp_path.stat()
+                owns_current_file = os.path.samestat(
+                    retained_stat, current_stat
+                )
+                owns_current_bytes = stamp_path.read_bytes() == encoded_payload
+                if owns_current_file and owns_current_bytes:
+                    confirmed_stat = stamp_path.stat()
+                    if (
+                        os.path.samestat(retained_stat, confirmed_stat)
+                        and stamp_path.read_bytes() == encoded_payload
+                    ):
+                        stamp_path.unlink()
+            except Exception:
+                pass
+            raise
+    except OSError as exc:
+        raise FingerprintError(
+            f"could not write zvec fingerprint manifest {stamp_path}: {exc}"
+        ) from exc
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+    return stamp_path

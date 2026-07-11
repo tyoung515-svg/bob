@@ -1,14 +1,19 @@
-"""Single-writer fencing for one Qdrant collection family.
+"""Single-writer fencing for one storage-backed collection family.
 
 The fence holds one OS-level lock for the lifetime of a BoB memory collection family. Its identity
-is the canonical Qdrant endpoint plus collection prefix, so a dimension migration remains under the
+is the canonical storage resource plus collection prefix, so a dimension migration remains under the
 same lock. Family membership is deliberately strict: only ``<prefix>_<positive ASCII decimal>``
 collections are writable. The provider imports that exact predicate for delete/scroll selection, so
 provider selection is always a subset of fence authorization.
 
 The fence is same-machine only. Cross-machine or containerized writers that reach the same endpoint
 remain outside the OSS single-user deployment boundary; distributed exclusion requires a store-side
-lease. Registry state is not a self-ACL for BoB's family: registration preserves collection uniqueness,
+lease. Zvec deployments must use one canonical instance-root spelling: UNC and drive-letter aliases are
+not equated, although case variants of the same spelling are. An absent Zvec root can still be replaced
+by a junction between identity canonicalization and post-authorization creation. v0.98 accepts this
+junction-swap race under the same non-adversarial, same-machine posture ratified for G-2. v0.99
+hardening should create/open through a stable parent directory handle and revalidate final-path identity
+before use. Registry state is not a self-ACL for BoB's family: registration preserves collection uniqueness,
 while construction fails closed if a non-BoB registry instance occupies any family collection. External
 corpora retain their registry ACL path through ``lks_adapter``.
 """
@@ -151,6 +156,23 @@ def canonicalize_qdrant_url(qdrant_url: str) -> str:
     if parsed.query:
         suffix += f"?{parsed.query}"
     return f"{scheme}://{host}:{port}{suffix}"
+
+
+def canonicalize_zvec_instance_root(instance_root: str | Path) -> str:
+    """Return the canonical absolute Zvec family-lock token.
+
+    The normalized absolute path is passed through ``realpath`` so an existing
+    junction or symlink alias shares the target's lock. For an absent first-boot
+    root, ``realpath`` remains existence-independent normalization and performs
+    no creation. UNC and drive-letter aliases are intentionally not equated.
+    """
+    if not isinstance(instance_root, (str, Path)):
+        raise ValueError("zvec instance_root must be a path string or Path")
+    raw_root = os.fspath(instance_root)
+    if not raw_root.strip():
+        raise ValueError("zvec instance_root must be a non-empty path")
+    absolute_root = os.path.normpath(os.path.abspath(raw_root))
+    return os.path.normcase(os.path.normpath(os.path.realpath(absolute_root)))
 
 
 def _resolve_lock_dir(lock_dir: str | Path | None) -> Path:
@@ -325,13 +347,14 @@ def assert_registry_family_available(
 # ---------------------------------------------------------------------------
 
 class WriteFence:
-    """Hold one OS-enforced lock for a canonical Qdrant endpoint/collection family."""
+    """Hold one OS-enforced lock for a canonical memory resource/collection family."""
 
     def __init__(
         self,
         registry: FederationRegistry,
         *,
-        qdrant_url: str,
+        qdrant_url: str | None = None,
+        zvec_instance_root: str | Path | None = None,
         collection: str | None = None,
         collection_prefix: str | None = None,
         owner: str = BOBCLAW_OWNER,
@@ -363,11 +386,31 @@ class WriteFence:
         self._registry = registry
         self._owner = owner
         self._collection_prefix = prefix
-        try:
-            canonical_url = canonicalize_qdrant_url(qdrant_url)
-        except ValueError as exc:
-            raise WriteFenceViolation(str(qdrant_url), str(exc)) from exc
-        self._resource_identity = f"{canonical_url}|{self._collection_prefix}"
+        if (qdrant_url is None) == (zvec_instance_root is None):
+            raise WriteFenceViolation(
+                "resource",
+                "exactly one of qdrant_url or zvec_instance_root is required",
+            )
+        zvec_root_to_create = None
+        if qdrant_url is not None:
+            try:
+                canonical_resource = canonicalize_qdrant_url(qdrant_url)
+            except ValueError as exc:
+                raise WriteFenceViolation(str(qdrant_url), str(exc)) from exc
+        else:
+            try:
+                if not isinstance(zvec_instance_root, (str, Path)):
+                    raise ValueError("zvec instance_root must be a path string or Path")
+                raw_root = os.fspath(zvec_instance_root)
+                if not raw_root.strip():
+                    raise ValueError("zvec instance_root must be a non-empty path")
+                zvec_root_to_create = os.path.abspath(os.path.expanduser(raw_root))
+                canonical_resource = canonicalize_zvec_instance_root(
+                    zvec_root_to_create
+                )
+            except ValueError as exc:
+                raise WriteFenceViolation(str(zvec_instance_root), str(exc)) from exc
+        self._resource_identity = f"{canonical_resource}|{self._collection_prefix}"
         self._assert_no_foreign_family_collision()
         self._lock_dir = _prepare_lock_dir(_resolve_lock_dir(lock_dir))
         digest = hashlib.sha256(self._resource_identity.encode("utf-8")).hexdigest()
@@ -400,6 +443,16 @@ class WriteFence:
                 self._resource_identity,
                 f"exclusive write lock unavailable at {self._lock_path!s}: {exc}",
             ) from exc
+
+        if zvec_root_to_create is not None and self.lock_held:
+            try:
+                os.makedirs(zvec_root_to_create, exist_ok=True)
+            except OSError as exc:
+                self.close()
+                raise WriteFenceViolation(
+                    str(zvec_instance_root),
+                    f"zvec instance root could not be created: {exc}",
+                ) from exc
 
     def _assert_no_foreign_family_collision(self) -> None:
         """Refuse a family whose registry namespace is not exclusively BoB's."""
