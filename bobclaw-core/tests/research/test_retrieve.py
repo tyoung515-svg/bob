@@ -16,7 +16,7 @@ from core.verify.entailment import Source, SourceKind, RetrieveRequest, run_enta
 from core.memory.lks_adapter import ReadAdapterError
 from core.ledger.federation import FederationError
 from core.memory.fingerprint import FingerprintMismatch, EmbedFingerprint
-from core.memory.exceptions import ACLViolation
+from core.memory.exceptions import ACLViolation, EmbedderUnavailable
 from core.memory.models import Hit
 
 # ---------------------------------------------------------------------------
@@ -402,6 +402,24 @@ class TestRetrieve:
         ret3 = mkret(lks_adapter=adapter, lks_instances=["i1"])
         s3 = await ret3.retrieve(req())
         assert s3 is None
+
+    # .......................................................................
+    async def test_embedder_unavailable_degrades_to_web_tier(self) -> None:
+        adapter = FakeLKSAdapter(
+            raises={
+                "i": EmbedderUnavailable(
+                    "http://localhost:1234",
+                    "connection refused",
+                )
+            },
+        )
+        web = FakeWebTool(results=[WebResult("http://web/1", "web fallback")])
+        ret = mkret(lks_adapter=adapter, lks_instances=["i"], web_tool=web)
+
+        source = await ret.retrieve(req())
+
+        assert source.id == "web:http://web/1"
+        assert web.calls == [("q", 5)]
 
     # .......................................................................
     # 11b. A misconfigured/unknown instance name (FederationError from registry.resolve)
