@@ -263,7 +263,6 @@ def _initialize_zvec_instance(
         manifest_dir,
         fingerprint,
         assert_writable=lambda: write_fence.assert_writable(collection),
-        lock_held=lambda: bool(write_fence.lock_held),
     )
 
 

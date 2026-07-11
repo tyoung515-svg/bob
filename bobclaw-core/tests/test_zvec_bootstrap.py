@@ -400,6 +400,53 @@ def test_zvec_second_boot_refuses_mismatched_fingerprint(
     assert json.loads(fingerprint_path.read_text(encoding="utf-8")) == mismatched
 
 
+def test_zvec_pure_fence_loss_removes_this_call_stamp(
+    workspace_path: Path,
+):
+    instance_root = workspace_path / "pure-fence-loss-root"
+    fingerprint_path = (
+        instance_root
+        / "instances"
+        / "test_store"
+        / "manifest"
+        / "embed_fingerprint.json"
+    )
+
+    class LostFence:
+        def __init__(self):
+            self.calls = 0
+            self.held = True
+
+        def assert_writable(self, collection):
+            self.calls += 1
+            if not self.held:
+                raise WriteFenceViolation(collection, "pure test fence loss")
+            if self.calls == 2:
+                self.held = False
+
+    slot_resolver = MagicMock()
+    slot_resolver.get.return_value = SlotResolution(
+        slot_name="embed_text",
+        model="test-embedder",
+        backend="openai_compatible",
+        endpoint="http://127.0.0.1:1/v1",
+        embedding_dimension=768,
+    )
+    fence = LostFence()
+
+    with pytest.raises(WriteFenceViolation, match="pure test fence loss"):
+        bootstrap_mod._initialize_zvec_instance(
+            fence,
+            slot_resolver,
+            instance_root,
+            "test_store",
+            "zvec_test_",
+        )
+
+    assert fence.calls == 3
+    assert not fingerprint_path.exists()
+
+
 def test_zvec_fingerprint_loss_leaves_identical_successor_stamp(
     workspace_path: Path,
 ):
@@ -417,10 +464,6 @@ def test_zvec_fingerprint_loss_leaves_identical_successor_stamp(
             self.calls = 0
             self.held = True
             self.successor_stat = None
-
-        @property
-        def lock_held(self):
-            return self.held
 
         def assert_writable(self, collection):
             self.calls += 1
@@ -475,8 +518,6 @@ def test_zvec_fingerprint_rollback_removes_owned_stamp_while_fence_is_held(
     )
 
     class HeldFence:
-        lock_held = True
-
         def __init__(self):
             self.calls = 0
 
@@ -504,7 +545,7 @@ def test_zvec_fingerprint_rollback_removes_owned_stamp_while_fence_is_held(
             "zvec_test_",
         )
 
-    assert fence.calls == 4
+    assert fence.calls == 3
     assert not fingerprint_path.exists()
 
 

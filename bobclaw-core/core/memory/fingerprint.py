@@ -406,15 +406,14 @@ def ensure_zvec_instance_fingerprint(
     fp: EmbedFingerprint,
     *,
     assert_writable: Callable[[], None],
-    lock_held: Callable[[], bool],
 ) -> Path:
     """Write a Zvec fingerprint atomically while proving the fence stays held.
 
     The manifest directory must already exist. The caller-supplied assertion is
     invoked immediately before the mutation and immediately after ``os.replace``.
-    If the post-write assertion fails, rollback is attempted only while this
-    writer still holds the fence and only when file identity plus bytes prove the
-    manifest is this writer's replacement. A successor-owned stamp is left intact.
+    If the post-write assertion fails, rollback uses retained file identity and
+    exact bytes to remove this call's replacement even after fence loss. An
+    atomically replaced successor-owned stamp has different identity and is kept.
     """
     directory = Path(manifest_dir)
     if not directory.is_dir():
@@ -449,26 +448,21 @@ def ensure_zvec_instance_fingerprint(
         try:
             assert_writable()
         except Exception:
-            if lock_held():
-                try:
-                    current_stat = stamp_path.stat()
-                    owns_current_file = os.path.samestat(
-                        retained_stat, current_stat
-                    )
-                    owns_current_bytes = (
-                        stamp_path.read_bytes() == encoded_payload
-                    )
-                    if owns_current_file and owns_current_bytes:
-                        assert_writable()
-                        confirmed_stat = stamp_path.stat()
-                        if (
-                            lock_held()
-                            and os.path.samestat(retained_stat, confirmed_stat)
-                            and stamp_path.read_bytes() == encoded_payload
-                        ):
-                            stamp_path.unlink()
-                except Exception:
-                    pass
+            try:
+                current_stat = stamp_path.stat()
+                owns_current_file = os.path.samestat(
+                    retained_stat, current_stat
+                )
+                owns_current_bytes = stamp_path.read_bytes() == encoded_payload
+                if owns_current_file and owns_current_bytes:
+                    confirmed_stat = stamp_path.stat()
+                    if (
+                        os.path.samestat(retained_stat, confirmed_stat)
+                        and stamp_path.read_bytes() == encoded_payload
+                    ):
+                        stamp_path.unlink()
+            except Exception:
+                pass
             raise
     except OSError as exc:
         raise FingerprintError(

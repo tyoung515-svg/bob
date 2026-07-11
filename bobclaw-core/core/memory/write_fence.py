@@ -9,8 +9,11 @@ provider selection is always a subset of fence authorization.
 The fence is same-machine only. Cross-machine or containerized writers that reach the same endpoint
 remain outside the OSS single-user deployment boundary; distributed exclusion requires a store-side
 lease. Zvec deployments must use one canonical instance-root spelling: UNC and drive-letter aliases are
-not equated, although case variants of the same spelling are. Registry state is not a self-ACL for BoB's
-family: registration preserves collection uniqueness,
+not equated, although case variants of the same spelling are. An absent Zvec root can still be replaced
+by a junction between identity canonicalization and post-authorization creation. v0.98 accepts this
+junction-swap race under the same non-adversarial, same-machine posture ratified for G-2. v0.99
+hardening should create/open through a stable parent directory handle and revalidate final-path identity
+before use. Registry state is not a self-ACL for BoB's family: registration preserves collection uniqueness,
 while construction fails closed if a non-BoB registry instance occupies any family collection. External
 corpora retain their registry ACL path through ``lks_adapter``.
 """
