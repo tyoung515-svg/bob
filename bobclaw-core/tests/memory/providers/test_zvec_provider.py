@@ -602,9 +602,9 @@ def test_delete_and_scroll_exclude_out_of_family_lookalike_directories(
     for name in ("bobclaw__junk", "bobclaw___3", "other__3"):
         (collections / name).mkdir()
 
-    point_ids = list(provider.scroll_payload("s", {"source_fact_id": "f1"}))
-    assert len(point_ids) == 2
-    provider.delete("s", point_ids)
+    chunk_ids = list(provider.scroll_payload("s", {"source_fact_id": "f1"}))
+    assert set(chunk_ids) == {"chunk:f1:three", "chunk:f1:four"}
+    provider.delete("s", chunk_ids)
     assert list(provider.scroll_payload("s", {"source_fact_id": "f1"})) == []
 
 

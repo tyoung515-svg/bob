@@ -1043,7 +1043,14 @@ def _worker_scroll(
             output_fields=[_CHUNK_FIELD],
         )
         for doc in docs:
-            pending.append(str(doc.id))
+            # L3 parity fix carried through the L1 rewrite: scroll returns the
+            # LOGICAL chunk id (what callers indexed), never the zvec point id.
+            chunk_id = dict(doc.fields or {}).get(_CHUNK_FIELD)
+            if not isinstance(chunk_id, str) or not chunk_id:
+                raise ValueError(
+                    f"Zvec document {doc.id!s} is missing its logical chunk_id"
+                )
+            pending.append(chunk_id)
             if len(pending) == batch_size:
                 _write_response({"ok": True, "page": {"ids": pending}, "done": False})
                 pending = []
