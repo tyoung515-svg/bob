@@ -220,8 +220,8 @@ class QdrantRetrievalProvider:
             if is_collection_in_family(ci.name, self.collection_prefix)
         ]
         # MS2-C4 write fence: assert EVERY matching collection is writable BEFORE any delete, so a refused
-        # collection aborts the whole delete with no PARTIAL mutation. Strict selection makes the target
-        # set a subset of fence authorization; None keeps the legacy call flow below.
+        # collection aborts the whole delete with no PARTIAL mutation. Strict selection deliberately
+        # narrows the old startswith behavior even when no fence is supplied; lookalikes are never targets.
         if self._write_fence is not None:
             for coll_name in targets:
                 self._write_fence.assert_writable(coll_name)

@@ -279,6 +279,41 @@ def _is_permission_failure(exc: OSError) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Registry family ownership validation
+# ---------------------------------------------------------------------------
+
+def assert_registry_family_available(
+    registry: FederationRegistry, collection_prefix: str
+) -> None:
+    """Refuse external family ownership or misuse of BoB's reserved name."""
+    try:
+        records = registry.list()
+    except Exception as exc:
+        raise WriteFenceViolation(
+            collection_prefix,
+            f"could not inspect federation registry for family collisions: {exc}",
+        ) from exc
+
+    for record in records:
+        name = record.get("name")
+        collection = record.get("collection")
+        in_family = is_collection_in_family(collection, collection_prefix)
+        if name == BOBCLAW_MEMORY_INSTANCE:
+            if not in_family:
+                raise WriteFenceViolation(
+                    collection_prefix,
+                    f"reserved registry name {BOBCLAW_MEMORY_INSTANCE!r} owns "
+                    f"out-of-family collection {collection!r}",
+                )
+        elif in_family:
+            raise WriteFenceViolation(
+                collection_prefix,
+                f"registry collision: non-BoB instance {name!r} owns "
+                f"family collection {collection!r}",
+            )
+
+
+# ---------------------------------------------------------------------------
 # The fence
 # ---------------------------------------------------------------------------
 
@@ -360,24 +395,8 @@ class WriteFence:
             ) from exc
 
     def _assert_no_foreign_family_collision(self) -> None:
-        """Refuse a family whose registry namespace contains an external collection."""
-        try:
-            records = self._registry.list()
-        except Exception as exc:
-            raise WriteFenceViolation(
-                self._collection_prefix,
-                f"could not inspect federation registry for family collisions: {exc}",
-            ) from exc
-        for record in records:
-            name = record.get("name")
-            collection = record.get("collection")
-            if name != BOBCLAW_MEMORY_INSTANCE and is_collection_in_family(
-                collection, self._collection_prefix
-            ):
-                raise WriteFenceViolation(
-                    self._collection_prefix,
-                    f"registry collision: non-BoB instance {name!r} owns family collection {collection!r}",
-                )
+        """Refuse a family whose registry namespace is not exclusively BoB's."""
+        assert_registry_family_available(self._registry, self._collection_prefix)
 
     def _set_degraded(self, reason: str, detail: str) -> None:
         self._degraded = True

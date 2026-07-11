@@ -180,13 +180,18 @@ def _maybe_build_write_fence(
 
     from core.ledger.federation import FederationRegistry, default_registry_path
     from core.memory.fingerprint import fingerprint_from_slot
-    from core.memory.write_fence import WriteFence, register_bobclaw_memory
+    from core.memory.write_fence import (
+        WriteFence,
+        assert_registry_family_available,
+        register_bobclaw_memory,
+    )
 
     registry = FederationRegistry(default_registry_path()).load()
+    # Validate the loaded namespace before overwrite=True can mutate a spoofed
+    # reserved-name record or hide an external family owner.
+    assert_registry_family_available(registry, collection_prefix)
     fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
     collection = f"{collection_prefix}_{fingerprint.dim}"
-    # Preserve exact collection uniqueness for the current store. Family collision
-    # protection is enforced by WriteFence across every historical dimension.
     register_bobclaw_memory(registry, fingerprint, collection=collection, overwrite=True)
     return WriteFence(
         registry,

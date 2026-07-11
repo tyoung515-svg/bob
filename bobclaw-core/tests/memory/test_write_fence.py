@@ -22,6 +22,7 @@ from core.memory.lks_adapter import InstanceACL
 from core.memory.models import ChunkRecord, ConfidenceStub, Fact, SlotResolution
 from core.memory.providers.qdrant_provider import QdrantRetrievalProvider
 from core.memory.write_fence import (
+    BOBCLAW_MEMORY_INSTANCE,
     WriteFence,
     WriteFenceViolation,
     backfill_corpus_acl,
@@ -173,6 +174,31 @@ def test_strict_family_predicate_uses_ascii_positive_decimal_only():
         "other__768",
     ):
         assert not is_collection_in_family(collection, "bobclaw_")
+
+
+def test_legacy_collection_constructor_derives_family_and_has_no_collection_property(
+    tmp_path: Path,
+):
+    fence = WriteFence(
+        FederationRegistry(tmp_path / "registry.json"),
+        qdrant_url="http://localhost:6353",
+        collection="bobclaw__768",
+    )
+    try:
+        assert fence.collection_prefix == "bobclaw_"
+        assert not hasattr(fence, "collection")
+        assert fence.assert_writable("bobclaw__2560") is None
+    finally:
+        fence.close()
+
+
+def test_legacy_collection_constructor_refuses_non_dim_shape(tmp_path: Path):
+    with pytest.raises(WriteFenceViolation, match="positive ASCII decimal dimension"):
+        WriteFence(
+            FederationRegistry(tmp_path / "registry.json"),
+            qdrant_url="http://localhost:6353",
+            collection="shared_collection",
+        )
 
 
 def test_family_fence_authorizes_all_dimensions_without_self_acl(tmp_path: Path):
@@ -352,9 +378,19 @@ def test_reindex_and_fact_delete_cover_the_held_multidim_family_lock(tmp_path: P
         fence.close()
 
 
-def test_provider_without_write_fence_retains_legacy_index_behavior(tmp_path: Path):
+def test_provider_without_write_fence_keeps_index_and_uses_strict_selection(
+    tmp_path: Path,
+):
     client = MagicMock()
     client.get_collection.return_value = MagicMock()
+    client.get_collections.return_value = SimpleNamespace(
+        collections=[
+            SimpleNamespace(name="bobclaw__768"),
+            SimpleNamespace(name="bobclaw__junk"),
+            SimpleNamespace(name="bobclaw___768"),
+        ]
+    )
+    client.scroll.return_value = ([], None)
     provider = QdrantRetrievalProvider(
         provider_id="p",
         locality="local",
@@ -366,9 +402,17 @@ def test_provider_without_write_fence_retains_legacy_index_behavior(tmp_path: Pa
     receipt = provider.index(
         "s", [ChunkRecord(id="legacy", vector=[0.1] * 768, payload={})]
     )
+    provider.delete("s", ["legacy"])
+    assert list(provider.scroll_payload("s", {"source_fact_id": "f1"})) == []
 
     assert receipt.item_count == 1
     assert client.upsert.call_args.kwargs["collection_name"] == "bobclaw__768"
+    assert {
+        call.kwargs["collection_name"] for call in client.delete.call_args_list
+    } == {"bobclaw__768"}
+    assert {
+        call.kwargs["collection_name"] for call in client.scroll.call_args_list
+    } == {"bobclaw__768"}
 
 
 def test_lock_directory_failure_is_loud_and_never_falls_back(
@@ -624,6 +668,46 @@ def test_new_programdata_lock_directory_receives_explicit_users_acl(
     command = calls[0][0]
     assert "/inheritance:r" in command
     assert "*S-1-5-32-545:(OI)(CI)M" in command
+
+
+def test_bootstrap_refuses_reserved_name_spoof_without_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from core.memory.bootstrap import _maybe_build_write_fence
+
+    registry_path = tmp_path / "registry.json"
+    registry_type = FederationRegistry
+    registry = registry_type(registry_path)
+    original = registry.register(
+        BOBCLAW_MEMORY_INSTANCE,
+        "C:/foreign",
+        collection="foreign_vectors",
+        dim=768,
+        meta={"owner": "external"},
+    )
+    registry.save()
+    loaded_registry = registry_type(registry_path).load()
+    monkeypatch.setattr(
+        "core.ledger.federation.FederationRegistry",
+        lambda _: loaded_registry,
+    )
+    slot = SimpleNamespace(
+        get=lambda _: SlotResolution(
+            slot_name="embed_text",
+            model="m",
+            backend="b",
+            endpoint="e",
+            embedding_dimension=768,
+        )
+    )
+    monkeypatch.setenv("BOBCLAW_LEDGER_INSTANCES", str(registry_path))
+    monkeypatch.delenv("MEMORY_WRITE_FENCE_ENABLED", raising=False)
+
+    with pytest.raises(WriteFenceViolation, match="reserved registry name"):
+        _maybe_build_write_fence(slot, "bobclaw_", "http://localhost:6353")
+
+    assert loaded_registry.get(BOBCLAW_MEMORY_INSTANCE) == original
+    assert registry_type(registry_path).load().get(BOBCLAW_MEMORY_INSTANCE) == original
 
 
 def test_bootstrap_rejects_foreign_historical_family_collection(

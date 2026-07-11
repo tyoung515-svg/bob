@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -379,6 +380,77 @@ async def test_forget_fact_deletes_vector_then_sqlite(client, monkeypatch):
     assert mem.indexer.dropped == [["f1"]]
     assert mem.fact_store.deleted == ["f1"]
     assert mem.order == ["vector_drop", "sqlite_delete"]
+
+
+async def test_forget_fact_with_real_degraded_fence_returns_423(
+    client, monkeypatch, tmp_path: Path,
+):
+    from core.ledger.federation import FederationRegistry
+    from core.memory.acl import ACLRegistry
+    from core.memory.indexer import MemoryIndexer
+    from core.memory.providers.qdrant_provider import QdrantRetrievalProvider
+    from core.memory.write_fence import WriteFence
+
+    monkeypatch.setenv("BOBCLAW_WRITE_FENCE_LOCK_DIR", str(tmp_path / "locks"))
+    holder = WriteFence(
+        FederationRegistry(tmp_path / "holder-registry.json"),
+        qdrant_url="http://localhost:6353",
+        collection_prefix="bobclaw_",
+    )
+    degraded = WriteFence(
+        FederationRegistry(tmp_path / "contender-registry.json"),
+        qdrant_url="http://127.0.0.1:6353",
+        collection_prefix="bobclaw_",
+    )
+    assert degraded.degraded_reason == "contention"
+
+    acl_path = tmp_path / "stores.toml"
+    acl_path.write_text(
+        "[store.s]\n"
+        'allowed_locality = ["local"]\n'
+        'allowed_provider_ids = ["p"]\n'
+        'allowed_capability_classes = ["text_dense"]\n',
+        encoding="utf-8",
+    )
+    qdrant = MagicMock()
+    qdrant.get_collections.return_value = SimpleNamespace(
+        collections=[SimpleNamespace(name="bobclaw__768")]
+    )
+    qdrant.scroll.return_value = ([SimpleNamespace(id="chunk:f1:old")], None)
+    provider = QdrantRetrievalProvider(
+        provider_id="p",
+        locality="local",
+        collection_prefix="bobclaw_",
+        acl_registry=ACLRegistry(acl_path),
+        client=qdrant,
+        write_fence=degraded,
+    )
+    fact_store = _FakeFactStore([_l1_fact("f1", "locked")], [])
+    indexer = MemoryIndexer(
+        fact_store=fact_store,
+        embedder=MagicMock(),
+        provider=provider,
+        store_id="s",
+        slot_resolver=MagicMock(),
+    )
+    mem = SimpleNamespace(
+        fact_store=fact_store,
+        indexer=indexer,
+        write_fence=degraded,
+    )
+    _enable_memory(monkeypatch, mem)
+
+    try:
+        resp = await client.delete("/api/memory/facts/f1")
+        assert resp.status == 423
+        body = await resp.json()
+        assert body["code"] == "memory_write_locked"
+        assert body["reason"] == "contention"
+        assert fact_store.deleted == []
+        qdrant.delete.assert_not_called()
+    finally:
+        degraded.close()
+        holder.close()
 
 
 async def test_forget_unknown_fact_returns_404(client, monkeypatch):

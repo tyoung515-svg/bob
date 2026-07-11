@@ -3,11 +3,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_WIN = REPO_ROOT / "scripts" / "win"
 LAUNCHER_INVENTORY = {
-    "docker-compose.yml",
+    "Makefile",
     "install-bob.ps1",
     "scripts/win/install-durability.ps1",
     "scripts/win/start-all.ps1",
@@ -23,30 +25,100 @@ def _executable_lines(text: str) -> str:
     )
 
 
+def _powershell_launches_core(path: Path) -> bool:
+    executable = _executable_lines(path.read_text(encoding="utf-8"))
+    return (
+        re.search(r"(?m)^\s*& \$py start\.py", executable) is not None
+        or "Spawn-Service 'bobclaw-core'" in executable
+        or (
+            "Register-Wrapper 'BobClaw-Core'" in executable
+            and "task-core.ps1" in executable
+        )
+        or "Start-ScheduledTask -TaskName 'BobClaw-Core'" in executable
+        or "scripts\\win\\start-local.ps1" in executable
+    )
+
+
+def _makefile_core_launch_targets(path: Path) -> set[str]:
+    launch_targets: set[str] = set()
+    current_target = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line and not line[0].isspace() and ":" in line:
+            current_target = line.split(":", 1)[0].strip()
+            continue
+        if not line.startswith("\t"):
+            continue
+        recipe = line.strip()
+        if (
+            current_target
+            and "bobclaw-core" in recipe
+            and re.search(r"\b(?:python|python3)\s+start\.py\b", recipe)
+        ):
+            launch_targets.add(current_target)
+    return launch_targets
+
+
+def _compose_launches_core(path: Path) -> bool:
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    services = document.get("services", {})
+    if not isinstance(services, dict):
+        return False
+    for service_name, service in services.items():
+        if not isinstance(service, dict):
+            continue
+        build = service.get("build", "")
+        build_context = build.get("context", "") if isinstance(build, dict) else build
+        identity_text = " ".join(
+            (
+                str(service_name),
+                str(service.get("image", "")),
+                str(build_context),
+            )
+        ).lower()
+        command = service.get("command", "")
+        entrypoint = service.get("entrypoint", "")
+        command_text = " ".join(command) if isinstance(command, list) else str(command)
+        entrypoint_text = (
+            " ".join(entrypoint) if isinstance(entrypoint, list) else str(entrypoint)
+        )
+        if (
+            "bobclaw-core" in identity_text
+            or "start.py" in f"{entrypoint_text} {command_text}"
+        ):
+            return True
+    return False
+
+
 def _memory_capable_core_launchers() -> set[str]:
-    """Inventory paths that can launch a core which may have memory enabled."""
-    found = {"docker-compose.yml"}
+    """Inventory every repository entry path that can launch memory-enabled core."""
+    found: set[str] = set()
     launcher_paths = [*REPO_ROOT.glob("*.ps1"), *SCRIPTS_WIN.glob("*.ps1")]
     for path in launcher_paths:
-        executable = _executable_lines(path.read_text(encoding="utf-8"))
-        launches_core = (
-            re.search(r"(?m)^\s*& \$py start\.py", executable) is not None
-            or "Spawn-Service 'bobclaw-core'" in executable
-            or (
-                "Register-Wrapper 'BobClaw-Core'" in executable
-                and "task-core.ps1" in executable
-            )
-            or "Start-ScheduledTask -TaskName 'BobClaw-Core'" in executable
-            or "scripts\\win\\start-local.ps1" in executable
-        )
-        if launches_core:
+        if _powershell_launches_core(path):
             found.add(path.relative_to(REPO_ROOT).as_posix())
+
+    makefile = REPO_ROOT / "Makefile"
+    if _makefile_core_launch_targets(makefile):
+        found.add("Makefile")
+
+    compose = REPO_ROOT / "docker-compose.yml"
+    if _compose_launches_core(compose):
+        found.add("docker-compose.yml")
     return found
 
 
 def test_memory_capable_core_launcher_inventory_is_complete():
     """New core launch paths must be classified by the bootstrap invariant."""
     assert _memory_capable_core_launchers() == LAUNCHER_INVENTORY
+
+
+def test_compose_is_parsed_and_does_not_launch_core():
+    """Compose supplies dependencies only; host launchers own the core process."""
+    assert _compose_launches_core(REPO_ROOT / "docker-compose.yml") is False
+
+
+def test_makefile_start_target_is_inventory_covered():
+    assert "start" in _makefile_core_launch_targets(REPO_ROOT / "Makefile")
 
 
 def test_shipped_install_path_reaches_start_local_without_forcing_memory_flags():

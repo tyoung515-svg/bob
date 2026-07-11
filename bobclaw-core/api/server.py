@@ -40,6 +40,7 @@ from core import teams, team_proposer
 from core.faces.registry import FaceRegistry
 from core.memory.bootstrap import get_memory
 from core.memory.exceptions import L1ValidationFailed, MemoryConfigError
+from core.memory.write_fence import WriteFenceViolation
 
 logger = logging.getLogger(__name__)
 
@@ -492,6 +493,14 @@ def _fact_to_summary(fact) -> dict:
     }
 
 
+def _memory_write_locked_response(memory: Any, exc: WriteFenceViolation) -> web.Response:
+    """Return the stable HTTP surface for a degraded family write fence."""
+    fence = getattr(memory, "write_fence", None)
+    payload = error_event(str(exc), code="memory_write_locked")
+    payload["reason"] = getattr(fence, "degraded_reason", "")
+    return web.json_response(payload, status=423)
+
+
 @routes.get("/api/memory/facts")
 async def list_memory_facts(request: web.Request) -> web.Response:
     """List L1 (auto-extracted) facts for the memory browser, newest-first.
@@ -558,10 +567,13 @@ async def forget_memory_fact(request: web.Request) -> web.Response:
             status=404,
         )
 
-    # 1) Qdrant vector(s) — scroll by source_fact_id payload → delete points.
-    await mem.indexer.drop_facts([fact_id])
-    # 2) SQLite row.
-    await mem.fact_store.delete(fact_id)
+    try:
+        # 1) Qdrant vector(s) — scroll by source_fact_id payload → delete points.
+        await mem.indexer.drop_facts([fact_id])
+        # 2) SQLite row.
+        await mem.fact_store.delete(fact_id)
+    except WriteFenceViolation as exc:
+        return _memory_write_locked_response(mem, exc)
     return web.json_response({"status": "forgotten", "fact_id": fact_id})
 
 

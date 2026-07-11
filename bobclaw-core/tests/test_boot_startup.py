@@ -15,6 +15,7 @@ under the socket-less test harness.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from aiohttp import web
@@ -72,3 +73,21 @@ async def test_on_startup_memory_off_keeps_registry_unloaded(monkeypatch):
 
     monkeypatch.setattr(FederationRegistry, "load", fail_registry_load)
     await start._on_startup(web.Application())
+
+
+async def test_on_cleanup_releases_memory_fence_and_postgres(monkeypatch):
+    """Shutdown deterministically releases the held family lock via singletons."""
+    fence = MagicMock(name="write_fence")
+    pool = MagicMock(name="pool")
+    pool.close = AsyncMock()
+    monkeypatch.setattr(
+        "core.memory.bootstrap.get_memory",
+        lambda: SimpleNamespace(write_fence=fence),
+    )
+    app = web.Application()
+    app[start.POOL_KEY] = pool
+
+    await start._on_cleanup(app)
+
+    fence.close.assert_called_once_with()
+    pool.close.assert_awaited_once_with()

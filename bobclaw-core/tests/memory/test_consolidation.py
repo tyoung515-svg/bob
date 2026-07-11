@@ -176,6 +176,30 @@ def test_memory_bootstrap_arms_fence_when_flag_is_unset(monkeypatch):
     assert isinstance(out, WriteFence)
 
 
+@pytest.mark.parametrize("fence_flag", ["", "   "])
+def test_blank_write_fence_flag_arms_fence(monkeypatch, fence_flag):
+    """Blank/whitespace is unset, so memory still arms the mandatory fence."""
+    monkeypatch.setenv("MEMORY_WRITE_FENCE_ENABLED", fence_flag)
+    monkeypatch.setattr(
+        "core.memory.fingerprint.fingerprint_from_slot",
+        lambda res: _FP()
+    )
+    monkeypatch.setattr(
+        "core.ledger.federation.FederationRegistry",
+        _FakeRegistryCls,
+    )
+    monkeypatch.setattr(
+        "core.ledger.federation.default_registry_path",
+        lambda: Path("x"),
+    )
+    monkeypatch.setattr(
+        "core.memory.write_fence.register_bobclaw_memory",
+        lambda *a, **k: None,
+    )
+
+    assert isinstance(_maybe_build_write_fence(_Slot(), "bobclaw_"), WriteFence)
+
+
 def test_explicit_true_write_fence_flag_builds_fence(monkeypatch):
     """An explicit true value agrees with the default-on memory bootstrap."""
     monkeypatch.delenv("MEMORY_SINGLE_QDRANT", raising=False)
