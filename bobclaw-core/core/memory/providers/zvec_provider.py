@@ -503,7 +503,13 @@ def _worker_dispatch(zvec, collections: dict[str, Any], operation: str, request:
                 filter=_zvec_filter(request["source_fact_id"]),
                 output_fields=[_CHUNK_FIELD],
             )
-            ids.extend(str(doc.id) for doc in docs)
+            for doc in docs:
+                chunk_id = dict(doc.fields or {}).get(_CHUNK_FIELD)
+                if not isinstance(chunk_id, str) or not chunk_id:
+                    raise ValueError(
+                        f"Zvec document {doc.id!s} is missing its logical chunk_id"
+                    )
+                ids.append(chunk_id)
         return {"ids": ids}
     raise ValueError(f"unknown operation {operation!r}")
 

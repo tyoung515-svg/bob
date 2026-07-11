@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 import uuid
@@ -9,7 +11,10 @@ import pytest
 
 from core.ledger.federation import FederationRegistry
 from core.memory.acl import ACLRegistry
+from core.memory.exceptions import EmbedderUnavailable, RetrievalProviderError
+from core.memory.indexer import DIMENSION_PROBE_TEXT
 from core.memory.models import SlotResolution
+from core.memory.parser import _count_tokens
 from core.memory.providers.zvec_provider import ZvecRetrievalProvider
 from core.memory.write_fence import WriteFence
 
@@ -17,7 +22,11 @@ from core.memory.write_fence import WriteFence
 class _KeywordEmbedder:
     embedding_dimension = 3
 
+    def __init__(self) -> None:
+        self.doc_calls: list[list[str]] = []
+
     async def embed_doc(self, texts: list[str]) -> list[list[float]]:
+        self.doc_calls.append(list(texts))
         return [self._vector(text) for text in texts]
 
     async def embed_query(self, texts: list[str]) -> list[list[float]]:
@@ -31,6 +40,11 @@ class _KeywordEmbedder:
         if "solar" in normalized or "battery" in normalized:
             return [0.0, 1.0, 0.0]
         return [0.0, 0.0, 1.0]
+
+
+class _UnavailableEmbedder(_KeywordEmbedder):
+    async def embed_doc(self, texts: list[str]) -> list[list[float]]:
+        raise EmbedderUnavailable("test://embedder", "unreachable")
 
 
 @pytest.fixture
@@ -98,12 +112,14 @@ def _build_lks(
     instance_root: Path,
     fence: WriteFence,
     provider: ZvecRetrievalProvider,
+    *,
+    embedder=None,
 ):
     from core.lks.instance import BobLKS
 
     return BobLKS(
         provider=provider,
-        embedder=_KeywordEmbedder(),
+        embedder=embedder or _KeywordEmbedder(),
         slot_resolver=_slots(),
         write_fence=fence,
         instance_root=instance_root,
@@ -187,7 +203,7 @@ async def test_reingesting_unchanged_document_does_not_write(
 
 
 @pytest.mark.asyncio
-async def test_changed_document_deletes_prior_source_chunks_then_reindexes(
+async def test_changed_document_indexes_new_chunks_then_deletes_stale_chunks(
     workspace_path: Path,
 ):
     instance_root = workspace_path / "zvec"
@@ -204,8 +220,20 @@ async def test_changed_document_deletes_prior_source_chunks_then_reindexes(
         )
         assert original_ids
 
-        provider.index = MagicMock(wraps=provider.index)
-        provider.delete = MagicMock(wraps=provider.delete)
+        events: list[str] = []
+        real_index = provider.index
+        real_delete = provider.delete
+
+        def record_index(store_id, items):
+            events.append("index")
+            return real_index(store_id, items)
+
+        def record_delete(store_id, item_ids):
+            events.append("delete")
+            return real_delete(store_id, item_ids)
+
+        provider.index = MagicMock(side_effect=record_index)
+        provider.delete = MagicMock(side_effect=record_delete)
         documents[0].write_text(
             "# Local Store\n\n"
             "This replacement document now covers latency budgets only.\n",
@@ -220,6 +248,7 @@ async def test_changed_document_deletes_prior_source_chunks_then_reindexes(
 
         assert provider.delete.call_count == 1
         assert provider.index.call_count == 1
+        assert events == ["index", "delete"]
         assert replacement_ids
         assert replacement_ids != original_ids
         assert all(
@@ -301,3 +330,231 @@ async def test_degraded_fence_refuses_ingest_with_423_shape_but_retrieves(
             contender.close()
         provider.close()
         holder.close()
+
+
+@pytest.mark.asyncio
+async def test_index_failure_leaves_old_chunks_intact(workspace_path: Path):
+    instance_root = workspace_path / "zvec"
+    fence = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, fence)
+    try:
+        lks = _build_lks(instance_root, fence, provider)
+        document = _write_documents(workspace_path)[0]
+        await lks.ingest([document])
+        document.write_text(
+            "# Local Store\n\nReplacement content covers latency budgets.\n",
+            encoding="utf-8",
+        )
+        provider.index = MagicMock(side_effect=RuntimeError("injected index failure"))
+        provider.delete = MagicMock(wraps=provider.delete)
+
+        with pytest.raises(RuntimeError, match="injected index failure"):
+            await lks.ingest([document])
+
+        provider.delete.assert_not_called()
+        results = await lks.retrieve("zvec local vector store", 10)
+        assert any(
+            "Zvec keeps the local vector store" in hit.payload["text"]
+            for hit in results.hits
+        )
+    finally:
+        provider.close()
+        fence.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_failure_leaves_duplicates_and_reingest_heals(
+    workspace_path: Path,
+):
+    instance_root = workspace_path / "zvec"
+    fence = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, fence)
+    try:
+        lks = _build_lks(instance_root, fence, provider)
+        document = _write_documents(workspace_path)[0]
+        await lks.ingest([document])
+        source_doc_id = document.resolve().as_posix()
+        document.write_text(
+            "# Local Store\n\nReplacement content covers latency budgets.\n",
+            encoding="utf-8",
+        )
+        real_delete = provider.delete
+        attempts = 0
+
+        def fail_once(store_id: str, item_ids: list[str]) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("injected delete failure")
+            real_delete(store_id, item_ids)
+
+        provider.delete = MagicMock(side_effect=fail_once)
+
+        with pytest.raises(RuntimeError, match="injected delete failure"):
+            await lks.ingest([document])
+
+        assert len(
+            list(provider.scroll_payload("bob_lks", {"source_fact_id": source_doc_id}))
+        ) == 2
+
+        await lks.ingest([document])
+
+        assert len(
+            list(provider.scroll_payload("bob_lks", {"source_fact_id": source_doc_id}))
+        ) == 1
+        results = await lks.retrieve("latency budgets", 10)
+        assert results.hits
+        assert all(
+            "Zvec keeps the local vector store" not in hit.payload["text"]
+            for hit in results.hits
+        )
+    finally:
+        provider.close()
+        fence.close()
+
+
+@pytest.mark.asyncio
+async def test_fresh_degraded_boot_is_read_capable_and_ingest_is_423_shaped(
+    workspace_path: Path,
+):
+    from core.lks.instance import BobLKSWriteLocked
+
+    instance_root = workspace_path / "zvec"
+    holder = _fence(workspace_path, instance_root)
+    contender = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, contender)
+    try:
+        assert contender.degraded is True
+        lks = _build_lks(instance_root, contender, provider)
+        assert not instance_root.exists()
+
+        with pytest.raises(BobLKSWriteLocked) as raised:
+            await lks.ingest([])
+
+        assert raised.value.status_code == 423
+        assert raised.value.reason == "contention"
+        assert (await lks.retrieve("empty store", 3)).hits == []
+    finally:
+        provider.close()
+        contender.close()
+        holder.close()
+
+
+@pytest.mark.asyncio
+async def test_dimension_probe_failure_precedes_all_provider_writes(
+    workspace_path: Path,
+):
+    instance_root = workspace_path / "zvec"
+    fence = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, fence)
+    try:
+        healthy_lks = _build_lks(instance_root, fence, provider)
+        document = _write_documents(workspace_path)[0]
+        await healthy_lks.ingest([document])
+        document.write_text(
+            "# Local Store\n\nReplacement content covers latency budgets.\n",
+            encoding="utf-8",
+        )
+        failing_lks = _build_lks(
+            instance_root,
+            fence,
+            provider,
+            embedder=_UnavailableEmbedder(),
+        )
+        provider.index = MagicMock(wraps=provider.index)
+        provider.delete = MagicMock(wraps=provider.delete)
+
+        with pytest.raises(RetrievalProviderError, match="live probe failed"):
+            await failing_lks.ingest([document])
+
+        provider.index.assert_not_called()
+        provider.delete.assert_not_called()
+    finally:
+        provider.close()
+        fence.close()
+
+
+@pytest.mark.asyncio
+async def test_oversized_parser_chunk_is_split_to_hard_token_bound(
+    workspace_path: Path,
+):
+    from core.lks.instance import MAX_CHUNK_TOKENS
+
+    instance_root = workspace_path / "zvec"
+    fence = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, fence)
+    try:
+        lks = _build_lks(instance_root, fence, provider)
+        document = workspace_path / "oversized.md"
+        document.write_text(
+            "# Oversized\n\n```\n" + ("zvec token " * 900) + "\n```\n",
+            encoding="utf-8",
+        )
+
+        await lks.ingest([document])
+        results = await lks.retrieve("zvec token", 100)
+
+        assert len(results.hits) > 1
+        assert all(
+            _count_tokens(hit.payload["text"]) <= MAX_CHUNK_TOKENS
+            for hit in results.hits
+        )
+        chunk_ids = [hit.payload["chunk_id"] for hit in results.hits]
+        assert len(chunk_ids) == len(set(chunk_ids))
+    finally:
+        provider.close()
+        fence.close()
+
+
+@pytest.mark.asyncio
+async def test_cross_thread_ingest_raises_clear_owner_error(workspace_path: Path):
+    instance_root = workspace_path / "zvec"
+    fence = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, fence)
+    try:
+        lks = _build_lks(instance_root, fence, provider)
+        document = _write_documents(workspace_path)[0]
+        errors: list[BaseException] = []
+
+        def run_ingest() -> None:
+            try:
+                asyncio.run(lks.ingest([document]))
+            except BaseException as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=run_ingest)
+        worker.start()
+        worker.join(timeout=10)
+
+        assert not worker.is_alive()
+        assert len(errors) == 1
+        assert isinstance(errors[0], RuntimeError)
+        assert "construction thread" in str(errors[0])
+    finally:
+        provider.close()
+        fence.close()
+
+
+@pytest.mark.asyncio
+async def test_dimension_probe_runs_once_for_multiple_document_writes(
+    workspace_path: Path,
+):
+    instance_root = workspace_path / "zvec"
+    fence = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, fence)
+    embedder = _KeywordEmbedder()
+    try:
+        lks = _build_lks(
+            instance_root,
+            fence,
+            provider,
+            embedder=embedder,
+        )
+        documents = _write_documents(workspace_path)
+
+        await lks.ingest(documents[:2])
+
+        assert embedder.doc_calls.count([DIMENSION_PROBE_TEXT]) == 1
+    finally:
+        provider.close()
+        fence.close()
