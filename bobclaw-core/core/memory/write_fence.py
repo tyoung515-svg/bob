@@ -1,7 +1,7 @@
-"""Single-writer fencing for one Qdrant collection family.
+"""Single-writer fencing for one storage-backed collection family.
 
 The fence holds one OS-level lock for the lifetime of a BoB memory collection family. Its identity
-is the canonical Qdrant endpoint plus collection prefix, so a dimension migration remains under the
+is the canonical storage resource plus collection prefix, so a dimension migration remains under the
 same lock. Family membership is deliberately strict: only ``<prefix>_<positive ASCII decimal>``
 collections are writable. The provider imports that exact predicate for delete/scroll selection, so
 provider selection is always a subset of fence authorization.
@@ -151,6 +151,20 @@ def canonicalize_qdrant_url(qdrant_url: str) -> str:
     if parsed.query:
         suffix += f"?{parsed.query}"
     return f"{scheme}://{host}:{port}{suffix}"
+
+
+def canonicalize_zvec_instance_root(instance_root: str | Path) -> Path:
+    """Return the resolved absolute Zvec root used in the family lock identity.
+
+    ``expanduser().resolve()`` deliberately collapses equivalent spellings such
+    as ``root``, ``root/.``, and ``root/../root`` to one lock. The root need not
+    exist yet because first-boot layout creation happens after fence acquisition.
+    """
+    if not isinstance(instance_root, (str, Path)):
+        raise ValueError("zvec instance_root must be a path string or Path")
+    if isinstance(instance_root, str) and not instance_root.strip():
+        raise ValueError("zvec instance_root must be a non-empty path")
+    return Path(instance_root).expanduser().resolve()
 
 
 def _resolve_lock_dir(lock_dir: str | Path | None) -> Path:
@@ -325,13 +339,14 @@ def assert_registry_family_available(
 # ---------------------------------------------------------------------------
 
 class WriteFence:
-    """Hold one OS-enforced lock for a canonical Qdrant endpoint/collection family."""
+    """Hold one OS-enforced lock for a canonical memory resource/collection family."""
 
     def __init__(
         self,
         registry: FederationRegistry,
         *,
-        qdrant_url: str,
+        qdrant_url: str | None = None,
+        zvec_instance_root: str | Path | None = None,
         collection: str | None = None,
         collection_prefix: str | None = None,
         owner: str = BOBCLAW_OWNER,
@@ -363,11 +378,24 @@ class WriteFence:
         self._registry = registry
         self._owner = owner
         self._collection_prefix = prefix
-        try:
-            canonical_url = canonicalize_qdrant_url(qdrant_url)
-        except ValueError as exc:
-            raise WriteFenceViolation(str(qdrant_url), str(exc)) from exc
-        self._resource_identity = f"{canonical_url}|{self._collection_prefix}"
+        if (qdrant_url is None) == (zvec_instance_root is None):
+            raise WriteFenceViolation(
+                "resource",
+                "exactly one of qdrant_url or zvec_instance_root is required",
+            )
+        if qdrant_url is not None:
+            try:
+                canonical_resource = canonicalize_qdrant_url(qdrant_url)
+            except ValueError as exc:
+                raise WriteFenceViolation(str(qdrant_url), str(exc)) from exc
+        else:
+            try:
+                canonical_resource = str(
+                    canonicalize_zvec_instance_root(zvec_instance_root)
+                )
+            except ValueError as exc:
+                raise WriteFenceViolation(str(zvec_instance_root), str(exc)) from exc
+        self._resource_identity = f"{canonical_resource}|{self._collection_prefix}"
         self._assert_no_foreign_family_collision()
         self._lock_dir = _prepare_lock_dir(_resolve_lock_dir(lock_dir))
         digest = hashlib.sha256(self._resource_identity.encode("utf-8")).hexdigest()

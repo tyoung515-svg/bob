@@ -120,6 +120,11 @@ async def _on_cleanup(app: web.Application) -> None:
     except MemoryConfigError:
         pass
     else:
+        provider = getattr(getattr(memory, "indexer", None), "_provider", None)
+        close_provider = getattr(provider, "close", None)
+        if callable(close_provider):
+            logger.info("bobclaw-core: closing memory provider")
+            close_provider()
         fence = getattr(memory, "write_fence", None)
         if fence is not None:
             logger.info("bobclaw-core: releasing memory write fence")

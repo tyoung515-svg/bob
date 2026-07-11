@@ -18,6 +18,7 @@ from core.memory.exceptions import MemoryConfigError
 from core.memory.fact_store import SQLiteFactStore
 from core.memory.indexer import MemoryIndexer
 from core.memory.providers.qdrant_provider import QdrantRetrievalProvider
+from core.memory.providers.zvec_provider import ZvecRetrievalProvider
 from core.memory.query_log import QueryLog
 from core.memory.retriever import MemoryRetriever
 from core.memory.slots import SlotResolver
@@ -149,6 +150,100 @@ def _register_acls(
     object.__setattr__(acl_registry, "_stores", store_acls)
 
 
+def _provider_kind(provider_conf: dict[str, Any]) -> str:
+    kind = provider_conf.get("kind", "qdrant")
+    if not isinstance(kind, str) or not kind.strip():
+        raise MemoryConfigError("provider kind must be a non-empty string")
+    normalized = kind.strip().lower()
+    if normalized not in {"qdrant", "zvec"}:
+        raise MemoryConfigError(f"unsupported memory provider kind {kind!r}")
+    return normalized
+
+
+def _select_provider(
+    parsed: dict[str, Any], default_store_id: str
+) -> tuple[str, dict[str, Any]]:
+    providers_raw = parsed.get("providers", {})
+    if not providers_raw:
+        raise MemoryConfigError("No providers defined in stores config")
+
+    # Existing configs have no zvec declaration. Preserve their historical first
+    # provider behavior exactly; selection by store ACL is activated only when the
+    # opt-in backend is actually configured.
+    zvec_declared = any(
+        isinstance(provider_conf, dict)
+        and _provider_kind(provider_conf) == "zvec"
+        for provider_conf in providers_raw.values()
+    )
+    if not zvec_declared:
+        return next(iter(providers_raw.items()))
+
+    store_conf = parsed.get("stores", {}).get(default_store_id)
+    if not isinstance(store_conf, dict):
+        raise MemoryConfigError(
+            f"zvec-aware provider selection requires stores.{default_store_id!r}"
+        )
+    selected_ids = store_conf.get("acl_allowed_providers")
+    if not isinstance(selected_ids, list) or len(selected_ids) != 1:
+        raise MemoryConfigError(
+            "zvec-aware provider selection requires exactly one "
+            f"acl_allowed_providers entry for store {default_store_id!r}"
+        )
+    provider_id = selected_ids[0]
+    provider_conf = providers_raw.get(provider_id)
+    if not isinstance(provider_id, str) or not isinstance(provider_conf, dict):
+        raise MemoryConfigError(
+            f"store {default_store_id!r} selects unknown provider {provider_id!r}"
+        )
+    return provider_id, provider_conf
+
+
+def _resolve_zvec_instance_root(provider_conf: dict[str, Any]) -> Path:
+    raw_root = provider_conf.get("instance_root")
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        raise MemoryConfigError(
+            "zvec provider requires a non-empty instance_root configuration"
+        )
+    root = Path(raw_root).expanduser()
+    if not root.is_absolute():
+        root = _PROJECT_ROOT / root
+    return root.resolve()
+
+
+def _zvec_instance_dir(instance_root: Path, store_id: str) -> Path:
+    if not isinstance(store_id, str) or not store_id.strip():
+        raise MemoryConfigError("zvec default_store_id must be a non-empty string")
+    candidate = Path(store_id)
+    if candidate.name != store_id or candidate.is_absolute() or store_id in {".", ".."}:
+        raise MemoryConfigError(f"unsafe zvec default_store_id {store_id!r}")
+    return instance_root / "instances" / store_id
+
+
+def _initialize_zvec_instance(
+    write_fence: Any,
+    slot_resolver: SlotResolver,
+    instance_root: Path,
+    store_id: str,
+    collection_prefix: str,
+) -> None:
+    """Create the first-boot Zvec layout and stamp it while the fence is held."""
+    from core.memory.fingerprint import (
+        ensure_zvec_instance_fingerprint,
+        fingerprint_from_slot,
+    )
+
+    fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
+    collection = f"{collection_prefix}_{fingerprint.dim}"
+    # The helper's fence-constrained contract is satisfied before any directory or
+    # fingerprint mutation; degraded or unheld fences fail closed here.
+    write_fence.assert_writable(collection)
+    instance_dir = _zvec_instance_dir(instance_root, store_id)
+    manifest_dir = instance_dir / "manifest"
+    for directory in (manifest_dir, instance_dir / "collections", instance_dir / "l0"):
+        directory.mkdir(parents=True, exist_ok=True)
+    ensure_zvec_instance_fingerprint(manifest_dir, fingerprint)
+
+
 def _consolidation_enabled() -> bool:
     # Parse strictly == "true" to MATCH `config.MEMORY_SINGLE_QDRANT` (and every other MEMORY_* flag in
     # config.py: MEMORY_ENABLED / MEMORY_L1_EXTRACTION_ENABLED / MEMORY_LKS_FIRST) — the config attribute and
@@ -162,6 +257,8 @@ def _maybe_build_write_fence(
     slot_resolver: SlotResolver,
     collection_prefix: str,
     qdrant_url: str = "http://localhost:6333",
+    *,
+    zvec_instance_root: Path | None = None,
 ):
     """Build the mandatory family-scoped ``WriteFence`` for a memory bootstrap.
 
@@ -193,9 +290,16 @@ def _maybe_build_write_fence(
     fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
     collection = f"{collection_prefix}_{fingerprint.dim}"
     register_bobclaw_memory(registry, fingerprint, collection=collection, overwrite=True)
+    if zvec_instance_root is None:
+        return WriteFence(
+            registry,
+            qdrant_url=qdrant_url,
+            collection_prefix=collection_prefix,
+            owner="bobclaw",
+        )
     return WriteFence(
         registry,
-        qdrant_url=qdrant_url,
+        zvec_instance_root=zvec_instance_root,
         collection_prefix=collection_prefix,
         owner="bobclaw",
     )
@@ -289,7 +393,6 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             return _bootstrap_singleton
 
         log.info("Bootstrapping memory module")
-        _assert_single_qdrant_endpoint(config.qdrant_url)
 
         log.info("Ensuring SQLite directory exists: %s", config.sqlite_path.parent)
         config.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
@@ -302,38 +405,52 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
                 f"SQLite schema init failed at {config.sqlite_path}: {exc}"
             ) from exc
 
-        log.info("Connecting to Qdrant at %s", config.qdrant_url)
-        try:
-            qdrant_client = QdrantClient(url=config.qdrant_url, timeout=10)
-            qdrant_client.get_collections()
-        except Exception as exc:
-            raise MemoryConfigError(
-                f"Qdrant unreachable at {config.qdrant_url} after 10s"
-            ) from exc
-
         log.info("Reading stores config: %s", config.stores_config_path)
         slots_path = _PROJECT_ROOT / "config" / "memory_slots.toml"
         slot_resolver = SlotResolver(slots_path)
-
         parsed = _parse_stores_toml(config.stores_config_path)
         store_acls = _build_store_acls(parsed)
 
         acl_registry = ACLRegistry(config.stores_config_path)
         _register_acls(acl_registry, store_acls)
 
-        providers_raw = parsed.get("providers", {})
-        if not providers_raw:
-            raise MemoryConfigError(
-                f"No providers defined in {config.stores_config_path}"
-            )
+        provider_id, provider_conf = _select_provider(parsed, config.default_store_id)
+        provider_kind = _provider_kind(provider_conf)
+        collection_prefix = provider_conf.get("collection_prefix", "bobclaw_")
+        if not isinstance(collection_prefix, str) or not collection_prefix.strip():
+            raise MemoryConfigError("memory provider collection_prefix must be a non-empty string")
+        collection_prefix = collection_prefix.strip()
 
-        first_pid, first_pconf = next(iter(providers_raw.items()))
+        qdrant_client = None
+        zvec_instance_root = None
+        if provider_kind == "qdrant":
+            _assert_single_qdrant_endpoint(config.qdrant_url)
+            log.info("Connecting to Qdrant at %s", config.qdrant_url)
+            try:
+                qdrant_client = QdrantClient(url=config.qdrant_url, timeout=10)
+                qdrant_client.get_collections()
+            except Exception as exc:
+                raise MemoryConfigError(
+                    f"Qdrant unreachable at {config.qdrant_url} after 10s"
+                ) from exc
+        else:
+            zvec_instance_root = _resolve_zvec_instance_root(provider_conf)
+            log.info("Selecting experimental Zvec memory provider at %s", zvec_instance_root)
+
         # MS2-C4/R3: memory-on bootstrap MUST arm a family fence or refuse to start.
-        _collection_prefix = first_pconf.get("collection_prefix", "bobclaw_")
+        write_fence = None
         try:
-            write_fence = _maybe_build_write_fence(
-                slot_resolver, _collection_prefix, config.qdrant_url
-            )
+            if zvec_instance_root is None:
+                write_fence = _maybe_build_write_fence(
+                    slot_resolver, collection_prefix, config.qdrant_url
+                )
+            else:
+                write_fence = _maybe_build_write_fence(
+                    slot_resolver,
+                    collection_prefix,
+                    config.qdrant_url,
+                    zvec_instance_root=zvec_instance_root,
+                )
         except MemoryConfigError:
             raise
         except Exception as exc:
@@ -342,14 +459,41 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             ) from exc
         if write_fence is None:
             raise MemoryConfigError("memory write fence could not be armed")
-        provider = QdrantRetrievalProvider(
-            provider_id=first_pid,
-            locality=first_pconf.get("locality", "local"),
-            collection_prefix=_collection_prefix,
-            acl_registry=acl_registry,
-            client=qdrant_client,
-            write_fence=write_fence,
-        )
+
+        try:
+            if provider_kind == "qdrant":
+                provider = QdrantRetrievalProvider(
+                    provider_id=provider_id,
+                    locality=provider_conf.get("locality", "local"),
+                    collection_prefix=collection_prefix,
+                    acl_registry=acl_registry,
+                    client=qdrant_client,
+                    write_fence=write_fence,
+                )
+            else:
+                assert zvec_instance_root is not None
+                _initialize_zvec_instance(
+                    write_fence,
+                    slot_resolver,
+                    zvec_instance_root,
+                    config.default_store_id,
+                    collection_prefix,
+                )
+                provider = ZvecRetrievalProvider(
+                    provider_id=provider_id,
+                    locality=provider_conf.get("locality", "local"),
+                    collection_prefix=collection_prefix,
+                    acl_registry=acl_registry,
+                    store_root=zvec_instance_root,
+                    write_fence=write_fence,
+                )
+        except Exception as exc:
+            write_fence.close()
+            if isinstance(exc, MemoryConfigError):
+                raise
+            raise MemoryConfigError(
+                f"memory provider initialization failed: {type(exc).__name__}: {exc}"
+            ) from exc
 
         log.info("Building MemoryRetriever and MemoryIndexer")
         event_log = SQLiteEventLog(config.sqlite_path)
@@ -366,7 +510,9 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
 
         # MS2-C5: build the LKS-first read seam (default-OFF; (None, None, False) ⇒ retriever construction
         # byte-identical to today).
-        lks_adapter, lks_instance, lks_first = _maybe_build_lks_adapter(slot_resolver, qdrant_client)
+        lks_adapter, lks_instance, lks_first = _maybe_build_lks_adapter(
+            slot_resolver, qdrant_client
+        )
         retriever = MemoryRetriever(
             embedder=embedder,
             provider=provider,
