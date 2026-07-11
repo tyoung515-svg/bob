@@ -92,6 +92,24 @@ async def test_no_template_preserves_text_content_with_intended_list_wire_shape(
 
 
 @pytest.mark.asyncio
+async def test_query_template_preserves_whitespace_only_input_contract():
+    embedder = SlotResolvedEmbedder(
+        _resolver(query_instruction_template="query: {text}"),
+        "embed_text",
+    )
+    zero_vector = [0.0, 0.0]
+    response = {"data": [{"index": 0, "embedding": zero_vector}]}
+
+    with patch(
+        "aiohttp.ClientSession.post",
+        return_value=_post_response(response),
+    ) as post:
+        assert await embedder.embed_query(["   "]) == [zero_vector]
+
+    assert post.call_args.kwargs["json"]["input"] == ["   "]
+
+
+@pytest.mark.asyncio
 async def test_lmstudio_batches_requests_and_restores_response_order():
     embedder = SlotResolvedEmbedder(_resolver(embedding_batch_size=2), "embed_text")
     responses = [

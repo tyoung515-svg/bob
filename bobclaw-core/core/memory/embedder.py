@@ -63,14 +63,18 @@ class SlotResolvedEmbedder:
         if not texts:
             return []
         request_texts = [
-            self._apply_instruction_template(text, instruction_template)
+            (
+                self._apply_instruction_template(text, instruction_template)
+                if text.strip()
+                else text
+            )
             for text in texts
         ]
         if self._backend == _BACKEND_LMSTUDIO:
             vectors = await self._embed_lmstudio_batches(request_texts)
         else:
             vectors = await self._embed_ollama_texts(request_texts)
-        self._guard_batch(request_texts, vectors)
+        self._guard_batch(texts, vectors)
         return vectors
 
     @staticmethod
