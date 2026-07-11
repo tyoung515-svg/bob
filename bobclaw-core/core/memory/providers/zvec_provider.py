@@ -704,6 +704,18 @@ class ZvecRetrievalProvider:
         self._last_stream_page_sizes = [len(page) for page in pages]
         return iter(point_id for page in pages for point_id in page)
 
+    def _has_documents(self, store_id: str) -> bool:
+        """Return whether any protected-family collection contains documents."""
+        self._enforce(store_id, next(iter(self.capability_classes)))
+        targets = self._family_collections(store_id)
+        if not targets:
+            return False
+        response = self._call_with_reclaim(
+            "has_documents",
+            paths=[str(path) for _, path, _ in targets],
+        )
+        return bool(response.get("has_documents"))
+
     def health(self) -> HealthStatus:
         try:
             if self._degraded_paths:
@@ -869,6 +881,20 @@ def _worker_dispatch(
                 _assert_success(collection.delete(existing_ids))
                 collection.flush()
         return {}
+    if operation == "has_documents":
+        # L3 micro-round: non-empty check backing the missing-stamp fail-closed rule.
+        for path in request["paths"]:
+            collection = _worker_collection(
+                zvec,
+                collections,
+                path=path,
+                collection_name="",
+                dim=0,
+                create=False,
+            )
+            if int(collection.stats.doc_count) > 0:
+                return {"has_documents": True}
+        return {"has_documents": False}
     raise ValueError(f"unknown operation {operation!r}")
 
 
