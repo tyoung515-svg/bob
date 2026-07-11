@@ -11,6 +11,12 @@ chunks are durable before stale chunk ids are removed. A crash after indexing
 can leave both versions, never zero versions; because the document state advances
 only after stale deletion succeeds, the next ingest deterministically heals the
 duplicates.
+
+A non-empty persisted collection requires its manifest fingerprint for every
+read and write. A missing stamp makes corpus compatibility unverifiable and
+fails closed; only an empty/fresh store may initialize a missing stamp. A
+zero-chunk replacement is a pure deletion, so it removes stale chunks without
+an embedding-dimension probe.
 """
 from __future__ import annotations
 
@@ -24,7 +30,9 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from core.memory.bootstrap import _initialize_zvec_instance, _zvec_instance_dir
+from core.memory.exceptions import RetrievalProviderError
 from core.memory.fingerprint import (
+    FingerprintMissing,
     ZVEC_MANIFEST_FINGERPRINT_FILE,
     ensure_zvec_instance_fingerprint,
     fingerprint_from_slot,
@@ -105,6 +113,7 @@ class BobLKS:
         self._fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
         self._collection = f"{collection_prefix}_{self._fingerprint.dim}"
         self._instance_dir = _zvec_instance_dir(self._instance_root, store_id)
+        self._compatibility_error: FingerprintMissing | None = None
         self._dimension_probe = MemoryIndexer(
             fact_store=None,
             embedder=embedder,
@@ -126,6 +135,7 @@ class BobLKS:
     async def _ingest_locked(self, documents: Iterable[str | Path]) -> None:
         """Serialize the one in-process writer before crossing the family fence."""
         self._assert_writable()
+        self._assert_corpus_compatible()
 
         for document in documents:
             path = Path(document).expanduser().resolve()
@@ -141,10 +151,13 @@ class BobLKS:
             chunk_ids = [
                 f"chunk:{source_doc_id}:{chunk.stable_hash}" for chunk in chunks
             ]
-            await self._dimension_probe._verify_dimension_before_write(
-                self._fingerprint.dim
-            )
-            vectors = await self._embed_changed_chunks(chunks)
+            if chunks:
+                await self._dimension_probe._verify_dimension_before_write(
+                    self._fingerprint.dim
+                )
+                vectors = await self._embed_changed_chunks(chunks)
+            else:
+                vectors = []
             items = self._chunk_records(
                 source_doc_id, path, parsed, chunks, chunk_ids, vectors
             )
@@ -169,6 +182,7 @@ class BobLKS:
             raise TypeError("query must be a string")
         if isinstance(k, bool) or not isinstance(k, int) or k <= 0:
             raise ValueError("k must be a positive integer")
+        self._assert_corpus_compatible()
         vectors = await self._embedder.embed_query([query])
         self._validate_vectors(vectors, 1)
         return self._provider.query_vector(self._store_id, vectors[0], k)
@@ -184,6 +198,23 @@ class BobLKS:
         if fingerprint_path.is_file():
             ensure_zvec_instance_fingerprint(manifest_dir, self._fingerprint)
             if layout_dirs_exist:
+                return
+        else:
+            try:
+                has_documents = self._provider._has_documents(self._store_id)
+            except RetrievalProviderError as exc:
+                self._compatibility_error = FingerprintMissing(
+                    "zvec corpus compatibility is unverifiable because the "
+                    "fingerprint stamp is missing and persisted collections "
+                    f"could not be inspected: {fingerprint_path}: {exc}"
+                )
+                return
+            if has_documents:
+                self._compatibility_error = FingerprintMissing(
+                    "zvec corpus compatibility is unverifiable because a "
+                    "non-empty collection exists but its fingerprint stamp is "
+                    f"missing: {fingerprint_path}"
+                )
                 return
         if self._write_fence.degraded or not self._write_fence.lock_held:
             return
@@ -360,6 +391,10 @@ class BobLKS:
             raise RuntimeError(
                 "BobLKS.ingest must run on the same event loop for its lifetime"
             )
+
+    def _assert_corpus_compatible(self) -> None:
+        if self._compatibility_error is not None:
+            raise self._compatibility_error
 
     def _assert_writable(self) -> None:
         try:

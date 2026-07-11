@@ -12,6 +12,7 @@ import pytest
 from core.ledger.federation import FederationRegistry
 from core.memory.acl import ACLRegistry
 from core.memory.exceptions import EmbedderUnavailable, RetrievalProviderError
+from core.memory.fingerprint import FingerprintMissing
 from core.memory.indexer import DIMENSION_PROBE_TEXT
 from core.memory.models import SlotResolution
 from core.memory.parser import _count_tokens
@@ -555,6 +556,85 @@ async def test_dimension_probe_runs_once_for_multiple_document_writes(
         await lks.ingest(documents[:2])
 
         assert embedder.doc_calls.count([DIMENSION_PROBE_TEXT]) == 1
+    finally:
+        provider.close()
+        fence.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_fingerprint_on_persisted_collection_refuses_retrieve(
+    workspace_path: Path,
+):
+    instance_root = workspace_path / "zvec"
+    first_fence = _fence(workspace_path, instance_root)
+    first_provider = _provider(workspace_path, instance_root, first_fence)
+    document = _write_documents(workspace_path)[0]
+    try:
+        first_lks = _build_lks(instance_root, first_fence, first_provider)
+        await first_lks.ingest([document])
+    finally:
+        first_provider.close()
+        first_fence.close()
+
+    fingerprint_path = (
+        instance_root
+        / "instances"
+        / "bob_lks"
+        / "manifest"
+        / "embed_fingerprint.json"
+    )
+    fingerprint_path.unlink()
+
+    second_fence = _fence(workspace_path, instance_root)
+    second_provider = _provider(workspace_path, instance_root, second_fence)
+    try:
+        second_lks = _build_lks(instance_root, second_fence, second_provider)
+
+        with pytest.raises(
+            FingerprintMissing,
+            match="compatibility is unverifiable.*fingerprint stamp is missing",
+        ):
+            await second_lks.retrieve("zvec local vector store", 1)
+    finally:
+        second_provider.close()
+        second_fence.close()
+
+
+@pytest.mark.asyncio
+async def test_zero_chunk_replacement_deletes_without_dimension_probe(
+    workspace_path: Path,
+):
+    instance_root = workspace_path / "zvec"
+    fence = _fence(workspace_path, instance_root)
+    provider = _provider(workspace_path, instance_root, fence)
+    document = _write_documents(workspace_path)[0]
+    source_doc_id = document.resolve().as_posix()
+    try:
+        healthy_lks = _build_lks(instance_root, fence, provider)
+        await healthy_lks.ingest([document])
+        assert list(
+            provider.scroll_payload("bob_lks", {"source_fact_id": source_doc_id})
+        )
+
+        document.write_text("", encoding="utf-8")
+        unavailable = _UnavailableEmbedder()
+        deletion_lks = _build_lks(
+            instance_root,
+            fence,
+            provider,
+            embedder=unavailable,
+        )
+        provider.index = MagicMock(wraps=provider.index)
+        provider.delete = MagicMock(wraps=provider.delete)
+
+        await deletion_lks.ingest([document])
+
+        assert unavailable.doc_calls == []
+        provider.index.assert_not_called()
+        provider.delete.assert_called_once()
+        assert list(
+            provider.scroll_payload("bob_lks", {"source_fact_id": source_doc_id})
+        ) == []
     finally:
         provider.close()
         fence.close()
