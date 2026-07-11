@@ -121,7 +121,7 @@ class LKSReadAdapter:
         registry: FederationRegistry,
         *,
         client,                                  # duck-typed sync Qdrant client (query_points / collection_exists)
-        embedder=None,                           # async .embed(list[str]) -> list[list[float]] (C1 SlotResolvedEmbedder)
+        embedder=None,                           # async .embed_query(list[str]) -> list[list[float]] (C1 SlotResolvedEmbedder)
         live_slot: Optional[SlotResolution] = None,
         reader_id: str = "bobclaw",
         require_stamp: bool = True,
@@ -204,7 +204,7 @@ class LKSReadAdapter:
         else:
             if self._embedder is None:
                 raise ReadAdapterError("a text query requires an embedder")
-            embedded = await self._embedder.embed([query])
+            embedded = await self._embedder.embed_query([query])
             # A raised EmbedderUnavailable (embedder down) is meaningful + fail-closed and propagates
             # as-is; a malformed/empty RETURN must not crash opaquely (IndexError/TypeError) — fail closed.
             if not isinstance(embedded, (list, tuple)) or not embedded:

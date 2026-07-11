@@ -144,7 +144,7 @@ class MemoryRetriever:
         if "include_deprecated" in provider_filters:
             include_deprecated = provider_filters.pop("include_deprecated")
 
-        query_vec = (await self._embedder.embed([query]))[0]
+        query_vec = (await self._embedder.embed_query([query]))[0]
 
         initial_results = self._provider.query_vector(
             self._store_id, query_vec, top_k, provider_filters or None,
@@ -160,7 +160,7 @@ class MemoryRetriever:
                     wikilinks.add(wl)
 
             for wl_target in wikilinks:
-                wl_vec = (await self._embedder.embed([wl_target]))[0]
+                wl_vec = (await self._embedder.embed_query([wl_target]))[0]
                 wl_results = self._provider.query_vector(
                     self._store_id, wl_vec, top_k, provider_filters or None,
                 )

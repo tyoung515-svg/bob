@@ -22,6 +22,9 @@ model = "granite-embedding-311m"
 backend = "lmstudio"           # protocol selector (OpenAI /v1/embeddings) — NOT literally LM Studio
 endpoint = "http://localhost:8081"   # llama.cpp llama-server (granite-311m, CPU). LM Studio dropped (flaky over remote-in).
 embedding_dimension = 768
+# Optional asymmetric templates are per-slot configuration. `{text}` is substituted;
+# a template without it is prepended. Omit both to preserve legacy symmetric payloads.
+# embedding_batch_size defaults to 64 for the OpenAI-compatible /v1/embeddings backend.
 
 # Heavyweight embedder, on-demand only.
 # Different vector dim — needs its own Qdrant collection if used.

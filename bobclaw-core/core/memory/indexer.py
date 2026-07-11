@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import tempfile
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,8 +18,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+DIMENSION_PROBE_TEXT = "bobclaw embedding dimension verification"
+
 
 class MemoryIndexer:
+    _dimension_probe_lock = asyncio.Lock()
+    _verified_embedder_dimensions: dict[int, set[int]] = {}
+    _dimension_probe_finalizers: dict[int, weakref.finalize] = {}
+
     def __init__(
         self,
         fact_store: FactStore,
@@ -73,9 +81,11 @@ class MemoryIndexer:
                 stats.facts_processed += 1
                 continue
 
+            await self._verify_dimension_before_write(expected_dim)
+
             texts = [c.text for c in chunks]
             try:
-                vectors = await self._embedder.embed(texts)
+                vectors = await self._embed_documents(texts)
             except Exception as e:
                 stats.errors.append((fact_id, f"embed failed: {e}"))
                 continue
@@ -125,6 +135,101 @@ class MemoryIndexer:
                 stats.errors.append((fact_id, str(e)))
 
         return stats
+
+    async def _embed_documents(self, texts: list[str]) -> list[list[float]]:
+        embed_doc = getattr(self._embedder, "embed_doc", None)
+        if embed_doc is not None:
+            return await embed_doc(texts)
+        log.warning(
+            "MemoryIndexer using deprecated embed() fallback for embedder type %s",
+            type(self._embedder).__name__,
+        )
+        return await self._embedder.embed(texts)
+
+    async def _verify_dimension_before_write(self, expected_dim: int | None) -> None:
+        """Live-probe the document embedder once before the first vector write."""
+        if (
+            isinstance(expected_dim, bool)
+            or not isinstance(expected_dim, int)
+            or expected_dim <= 0
+        ):
+            raise RetrievalProviderError(
+                self._store_id,
+                f"unverified embedding dimension: configured value {expected_dim!r} is invalid",
+            )
+        if self._is_dimension_verified(expected_dim):
+            return
+        async with self._dimension_probe_lock:
+            if self._is_dimension_verified(expected_dim):
+                return
+            try:
+                vectors = await self._embed_documents([DIMENSION_PROBE_TEXT])
+            except Exception as exc:
+                raise RetrievalProviderError(
+                    self._store_id,
+                    f"unverified embedding dimension: live probe failed: {exc}",
+                ) from exc
+            if not isinstance(vectors, (list, tuple)) or len(vectors) != 1:
+                count = (
+                    len(vectors) if isinstance(vectors, (list, tuple)) else "non-list"
+                )
+                raise RetrievalProviderError(
+                    self._store_id,
+                    "unverified embedding dimension: "
+                    f"probe returned {count} vectors, expected 1",
+                )
+            vector = vectors[0]
+            if not isinstance(vector, (list, tuple)):
+                raise RetrievalProviderError(
+                    self._store_id,
+                    "unverified embedding dimension: probe returned a malformed vector",
+                )
+            actual_dim = len(vector)
+            if actual_dim != expected_dim:
+                raise RetrievalProviderError(
+                    self._store_id,
+                    "unverified embedding dimension: "
+                    f"probe returned {actual_dim}, configured {expected_dim}; refusing write",
+                )
+            self._mark_dimension_verified(expected_dim)
+
+    def _is_dimension_verified(self, expected_dim: int) -> bool:
+        embedder_id = id(self._embedder)
+        finalizer = self._dimension_probe_finalizers.get(embedder_id)
+        if finalizer is None:
+            return False
+        state = finalizer.peek()
+        if state is None or state[0] is not self._embedder:
+            return False
+        verified_dims = self._verified_embedder_dimensions.get(embedder_id)
+        return verified_dims is not None and expected_dim in verified_dims
+
+    def _mark_dimension_verified(self, expected_dim: int) -> None:
+        embedder_id = id(self._embedder)
+        finalizer = self._dimension_probe_finalizers.get(embedder_id)
+        if finalizer is not None:
+            state = finalizer.peek()
+            if state is not None and state[0] is self._embedder:
+                self._verified_embedder_dimensions.setdefault(
+                    embedder_id, set()
+                ).add(expected_dim)
+                return
+            self._evict_verified_embedder(embedder_id)
+        try:
+            finalizer = weakref.finalize(
+                self._embedder,
+                type(self)._evict_verified_embedder,
+                embedder_id,
+            )
+        except TypeError:
+            return
+        self._dimension_probe_finalizers[embedder_id] = finalizer
+        self._verified_embedder_dimensions[embedder_id] = {expected_dim}
+
+    @classmethod
+    def _evict_verified_embedder(cls, embedder_id: int) -> None:
+        cls._verified_embedder_dimensions.pop(embedder_id, None)
+        cls._dimension_probe_finalizers.pop(embedder_id, None)
 
     def _chunk_fact(self, fact) -> tuple[list[Chunk], list[str]]:
         body = fact.body

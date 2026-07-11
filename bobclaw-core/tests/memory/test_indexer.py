@@ -51,6 +51,7 @@ def mock_embedder():
     emb = MagicMock()
     emb.embedding_dimension = 768
     emb.embed = AsyncMock(return_value=[[0.1] * 768, [0.2] * 768])
+    emb.embed_doc = AsyncMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
     return emb
 
 
@@ -108,7 +109,8 @@ async def test_reindex_facts_calls_embedder_and_provider(
     )
     stats = await idx.reindex_facts(["f1"])
 
-    assert mock_embedder.embed.called
+    assert mock_embedder.embed_doc.called
+    assert not mock_embedder.embed.called
     assert mock_provider.index.called
 
 
@@ -259,7 +261,7 @@ async def test_embedder_uses_slot_resolver(
 async def test_dim_mismatch_raises_retrieval_provider_error(
     mock_fact_store, mock_embedder, mock_provider, mock_slot_resolver, mock_parser
 ):
-    mock_embedder.embed = AsyncMock(return_value=[[0.1] * 128])
+    mock_embedder.embed_doc = AsyncMock(return_value=[[0.1] * 128])
     mock_slot_resolver.get.return_value = SlotResolution(
         slot_name="embed_text",
         model="test-model",

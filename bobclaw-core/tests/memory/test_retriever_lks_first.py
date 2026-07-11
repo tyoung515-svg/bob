@@ -16,8 +16,11 @@ DIM = 768
 class FakeEmbedder:
     def __init__(self):
         self.calls = []
-    async def embed(self, texts):
+    async def embed_query(self, texts):
         self.calls.append(list(texts))
+        return [[0.1] + [0.0]*(DIM-1) for _ in texts]
+
+    async def embed_doc(self, texts):
         return [[0.1] + [0.0]*(DIM-1) for _ in texts]
 
 class FakeProvider:

@@ -81,7 +81,10 @@ class FakeSlot:
 
 class FakeEmbedder:
     """Returns a fixed embedding vector for every text."""
-    async def embed(self, texts):
+    async def embed_doc(self, texts):
+        return [[0.1] * 768 for _ in texts]
+
+    async def embed_query(self, texts):
         return [[0.1] * 768 for _ in texts]
 
 

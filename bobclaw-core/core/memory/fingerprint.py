@@ -3,7 +3,7 @@
 Closes the one corruption the dim-suffix does NOT catch: a *same-dim model swap* (the operational
 768-dim embedder slot swapped for a different 768-dim model) writes healthy-looking but incompatible
 vectors into the same vector space and silently breaks retrieval. An ``EmbedFingerprint`` = ``{model_id, dim,
-normalize, distance}`` is stamped in BOTH the federation record's ``meta.embed`` (source of truth)
+normalize, distance, query_template_hash, doc_template_hash}`` is stamped in BOTH the federation record's ``meta.embed`` (source of truth)
 and a reserved Qdrant sentinel point (independent drift detector) — DECISIONS-MS2 OD#6 = BOTH — and a
 fail-closed assert refuses to read/write a mismatched space.
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import unicodedata
 import uuid
 from typing import Any, Dict, List, Optional
@@ -66,6 +67,21 @@ class FingerprintMismatch(FingerprintError):
 # Frozen dataclass: EmbedFingerprint
 # ---------------------------------------------------------------------------
 
+TEMPLATE_ABSENT_SENTINEL = "template:absent:v1"
+LEGACY_TEMPLATE_SENTINEL = "template:legacy-unknown:v1"
+
+
+def _template_identity(template: str | None) -> str:
+    """Return a stable identity for an optional instruction template."""
+    if template is None:
+        return TEMPLATE_ABSENT_SENTINEL
+    if not isinstance(template, str):
+        raise FingerprintError(
+            f"instruction template must be str or None, got {type(template).__name__}"
+        )
+    return f"sha256:{hashlib.sha256(template.encode('utf-8')).hexdigest()}"
+
+
 @dataclasses.dataclass(frozen=True)
 class EmbedFingerprint:
     """Deterministic, hashable, comparable embed fingerprint (model_id, dim, normalize, distance).
@@ -77,6 +93,8 @@ class EmbedFingerprint:
     dim: int
     normalize: bool
     distance: str
+    query_template_hash: str = TEMPLATE_ABSENT_SENTINEL
+    doc_template_hash: str = TEMPLATE_ABSENT_SENTINEL
 
     def __post_init__(self) -> None:
         # model_id: must be a non-empty string after strip
@@ -99,6 +117,12 @@ class EmbedFingerprint:
             raise FingerprintError(
                 f"distance must be a non-empty string, got {self.distance!r}"
             )
+        for field in ("query_template_hash", "doc_template_hash"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not value:
+                raise FingerprintError(
+                    f"{field} must be a non-empty string, got {value!r}"
+                )
         object.__setattr__(self, "distance", self.distance.strip().lower())
         object.__setattr__(
             self, "model_id", unicodedata.normalize("NFC", self.model_id.strip())
@@ -111,11 +135,13 @@ class EmbedFingerprint:
             "dim": self.dim,
             "normalize": self.normalize,
             "distance": self.distance,
+            "query_template_hash": self.query_template_hash,
+            "doc_template_hash": self.doc_template_hash,
         }
 
     @classmethod
     def from_dict(cls, d: Any) -> "EmbedFingerprint":
-        """Strictly construct from a dict (the four keys, correct types); malformed -> FingerprintError."""
+        """Construct from a template-aware dict; legacy four-field stamps become drift sentinels."""
         if not isinstance(d, dict):
             raise FingerprintError(
                 f"EmbedFingerprint.from_dict expects a dict, got {type(d).__name__}"
@@ -137,8 +163,22 @@ class EmbedFingerprint:
         distance = d["distance"]
         if not isinstance(distance, str):
             raise FingerprintError(f"distance must be str, got {type(distance).__name__}")
+        template_keys = ("query_template_hash", "doc_template_hash")
+        present_template_keys = [key for key in template_keys if key in d]
+        if present_template_keys and len(present_template_keys) != len(template_keys):
+            missing = [key for key in template_keys if key not in d]
+            raise FingerprintError(f"Missing keys {missing!r} in fingerprint dict: {d}")
+        if present_template_keys:
+            query_template_hash = d["query_template_hash"]
+            doc_template_hash = d["doc_template_hash"]
+        else:
+            query_template_hash = LEGACY_TEMPLATE_SENTINEL
+            doc_template_hash = LEGACY_TEMPLATE_SENTINEL
         # Construct via cls(...) so __post_init__ re-validates + canonicalizes.
-        return cls(model_id=model_id, dim=dim, normalize=normalize, distance=distance)
+        return cls(
+            model_id=model_id, dim=dim, normalize=normalize, distance=distance,
+            query_template_hash=query_template_hash, doc_template_hash=doc_template_hash,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +204,12 @@ def fingerprint_from_slot(
         model_id=resolution.model,
         dim=resolution.embedding_dimension,
         normalize=normalize,
+        query_template_hash=_template_identity(
+            getattr(resolution, "query_instruction_template", None)
+        ),
+        doc_template_hash=_template_identity(
+            getattr(resolution, "doc_instruction_template", None)
+        ),
         distance=distance,
     )
 
@@ -205,9 +251,12 @@ def assert_compatible(
     *,
     context: str = "",
 ) -> None:
-    """Raise FingerprintMismatch iff any of (model_id, dim, normalize, distance) differ."""
+    """Raise FingerprintMismatch iff a vector-space-affecting field differs."""
     fields: List[str] = []
-    for field in ("model_id", "dim", "normalize", "distance"):
+    for field in (
+        "model_id", "dim", "normalize", "distance",
+        "query_template_hash", "doc_template_hash",
+    ):
         if getattr(registered, field) != getattr(live, field):
             fields.append(field)
     if fields:

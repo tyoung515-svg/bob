@@ -70,6 +70,13 @@ class Embedder(Protocol):
     embedding_dimension: int
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Deprecated symmetric alias; delegates to embed_doc for one release."""
+        ...
+
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        ...
+
+    async def embed_doc(self, texts: list[str]) -> list[list[float]]:
         ...
 
 

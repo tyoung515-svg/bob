@@ -76,7 +76,7 @@ async def test_embed_lmstudio_calls_v1_embeddings():
     args, kwargs = mock_post.call_args
     assert args[0] == "http://localhost:1234/v1/embeddings"
     assert kwargs["json"]["model"] == "test-embedder-model"
-    assert kwargs["json"]["input"] == "hello world"
+    assert kwargs["json"]["input"] == ["hello world"]
 
 
 # ─── test_embed_ollama_calls_api_embeddings ───────────────────────────────────
@@ -155,7 +155,10 @@ async def test_returns_correct_dimensionality():
     # non-zero healthy vector: the MS2-C1 zero-vector guard rejects all-zero vectors for
     # non-empty text, so this dimensionality fixture uses a healthy vector.
     dummy_vec = [0.1] * 768
-    lmstudio_body = {"data": [{"embedding": dummy_vec, "index": 0}]}
+    lmstudio_body = {"data": [
+        {"embedding": dummy_vec, "index": 0},
+        {"embedding": dummy_vec, "index": 1},
+    ]}
     mock_cm = _mock_aiohttp_post(200, lmstudio_body)
 
     with patch("aiohttp.ClientSession.post", return_value=mock_cm):

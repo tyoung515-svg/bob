@@ -65,9 +65,12 @@ class FakeEmbedder:
         self._out = out
         self.calls = []
 
-    async def embed(self, texts):
+    async def embed_query(self, texts):
         self.calls.append(list(texts))
         return [list(self._out)]
+
+    async def embed_doc(self, texts):
+        raise AssertionError("LKS read adapter must not embed documents")
 
 
 def point(pid, score, payload=None):
@@ -421,11 +424,11 @@ class TestLKSReadAdapter:
         client = MagicMock()
 
         class EmptyEmbedder:
-            async def embed(self, texts):
+            async def embed_query(self, texts):
                 return []  # no vector
 
         class JunkEmbedder:
-            async def embed(self, texts):
+            async def embed_query(self, texts):
                 return ["not-a-vector"]  # embedded[0] is not a list/tuple
 
         ad_empty = LKSReadAdapter(reg, client=client, embedder=EmptyEmbedder(), live_slot=slot())

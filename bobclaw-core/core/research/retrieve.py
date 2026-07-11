@@ -24,7 +24,7 @@ from core.verify.entailment import Source, SourceKind, RetrieveRequest
 from core.ledger.federation import FederationError
 from core.memory.lks_adapter import ReadAdapterError
 from core.memory.fingerprint import FingerprintMissing, FingerprintMismatch
-from core.memory.exceptions import ACLViolation
+from core.memory.exceptions import ACLViolation, EmbedderUnavailable, RetrievalProviderError
 
 logger = logging.getLogger("bobclaw.research.retrieve")
 
@@ -250,11 +250,14 @@ class ResearchRetriever:
                     if self._propagate_lks_safety:
                         raise
                     hits = []
-                except (ReadAdapterError, FederationError) as exc:
-                    # A transient read/connectivity hiccup OR a misconfigured/unknown instance name (the C3
-                    # adapter calls registry.resolve() first → FederationError) is this instance's miss —
-                    # continue to the next instance / web tier. Never crashes the gate (run_entailment_gate
-                    # awaits retrieve() with no try/except, so an unclassified raise would abort the gate).
+                except (
+                    EmbedderUnavailable,
+                    RetrievalProviderError,
+                    ReadAdapterError,
+                    FederationError,
+                ) as exc:
+                    # Availability failures and unknown instances are misses;
+                    # continue to the next instance or the web tier.
                     logger.warning(
                         "R1 LKS instance %r unavailable/misconfigured: %s", inst, exc
                     )
