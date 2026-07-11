@@ -2,7 +2,7 @@
   "version": 1,
   "instances": {
     "bobclaw-memory": {
-      "repo": "./data/bobclaw-memory",
+      "repo": ".",
       "ledger_dir": "ledger",
       "collection": "bobclaw__768",
       "dim": 768,

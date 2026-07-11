@@ -405,6 +405,15 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
         return singletons
 
 
+def reset_memory() -> None:
+    """Clear process-local memory bootstrap state after lifecycle shutdown."""
+    global _bootstrap_singleton, _bootstrap_config_snapshot
+
+    with _BOOTSTRAP_LOCK:
+        _bootstrap_singleton = None
+        _bootstrap_config_snapshot = None
+
+
 def get_memory() -> MemorySingletons:
     if _bootstrap_singleton is None:
         raise MemoryConfigError(

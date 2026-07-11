@@ -670,8 +670,13 @@ def test_new_programdata_lock_directory_receives_explicit_users_acl(
     assert "*S-1-5-32-545:(OI)(CI)M" in command
 
 
-def test_bootstrap_refuses_reserved_name_spoof_without_overwrite(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _assert_reserved_name_spoof_refused_without_overwrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    collection: str,
+    dim: int,
+    repo: str = "C:/foreign",
 ):
     from core.memory.bootstrap import _maybe_build_write_fence
 
@@ -680,9 +685,9 @@ def test_bootstrap_refuses_reserved_name_spoof_without_overwrite(
     registry = registry_type(registry_path)
     original = registry.register(
         BOBCLAW_MEMORY_INSTANCE,
-        "C:/foreign",
-        collection="foreign_vectors",
-        dim=768,
+        repo,
+        collection=collection,
+        dim=dim,
         meta={"owner": "external"},
     )
     registry.save()
@@ -708,6 +713,43 @@ def test_bootstrap_refuses_reserved_name_spoof_without_overwrite(
 
     assert loaded_registry.get(BOBCLAW_MEMORY_INSTANCE) == original
     assert registry_type(registry_path).load().get(BOBCLAW_MEMORY_INSTANCE) == original
+
+
+def test_bootstrap_refuses_family_shaped_reserved_name_foreign_repo_spoof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Auditor premise: reserved name + family collection + foreign repo is refused intact."""
+    _assert_reserved_name_spoof_refused_without_overwrite(
+        tmp_path,
+        monkeypatch,
+        collection="bobclaw__1024",
+        dim=1024,
+    )
+
+
+def test_bootstrap_refuses_out_of_family_reserved_name_spoof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The round-1 out-of-family spoof remains covered as a separate premise."""
+    _assert_reserved_name_spoof_refused_without_overwrite(
+        tmp_path,
+        monkeypatch,
+        collection="foreign_vectors",
+        dim=768,
+    )
+
+
+def test_bootstrap_refuses_out_of_family_reserved_name_with_bob_repo_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Out-of-family ownership is refused even when the reserved repo signature is valid."""
+    _assert_reserved_name_spoof_refused_without_overwrite(
+        tmp_path,
+        monkeypatch,
+        collection="foreign_vectors",
+        dim=768,
+        repo=".",
+    )
 
 
 def test_bootstrap_rejects_foreign_historical_family_collection(

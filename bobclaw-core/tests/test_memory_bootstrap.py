@@ -135,6 +135,39 @@ class TestBootstrapWriteFenceInvariant:
 
         with pytest.raises(MemoryConfigError, match="write fence"):
             bootstrap_memory(_make_config(sqlite_path, stores_toml))
+
+
+@patch("core.memory.bootstrap.QdrantClient")
+async def test_cleanup_then_rebootstrap_builds_fresh_armed_fence(
+    mock_qdrant_cls: MagicMock,
+    stores_toml: Path,
+    sqlite_path: Path,
+    _armed_write_fence: tuple[MagicMock, MagicMock],
+) -> None:
+    """Cleanup clears the closed singleton so the next bootstrap arms a new fence."""
+    from aiohttp import web
+    import start
+
+    mock_qdrant_cls.return_value.get_collections.return_value = MagicMock()
+    fence_builder, first_fence = _armed_write_fence
+    second_fence = MagicMock(name="fresh_write_fence")
+    fence_builder.side_effect = [first_fence, second_fence]
+    config = _make_config(sqlite_path, stores_toml)
+
+    first = bootstrap_memory(config)
+    await start._on_cleanup(web.Application())
+
+    first_fence.close.assert_called_once_with()
+    with pytest.raises(MemoryConfigError, match="not bootstrapped"):
+        get_memory()
+
+    second = bootstrap_memory(config)
+    assert second is not first
+    assert second.write_fence is second_fence
+    assert second.indexer._provider._write_fence is second_fence
+    assert fence_builder.call_count == 2
+
+
 class TestBootstrapRejectsDifferentConfig:
     @patch("core.memory.bootstrap.QdrantClient")
     def test_bootstrap_rejects_different_config(

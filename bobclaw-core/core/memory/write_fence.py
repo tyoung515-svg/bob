@@ -299,6 +299,13 @@ def assert_registry_family_available(
         collection = record.get("collection")
         in_family = is_collection_in_family(collection, collection_prefix)
         if name == BOBCLAW_MEMORY_INSTANCE:
+            repo = record.get("repo")
+            if repo != ".":
+                raise WriteFenceViolation(
+                    collection_prefix,
+                    f"reserved registry name {BOBCLAW_MEMORY_INSTANCE!r} has "
+                    f"foreign repo {repo!r}; expected BoB registration repo '.'",
+                )
             if not in_family:
                 raise WriteFenceViolation(
                     collection_prefix,
@@ -420,6 +427,11 @@ class WriteFence:
     @property
     def collection_prefix(self) -> str:
         return self._collection_prefix
+
+    @property
+    def lock_held(self) -> bool:
+        """Return whether this fence currently holds its OS lock."""
+        return bool(self._lock.is_locked)
 
     @property
     def degraded(self) -> bool:

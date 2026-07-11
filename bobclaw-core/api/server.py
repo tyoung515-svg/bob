@@ -122,14 +122,16 @@ async def health(_: web.Request) -> web.Response:
         else:
             fence = getattr(mem, "write_fence", None)
             degraded = bool(getattr(fence, "degraded", False))
+            lock_held = bool(getattr(fence, "lock_held", True))
+            writes_refused = degraded or not lock_held
             payload["memory_write_fence_degraded"] = degraded
             payload["memory_write_fence"] = {
-                "writes_refused": degraded,
+                "writes_refused": writes_refused,
                 "resource": getattr(fence, "resource_identity", None),
             }
-            if degraded:
-                payload["memory_write_fence"]["reason"] = getattr(
-                    fence, "degraded_reason", "write lock is held by another writer"
+            if writes_refused:
+                payload["memory_write_fence"]["reason"] = (
+                    getattr(fence, "degraded_reason", "") or "lock_not_held"
                 )
     return web.json_response(payload)
 
@@ -493,11 +495,30 @@ def _fact_to_summary(fact) -> dict:
     }
 
 
-def _memory_write_locked_response(memory: Any, exc: WriteFenceViolation) -> web.Response:
-    """Return the stable HTTP surface for a degraded family write fence."""
+def _memory_write_refusal_reason(memory: Any) -> str | None:
+    """Return why this process cannot mutate memory, or None while armed."""
     fence = getattr(memory, "write_fence", None)
-    payload = error_event(str(exc), code="memory_write_locked")
-    payload["reason"] = getattr(fence, "degraded_reason", "")
+    if fence is None:
+        return None
+    if bool(getattr(fence, "degraded", False)):
+        return getattr(fence, "degraded_reason", "") or "contention"
+    if not bool(getattr(fence, "lock_held", True)):
+        return "lock_not_held"
+    return None
+
+
+def _memory_write_locked_response(
+    memory: Any,
+    exc: WriteFenceViolation | None = None,
+    *,
+    reason: str | None = None,
+) -> web.Response:
+    """Return the stable HTTP surface for a refused family write."""
+    refusal_reason = reason or _memory_write_refusal_reason(memory)
+    refusal_reason = refusal_reason or "write_fence_violation"
+    detail = str(exc) if exc is not None else f"memory writes refused: {refusal_reason}"
+    payload = error_event(detail, code="memory_write_locked")
+    payload["reason"] = refusal_reason
     return web.json_response(payload, status=423)
 
 
@@ -558,6 +579,10 @@ async def forget_memory_fact(request: web.Request) -> web.Response:
             error_event("memory not initialised", code="memory_unavailable"),
             status=503,
         )
+
+    refusal_reason = _memory_write_refusal_reason(mem)
+    if refusal_reason is not None:
+        return _memory_write_locked_response(mem, reason=refusal_reason)
 
     try:
         await mem.fact_store.get(fact_id)

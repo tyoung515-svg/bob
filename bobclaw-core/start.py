@@ -112,7 +112,7 @@ async def _on_startup(app: web.Application) -> None:
 
 async def _on_cleanup(app: web.Application) -> None:
     """Release memory's family lock and close Postgres on shutdown."""
-    from core.memory.bootstrap import get_memory
+    from core.memory.bootstrap import get_memory, reset_memory
     from core.memory.exceptions import MemoryConfigError
 
     try:
@@ -124,7 +124,8 @@ async def _on_cleanup(app: web.Application) -> None:
         if fence is not None:
             logger.info("bobclaw-core: releasing memory write fence")
             fence.close()
-
+    finally:
+        reset_memory()
     pool = app.get(POOL_KEY)
     if pool is not None:
         logger.info("bobclaw-core: closing Postgres pool")

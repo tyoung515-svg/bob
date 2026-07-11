@@ -25,11 +25,20 @@ def _executable_lines(text: str) -> str:
     )
 
 
-def _powershell_launches_core(path: Path) -> bool:
-    executable = _executable_lines(path.read_text(encoding="utf-8"))
+def _powershell_text_launches_core(text: str) -> bool:
+    executable = _executable_lines(text)
     return (
-        re.search(r"(?m)^\s*& \$py start\.py", executable) is not None
-        or "Spawn-Service 'bobclaw-core'" in executable
+        re.search(
+            r"(?im)^\s*(?:&\s+)?(?:\$py|python(?:\.exe)?)\s+start\.py(?:\s|$)",
+            executable,
+        )
+        is not None
+        or re.search(r"(?im)^\s*&\s+\.\\start\.py(?:\s|$)", executable)
+        is not None
+        or re.search(
+            r'''(?i)\bSpawn-Service\s+(["'])bobclaw-core\1''', executable
+        )
+        is not None
         or (
             "Register-Wrapper 'BobClaw-Core'" in executable
             and "task-core.ps1" in executable
@@ -37,6 +46,10 @@ def _powershell_launches_core(path: Path) -> bool:
         or "Start-ScheduledTask -TaskName 'BobClaw-Core'" in executable
         or "scripts\\win\\start-local.ps1" in executable
     )
+
+
+def _powershell_launches_core(path: Path) -> bool:
+    return _powershell_text_launches_core(path.read_text(encoding="utf-8"))
 
 
 def _makefile_core_launch_targets(path: Path) -> set[str]:
@@ -110,6 +123,16 @@ def _memory_capable_core_launchers() -> set[str]:
 def test_memory_capable_core_launcher_inventory_is_complete():
     """New core launch paths must be classified by the bootstrap invariant."""
     assert _memory_capable_core_launchers() == LAUNCHER_INVENTORY
+
+
+def test_powershell_tripwire_detects_executed_launcher_evasions():
+    """Lock the auditor's three executed spellings into the inventory tripwire."""
+    for script in (
+        "python start.py",
+        "&  .\\start.py",
+        'Spawn-Service "bobclaw-core" "Core" "." "start.py"',
+    ):
+        assert _powershell_text_launches_core(script), script
 
 
 def test_compose_is_parsed_and_does_not_launch_core():
