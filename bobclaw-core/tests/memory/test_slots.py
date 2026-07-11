@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -38,6 +39,10 @@ class TestSlotResolverFixtures:
         assert sr.model == "test-embedder"
         assert sr.embedding_dimension == 128
 
+        assert sr.query_instruction_template == "query: {text}"
+        assert sr.doc_instruction_template == "document: {text}"
+        assert sr.embedding_batch_size == 7
+
     def test_valid_deferred_raises(self):
         resolver = SlotResolver(_FIXTURES / "valid_minimal.toml")
         with pytest.raises(SlotDeferred, match="synth_deep"):
@@ -60,3 +65,24 @@ class TestSlotResolverFixtures:
         assert resolver.is_active("embed_text") is True
         assert resolver.is_active("synth_deep") is False
         assert resolver.is_active("nonexistent") is False
+
+    @pytest.mark.parametrize(
+        ("field", "toml_value"),
+        [
+            ("query_instruction_template", "123"),
+            ("doc_instruction_template", "[1, 2]"),
+        ],
+    )
+    def test_non_string_instruction_template_raises(
+        self, field: str, toml_value: str
+    ) -> None:
+        config = (
+            "[slot.embed_text]\n"
+            "model = \"test-embedder\"\n"
+            "backend = \"lmstudio\"\n"
+            "endpoint = \"http://localhost:1234\"\n"
+            f"{field} = {toml_value}\n"
+        )
+        with patch.object(Path, "read_text", return_value=config):
+            with pytest.raises(SlotMisconfigured, match=rf"{field}.*string"):
+                SlotResolver(Path("unused.toml"))

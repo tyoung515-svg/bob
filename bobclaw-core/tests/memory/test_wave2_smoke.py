@@ -47,11 +47,19 @@ async def test_wave2_smoke(tmp_path: Path):
     mock_provider.index = MagicMock(return_value=IndexReceipt("qdrant-local", "store_1", 1, "2026-05-12T00:00:00Z"))
     mock_provider.query_vector = MagicMock(return_value=MagicMock(hits=[MagicMock(id="fct_1_0", score=0.8, payload={"source_fact_id": "fct_1", "text": "smoke test fact"})]))
     
-    mock_embedder = AsyncMock()
-    mock_embedder.return_value = [[0.1, 0.2, 0.3]]
+    mock_embedder = MagicMock()
+    mock_embedder.embedding_dimension = 3
+    mock_embedder.embed_doc = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+    mock_embedder.embed_query = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
     
     mock_slot_resolver = MagicMock()
-    mock_slot_resolver.get = MagicMock(return_value=MagicMock(model="test_model", endpoint="test_endpoint"))
+    mock_slot_resolver.get = MagicMock(
+        return_value=MagicMock(
+            model="test_model",
+            endpoint="test_endpoint",
+            embedding_dimension=mock_embedder.embedding_dimension,
+        )
+    )
     
     from core.memory.query_log import QueryLog
     query_log = QueryLog(tmp_path / "query_log.jsonl")

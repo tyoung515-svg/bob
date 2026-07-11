@@ -39,6 +39,8 @@ def test_dataclass_roundtrip_hashable_canonical():
         "dim": 768,
         "normalize": True,
         "distance": "cosine",
+        "query_template_hash": "template:absent:v1",
+        "doc_template_hash": "template:absent:v1",
     }
 
 
@@ -63,7 +65,9 @@ def test_from_dict_strict():
         EmbedFingerprint.from_dict({"model_id": "m", "dim": 768, "normalize": "yes", "distance": "cosine"})
     # extra keys are ignored (acceptable behaviour) – no error expected
     fp = EmbedFingerprint.from_dict({
-        "model_id": "m", "dim": 768, "normalize": True, "distance": "cosine", "x": 1
+        "model_id": "m", "dim": 768, "normalize": True, "distance": "cosine",
+        "query_template_hash": "template:absent:v1",
+        "doc_template_hash": "template:absent:v1", "x": 1,
     })
     assert fp == EmbedFingerprint("m", 768, True, "cosine")
 
@@ -410,3 +414,52 @@ def test_ensure_sentinel_fail_closed_on_corrupted_present_sentinel():
     # assert_sentinel_matches likewise surfaces the corruption (not a masked "missing")
     with pytest.raises(FingerprintError):
         assert_sentinel_matches(client, "_t", fp)
+
+
+# ---------------------------------------------------------------------------
+# 19. Template identity is part of the fingerprint. A configured template
+#     change is drift; an absent template is distinct from an empty template;
+#     legacy four-field stamps parse as drift rather than malformed metadata.
+# ---------------------------------------------------------------------------
+def test_template_identity_change_and_legacy_stamp_fail_closed():
+    base_slot = SlotResolution(
+        slot_name="embed_text", model="m", backend="lmstudio",
+        endpoint="http://x", embedding_dimension=768,
+    )
+    query_changed_slot = SlotResolution(
+        slot_name="embed_text", model="m", backend="lmstudio",
+        endpoint="http://x", embedding_dimension=768,
+        query_instruction_template="query: {text}",
+    )
+    doc_changed_slot = SlotResolution(
+        slot_name="embed_text", model="m", backend="lmstudio",
+        endpoint="http://x", embedding_dimension=768,
+        doc_instruction_template="document: {text}",
+    )
+    empty_query_slot = SlotResolution(
+        slot_name="embed_text", model="m", backend="lmstudio",
+        endpoint="http://x", embedding_dimension=768,
+        query_instruction_template="",
+    )
+    base = fingerprint_from_slot(base_slot)
+
+    with pytest.raises(FingerprintMismatch) as query_drift:
+        assert_compatible(base, fingerprint_from_slot(query_changed_slot))
+    assert "query_template_hash" in query_drift.value.fields
+
+    with pytest.raises(FingerprintMismatch) as doc_drift:
+        assert_compatible(base, fingerprint_from_slot(doc_changed_slot))
+    assert "doc_template_hash" in doc_drift.value.fields
+
+    with pytest.raises(FingerprintMismatch):
+        assert_compatible(base, fingerprint_from_slot(empty_query_slot))
+
+    legacy = base.to_dict()
+    legacy.pop("query_template_hash")
+    legacy.pop("doc_template_hash")
+    legacy_fp = EmbedFingerprint.from_dict(legacy)
+    with pytest.raises(FingerprintMismatch) as legacy_drift:
+        assert_compatible(legacy_fp, base)
+    assert set(legacy_drift.value.fields) == {
+        "query_template_hash", "doc_template_hash",
+    }

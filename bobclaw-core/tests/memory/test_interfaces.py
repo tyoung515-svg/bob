@@ -83,6 +83,12 @@ class _StubEmbedder:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return []
 
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        return []
+
+    async def embed_doc(self, texts: list[str]) -> list[list[float]]:
+        return []
+
 
 class _StubRetrievalProvider:
     provider_id: str = "stub"
@@ -149,6 +155,13 @@ class _FakeEmbedder:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         assert texts == ["needle"]
         return [[0.1, 0.2, 0.3]]
+
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        assert texts == ["needle"]
+        return [[0.1, 0.2, 0.3]]
+
+    async def embed_doc(self, texts: list[str]) -> list[list[float]]:
+        return []
 
 
 class _StubSlotResolver:

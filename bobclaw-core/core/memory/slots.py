@@ -39,6 +39,9 @@ class SlotResolver:
             backend=raw["backend"],
             endpoint=raw["endpoint"],
             embedding_dimension=raw.get("embedding_dimension"),
+            query_instruction_template=raw.get("query_instruction_template"),
+            doc_instruction_template=raw.get("doc_instruction_template"),
+            embedding_batch_size=raw.get("embedding_batch_size"),
         )
 
     def is_active(self, slot_name: str) -> bool:
@@ -60,6 +63,14 @@ def _parse_slots_file(path: Path) -> dict[str, dict]:
             raise SlotMisconfigured(
                 slot_name, f"unknown slot name {slot_name!r}; known: {sorted(_KNOWN_SLOTS)}"
             )
+        for template_field in (
+            "query_instruction_template",
+            "doc_instruction_template",
+        ):
+            if template_field in value and not isinstance(value[template_field], str):
+                raise SlotMisconfigured(
+                    slot_name, f"{template_field} must be a string"
+                )
         if not value.get("deferred", False):
             missing = [k for k in ("model", "backend", "endpoint") if k not in value]
             if missing:

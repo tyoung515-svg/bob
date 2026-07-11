@@ -4,6 +4,9 @@ model = "test-embedder"
 backend = "test-backend"
 endpoint = "http://test:1234"
 embedding_dimension = 128
+query_instruction_template = "query: {text}"
+doc_instruction_template = "document: {text}"
+embedding_batch_size = 7
 
 [slot.synth_deep]
 deferred = true

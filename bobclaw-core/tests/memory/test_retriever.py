@@ -25,6 +25,7 @@ def mock_embedder():
     emb = MagicMock()
     emb.embedding_dimension = 768
     emb.embed = AsyncMock(return_value=[[0.1] * 768])
+    emb.embed_query = AsyncMock(return_value=[[0.1] * 768])
     return emb
 
 
@@ -314,6 +315,8 @@ async def test_embedder_uses_slot_resolver(
     )
     await r.search("test")
     mock_slot_resolver.get.assert_called_with("embed_text")
+    mock_embedder.embed_query.assert_awaited_once_with(["test"])
+    assert not mock_embedder.embed.called
 
 
 @pytest.mark.asyncio
