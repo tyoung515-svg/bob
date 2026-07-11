@@ -11,7 +11,6 @@ from core.memory.models import (
     HealthStatus,
     IndexReceipt,
     IndexStats,
-    Query,
     RankedResults,
     RetrievedChunk,
     Section,
@@ -83,8 +82,8 @@ class RetrievalProvider(Protocol):
     def index(self, store_id: str, items: list[ChunkRecord]) -> IndexReceipt:
         ...
 
-    def query(
-        self, store_id: str, q: Query, k: int, filters: FilterExpr | None
+    def query_vector(
+        self, store_id: str, vector: list[float], k: int, filters: FilterExpr | None
     ) -> RankedResults:
         ...
 

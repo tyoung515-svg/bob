@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
+import inspect
 from pathlib import Path
+import textwrap
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -12,7 +15,6 @@ from core.memory.models import (
     HealthStatus,
     Hit,
     IndexReceipt,
-    Query,
     RankedResults,
 )
 
@@ -54,6 +56,40 @@ def provider(permissive_acl, mock_client):
         collection_prefix="bobclaw_l1_text_dense",
         acl_registry=permissive_acl,
         client=mock_client,
+    )
+
+
+def _protocol_methods(protocol: type) -> set[str]:
+    return {
+        name
+        for name, member in vars(protocol).items()
+        if not name.startswith("_") and callable(member)
+    }
+
+
+def _is_unconditionally_unimplemented(method) -> bool:
+    source = textwrap.dedent(inspect.getsource(method))
+    function = next(
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    body = list(function.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body.pop(0)
+
+    return len(body) == 1 and (
+        isinstance(body[0], (ast.Pass, ast.Raise))
+        or (
+            isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and body[0].value.value is Ellipsis
+        )
     )
 
 
@@ -330,16 +366,6 @@ class TestQueryProtocol:
         ids = list(provider.scroll_payload("test_store", {"source_fact_id": "nonexistent"}))
         assert ids == []
 
-    def test_query_raises_retrieval_provider_error(self, provider):
-        with pytest.raises(RetrievalProviderError) as exc:
-            provider.query(
-                "test_store",
-                Query(text="hello", capability_class="text_dense"),
-                k=3,
-                filters=None,
-            )
-        assert "query_vector" in str(exc.value)
-
 
 class TestDelete:
     def test_delete_calls_client_delete(
@@ -389,3 +415,20 @@ class TestProtocolConformance:
         from core.memory.interfaces import RetrievalProvider
 
         assert isinstance(provider, RetrievalProvider)
+
+    def test_declared_methods_are_implemented_and_live(self):
+        from core.memory.interfaces import RetrievalProvider
+        from core.memory.providers.qdrant_provider import QdrantRetrievalProvider
+
+        declared_methods = _protocol_methods(RetrievalProvider)
+        missing_methods = declared_methods - set(vars(QdrantRetrievalProvider))
+        assert not missing_methods
+
+        dead_methods = [
+            name
+            for name in declared_methods
+            if _is_unconditionally_unimplemented(
+                vars(QdrantRetrievalProvider)[name]
+            )
+        ]
+        assert not dead_methods
