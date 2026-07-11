@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import ast
 import asyncio
+import sys
+import textwrap
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -19,7 +23,12 @@ from core.memory.write_fence import WriteFence, WriteFenceViolation
 
 @pytest.fixture
 def tmp_path() -> Path:
-    root = Path(__file__).resolve().parents[4] / "_workspace" / "testing" / "zvec-provider-pytest"
+    root = (
+        Path(__file__).resolve().parents[4]
+        / "_workspace"
+        / "testing"
+        / "zvec-provider-pytest-r1"
+    )
     root.mkdir(parents=True, exist_ok=True)
     path = root / uuid.uuid4().hex
     path.mkdir()
@@ -44,6 +53,8 @@ def _provider(
     write_fence=None,
     collection_prefix: str = "bobclaw_",
     reclaim_timeout_s: float = 10.0,
+    request_timeout_s: float = 10.0,
+    worker_command: list[str] | None = None,
 ):
     from core.memory.providers.zvec_provider import ZvecRetrievalProvider
 
@@ -55,7 +66,13 @@ def _provider(
         store_root=tmp_path / "zvec-root",
         write_fence=write_fence,
         reclaim_timeout_s=reclaim_timeout_s,
+        request_timeout_s=request_timeout_s,
+        worker_command=worker_command,
     )
+
+
+def _worker_command(source: str) -> list[str]:
+    return [sys.executable, "-u", "-c", textwrap.dedent(source)]
 
 
 def _fence(tmp_path: Path, collection_prefix: str = "bobclaw_") -> WriteFence:
@@ -70,7 +87,7 @@ def _fence(tmp_path: Path, collection_prefix: str = "bobclaw_") -> WriteFence:
 def _item(
     chunk_id: str,
     vector: list[float],
-    fact_id: str = "f1",
+    fact_id: str | None = "f1",
     **payload,
 ) -> ChunkRecord:
     return ChunkRecord(
@@ -104,6 +121,107 @@ def _close_providers():
         provider.close()
 
 
+def test_ipc_live_silent_child_times_out_drains_stderr_and_is_killed(
+    tmp_path: Path, _close_providers
+):
+    provider = _provider(
+        tmp_path,
+        request_timeout_s=0.35,
+        worker_command=_worker_command(
+            """
+            import sys
+            import time
+
+            sys.stderr.write("x" * 2_000_000)
+            sys.stderr.flush()
+            sys.stdin.readline()
+            time.sleep(30)
+            """
+        ),
+    )
+    _close_providers.append(provider)
+    child = provider._child
+    assert child is not None
+    log_dir = tmp_path / "zvec-root" / "_ipc"
+    ready_deadline = time.monotonic() + 3.0
+    while time.monotonic() < ready_deadline:
+        logs = list(log_dir.glob("*.stderr.log"))
+        if logs and logs[0].stat().st_size >= 2_000_000:
+            break
+        time.sleep(0.025)
+    else:
+        pytest.fail("fake child did not become live and drain stderr")
+
+    t0 = time.monotonic()
+    with pytest.raises(RetrievalProviderError, match="timed out"):
+        provider._request("ping", deadline=time.monotonic() + 0.35)
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 1.5
+    assert child.poll() is not None
+    assert provider._child is None
+    logs = list((tmp_path / "zvec-root" / "_ipc").glob("*.stderr.log"))
+    assert logs and logs[0].stat().st_size >= 2_000_000
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "[]",
+        "{}",
+        '{"ok": true}',
+        '{"ok": false}',
+        '{"ok": false, "error": "bad"}',
+        '{"ok": false, "error": {"type": "Broken"}}',
+    ],
+)
+def test_malformed_child_responses_kill_child_and_fail_closed(
+    tmp_path: Path, _close_providers, frame: str
+):
+    provider = _provider(
+        tmp_path,
+        request_timeout_s=5.0,
+        worker_command=_worker_command(
+            f"""
+            import sys
+            import time
+
+            sys.stdin.readline()
+            print({frame!r}, flush=True)
+            time.sleep(30)
+            """
+        ),
+    )
+    _close_providers.append(provider)
+    child = provider._child
+    assert child is not None
+
+    with pytest.raises(RetrievalProviderError, match="malformed.*response"):
+        provider._request("ping", deadline=time.monotonic() + 5.0)
+
+    assert child.poll() is not None
+    assert provider._child is None
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "../escape",
+        "bobclaw/escape",
+        "bobclaw\\escape",
+        "/absolute",
+        r"C:\tmp\absolute-escape",
+        "...",
+        "C:" + "\t" + "mp" + "\a" + "bsolute-escape",
+    ],
+)
+def test_collection_prefix_rejects_non_name_components(
+    tmp_path: Path, prefix: str
+):
+    with pytest.raises(ValueError, match="collection_prefix"):
+        _provider(tmp_path, collection_prefix=prefix)
+
+
 def test_multidim_family_index_preflights_and_succeeds_under_held_fence(
     tmp_path: Path, _close_providers
 ):
@@ -120,13 +238,48 @@ def test_multidim_family_index_preflights_and_succeeds_under_held_fence(
         )
 
         assert receipt.item_count == 2
-        assert (tmp_path / "zvec-root" / "instances" / "s" / "collections" / "bobclaw__3").is_dir()
-        assert (tmp_path / "zvec-root" / "instances" / "s" / "collections" / "bobclaw__4").is_dir()
-        assert [hit.payload["chunk_id"] for hit in provider.query_vector("s", [1.0, 0.0, 0.0], 2).hits] == [
-            "chunk:f1:three"
-        ]
+        collections = tmp_path / "zvec-root" / "instances" / "s" / "collections"
+        assert (collections / "bobclaw__3").is_dir()
+        assert (collections / "bobclaw__4").is_dir()
+        hits = provider.query_vector("s", [1.0, 0.0, 0.0], 2).hits
+        assert [hit.payload["chunk_id"] for hit in hits] == ["chunk:f1:three"]
     finally:
         fence.close()
+
+
+def test_multidim_lock_preflight_times_out_with_zero_mutation(
+    tmp_path: Path, _close_providers
+):
+    seeder = _provider(tmp_path)
+    _close_providers.append(seeder)
+    seeder.index(
+        "s",
+        [
+            _item("chunk:seed:three", [1.0, 0.0, 0.0], fact_id="seed"),
+            _item("chunk:seed:four", [0.0, 1.0, 0.0, 0.0], fact_id="seed"),
+        ],
+    )
+    seeder.close()
+
+    locker = _provider(tmp_path)
+    writer = _provider(tmp_path, reclaim_timeout_s=0.75)
+    _close_providers.extend([locker, writer])
+    assert locker.query_vector("s", [0.0, 1.0, 0.0, 0.0], 1).hits
+
+    t0 = time.monotonic()
+    with pytest.raises(RetrievalProviderError, match="reclaim timed out"):
+        writer.index(
+            "s",
+            [
+                _item("chunk:new:three", [1.0, 0.0, 0.0], fact_id="new"),
+                _item("chunk:new:four", [0.0, 1.0, 0.0, 0.0], fact_id="new"),
+            ],
+        )
+    elapsed = time.monotonic() - t0
+
+    assert 0.5 <= elapsed <= 1.75
+    assert writer._last_reclaim_retries >= 1
+    assert list(locker.scroll_payload("s", {"source_fact_id": "new"})) == []
 
 
 def test_out_of_family_fence_refuses_mutation_before_zvec_write(
@@ -141,6 +294,151 @@ def test_out_of_family_fence_refuses_mutation_before_zvec_write(
         assert not (tmp_path / "zvec-root" / "instances" / "s").exists()
     finally:
         fence.close()
+
+
+def test_write_batches_1100_docs_and_scrolls_bounded_pages(
+    tmp_path: Path, _close_providers
+):
+    provider = _provider(tmp_path)
+    _close_providers.append(provider)
+    items = [
+        _item(f"chunk:bulk:{index}", [1.0, 0.0, 0.0], fact_id="bulk")
+        for index in range(1100)
+    ]
+
+    receipt = provider.index("s", items)
+    ids = list(provider.scroll_payload("s", {"source_fact_id": "bulk"}, batch_size=128))
+
+    assert receipt.item_count == 1100
+    assert len(ids) == 1100
+    assert provider._last_stream_page_sizes == [128] * 8 + [76]
+
+
+def test_later_write_chunk_failure_reports_confirmed_partial_write(
+    tmp_path: Path, _close_providers
+):
+    provider = _provider(tmp_path)
+    _close_providers.append(provider)
+    items = [
+        _item(f"chunk:bulk:{index}", [1.0, 0.0, 0.0], fact_id="bulk")
+        for index in range(1100)
+    ]
+    items[1024] = ChunkRecord(
+        id="chunk:bulk:invalid",
+        vector=[1.0, 0.0, 0.0],
+        payload={"source_fact_id": 42, "text": "invalid"},
+    )
+
+    with pytest.raises(
+        RetrievalProviderError,
+        match=r"confirmed 1024 of 1100 docs written",
+    ):
+        provider.index("s", items)
+
+    assert len(list(provider.scroll_payload("s", {"source_fact_id": "bulk"}))) == 1024
+
+
+def test_source_fact_id_backslashes_round_trip_in_equality_filters(
+    tmp_path: Path, _close_providers
+):
+    provider = _provider(tmp_path)
+    _close_providers.append(provider)
+    source_fact_id = r"C:\tmp\absolute-escape"
+    provider.index(
+        "s",
+        [_item("chunk:path:one", [1.0, 0.0, 0.0], fact_id=source_fact_id)],
+    )
+
+    hits = provider.query_vector(
+        "s",
+        [1.0, 0.0, 0.0],
+        10,
+        filters={"source_fact_id": source_fact_id},
+    ).hits
+    ids = list(provider.scroll_payload("s", {"source_fact_id": source_fact_id}))
+
+    assert [hit.payload["source_fact_id"] for hit in hits] == [source_fact_id]
+    assert len(ids) == 1
+
+
+def test_unsupported_filters_fail_closed_with_supported_key_detail(
+    tmp_path: Path, _close_providers
+):
+    provider = _provider(tmp_path)
+    _close_providers.append(provider)
+    provider.index("s", [_item("chunk:f1:one", [1.0, 0.0, 0.0])])
+
+    with pytest.raises(RetrievalProviderError, match="supported.*source_fact_id"):
+        provider.query_vector(
+            "s",
+            [1.0, 0.0, 0.0],
+            1,
+            filters={"source_path": "fact://f1"},
+        )
+    with pytest.raises(RetrievalProviderError, match="supported.*source_fact_id"):
+        list(provider.scroll_payload("s", {"source_path": "fact://f1"}))
+
+
+def test_production_filter_call_sites_do_not_drift_beyond_supported_set():
+    core_root = Path(__file__).resolve().parents[3] / "core"
+    api_root = Path(__file__).resolve().parents[3] / "api"
+    supported = {"source_fact_id"}
+    observed_scroll_keys: set[str] = set()
+    search_filter_keywords = []
+
+    for path in [*core_root.rglob("*.py"), *api_root.rglob("*.py")]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr == "scroll_payload" and len(node.args) >= 2:
+                filter_arg = node.args[1]
+                if isinstance(filter_arg, ast.Dict):
+                    observed_scroll_keys.update(
+                        key.value
+                        for key in filter_arg.keys
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    )
+            if (
+                node.func.attr == "search"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "retriever"
+            ):
+                search_filter_keywords.extend(
+                    keyword
+                    for keyword in node.keywords
+                    if keyword.arg == "filters"
+                )
+
+    assert observed_scroll_keys == supported
+    assert search_filter_keywords == []
+
+
+def test_source_fact_id_none_and_empty_string_reconstruct_distinctly(
+    tmp_path: Path, _close_providers
+):
+    provider = _provider(tmp_path)
+    _close_providers.append(provider)
+    provider.index(
+        "s",
+        [
+            _item("chunk:none", [1.0, 0.0, 0.0], fact_id=None),
+            _item("chunk:empty", [0.0, 1.0, 0.0], fact_id=""),
+        ],
+    )
+
+    hits = provider.query_vector("s", [1.0, 0.0, 0.0], 10).hits
+    payloads = {hit.payload["chunk_id"]: hit.payload for hit in hits}
+    empty_hits = provider.query_vector(
+        "s",
+        [0.0, 1.0, 0.0],
+        10,
+        filters={"source_fact_id": ""},
+    ).hits
+
+    assert payloads["chunk:none"]["source_fact_id"] is None
+    assert payloads["chunk:empty"]["source_fact_id"] == ""
+    assert [hit.payload["chunk_id"] for hit in empty_hits] == ["chunk:empty"]
 
 
 def test_delete_and_scroll_exclude_out_of_family_lookalike_directories(
@@ -244,41 +542,51 @@ def test_child_crash_surfaces_clean_provider_error_then_restarted_child_serves_r
     assert [hit.payload["chunk_id"] for hit in recovered.hits] == ["chunk:f1:crash"]
 
 
-def test_kill_reclaims_within_bounded_window(
+def test_kill_reclaims_within_bounded_window_under_real_lock_contention(
     tmp_path: Path, _close_providers
 ):
-    provider = _provider(tmp_path)
-    _close_providers.append(provider)
-    provider.index("s", [_item("chunk:f1:reclaim", [1.0, 0.0, 0.0])])
-    child = provider._child
+    locker = _provider(tmp_path)
+    reclaimer = _provider(tmp_path, reclaim_timeout_s=2.5)
+    _close_providers.extend([locker, reclaimer])
+    locker.index("s", [_item("chunk:f1:reclaim", [1.0, 0.0, 0.0])])
+    child = locker._child
     assert child is not None
-    child.kill()
-    child.wait(timeout=5)
 
-    with pytest.raises(RetrievalProviderError):
-        provider.query_vector("s", [1.0, 0.0, 0.0], 1)
+    def kill_holder() -> None:
+        time.sleep(0.5)
+        child.kill()
+        child.wait(timeout=5)
 
+    killer = threading.Thread(target=kill_holder)
+    killer.start()
     t0 = time.monotonic()
-    results = provider.query_vector("s", [1.0, 0.0, 0.0], 1)
-    assert time.monotonic() - t0 <= 10.5
+    results = reclaimer.query_vector("s", [1.0, 0.0, 0.0], 1)
+    elapsed = time.monotonic() - t0
+    killer.join(timeout=5)
+
+    assert 0.5 <= elapsed <= 3.0
+    assert reclaimer._last_reclaim_retries >= 1
     assert len(results.hits) == 1
 
 
-def test_two_provider_instances_on_one_store_degrade_with_honest_lock_error(
+def test_health_recovers_after_lock_releases_and_clears_sticky_error(
     tmp_path: Path, _close_providers
 ):
-    first = _provider(tmp_path)
-    second = _provider(tmp_path, reclaim_timeout_s=0.5)
-    _close_providers.extend([first, second])
-    first.index("s", [_item("chunk:f1:lock", [1.0, 0.0, 0.0])])
+    owner = _provider(tmp_path)
+    contender = _provider(tmp_path, reclaim_timeout_s=0.5)
+    _close_providers.extend([owner, contender])
+    owner.index("s", [_item("chunk:f1:lock", [1.0, 0.0, 0.0])])
 
-    with pytest.raises(RetrievalProviderError, match="reclaim timed out.*Can't lock"):
-        second.query_vector("s", [1.0, 0.0, 0.0], 1)
+    with pytest.raises(RetrievalProviderError, match="reclaim timed out"):
+        contender.query_vector("s", [1.0, 0.0, 0.0], 1)
+    assert contender.health().ok is False
 
-    health = second.health()
-    assert health.ok is False
-    assert "Can't lock" in health.detail
+    owner.close()
+    recovered = contender.health()
 
+    assert recovered.ok is True
+    assert recovered.detail == ""
+    assert contender._last_error == ""
 
 
 def test_provider_conforms_to_declared_retrieval_protocol(
