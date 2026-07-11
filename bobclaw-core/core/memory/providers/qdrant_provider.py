@@ -28,7 +28,6 @@ from core.memory.models import (
     HealthStatus,
     Hit,
     IndexReceipt,
-    Query,
     RankedResults,
 )
 
@@ -125,20 +124,6 @@ class QdrantRetrievalProvider:
             store_id=store_id,
             item_count=total_count,
             ts=_now(),
-        )
-
-    def query(
-        self,
-        store_id: str,
-        q: Query,
-        k: int,
-        filters: FilterExpr | None,
-    ) -> RankedResults:
-        raise RetrievalProviderError(
-            self.provider_id,
-            "query(Query) requires text→vector embedding at the provider edge, "
-            "deferred to Phase 2. Use query_vector(store_id, vector, k, filters) "
-            "with a pre-embedded vector instead.",
         )
 
     def query_vector(
