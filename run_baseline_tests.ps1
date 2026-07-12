@@ -49,6 +49,13 @@ Pop-Location
 # ── dependency integrity ─────────────────────────────────────────────────────
 # `pip check` is a hard gate. `pip-audit` is best-effort: an UNAVAILABLE audit
 # tool must be reported as unavailable, NEVER as a clean vulnerability result.
+# A uv-created venv ships without pip — bootstrap it first (ensurepip is stdlib)
+# so the shipped install path (uv venv + requirements.lock) can run this gate.
+& $python -m pip --version *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "pip not present in the venv (uv default) — bootstrapping via ensurepip" -ForegroundColor DarkGray
+    & $python -m ensurepip --upgrade *> $null
+}
 Write-Host "=== pip check ===" -ForegroundColor Cyan
 $pipLog = Join-Path $logdir "pip_check.log"
 & $python -m pip check 2>&1 | Tee-Object -FilePath $pipLog
