@@ -5,8 +5,14 @@ import unicodedata
 from typing import Any
 
 GENERATION_METHOD_ALLOWLISTS: dict[str, frozenset[str]] = {
+    # R3 (v0.98): the extraction identity is the CANONICAL extraction input
+    # (user_message + assistant_response) — NOT the whole event body. The full
+    # body carries volatile runtime metadata (a random turn_id, cost_usd,
+    # duration_ms, ...) that changes every turn; hashing it defeated the
+    # whole-event dedup gate so a repeated fact re-extracted every time. See
+    # core/memory/extractor.py `_extraction_identity_input`.
     "extract_facts_from_event": frozenset({
-        "event.body", "event.kind", "extractor.version", "prompt.version",
+        "event.extraction_input", "event.kind", "extractor.version", "prompt.version",
     }),
     "splice_section": frozenset({
         "facts[].id", "facts[].body_hash", "section_mapping.version",

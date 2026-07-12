@@ -20,6 +20,22 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# R4 — bounded backfill past dangling/forgotten/deprecated hits.
+# The provider returns vector hits in score order; some point at facts that were
+# forgotten (DELETE /api/memory/facts) or deprecated. If we only ever fetch
+# `top_k`, a run of high-ranked dangling hits truncates recall below `top_k` even
+# when valid lower-ranked facts exist. So overfetch and page in bounded batches,
+# skipping dangling hits, until we collect `top_k` valid results, the provider is
+# exhausted, or we hit the documented safety bound below.
+_RECALL_CANDIDATE_CAP = 200  # safety bound: max vector hits scanned per ranking
+
+
+def _recall_batch_size(top_k: int) -> int:
+    """Per-page provider limit: over-fetch headroom so dangling hits can be
+    skipped and still backfill up to `top_k` valid facts in a single page for the
+    common case."""
+    return min(max(top_k * 4, top_k + 10), _RECALL_CANDIDATE_CAP)
+
 
 class MemoryRetriever:
     def __init__(
@@ -146,23 +162,24 @@ class MemoryRetriever:
 
         query_vec = (await self._embedder.embed_query([query]))[0]
 
-        initial_results = self._provider.query_vector(
-            self._store_id, query_vec, top_k, provider_filters or None,
-        )
+        # R4: bounded overfetch/paging so dangling hits can be skipped and still
+        # backfill up to top_k valid facts (see _gather_ranking).
+        initial_hits = self._gather_ranking(query_vec, provider_filters or None, top_k)
 
-        all_rankings: list[list] = [list(initial_results.hits)]
+        all_rankings: list[list] = [initial_hits]
         max_nodes = 1
 
         if hop_budget == 2:
             wikilinks: set[str] = set()
-            for hit in initial_results.hits:
+            for hit in initial_hits:
                 for wl in hit.payload.get("wikilinks", []):
                     wikilinks.add(wl)
 
             for wl_target in wikilinks:
                 wl_vec = (await self._embedder.embed_query([wl_target]))[0]
                 wl_results = self._provider.query_vector(
-                    self._store_id, wl_vec, top_k, provider_filters or None,
+                    self._store_id, wl_vec, _recall_batch_size(top_k),
+                    provider_filters or None,
                 )
                 all_rankings.append(list(wl_results.hits))
 
@@ -179,8 +196,14 @@ class MemoryRetriever:
 
         seen_ids: set[str] = set()
         result_chunks: list[RetrievedChunk] = []
+        dangling_skipped = 0
+        deprecated_skipped = 0
 
         for hit in fused:
+            # R4: stop scanning once we have top_k valid results — the fused pool is
+            # score-ordered, so any further hits rank below what we already have.
+            if len(result_chunks) >= top_k:
+                break
             if hit.id in seen_ids:
                 continue
             seen_ids.add(hit.id)
@@ -192,10 +215,12 @@ class MemoryRetriever:
             if source_fact_id:
                 # Fail open on a dangling vector: if the fact was forgotten
                 # (DELETE /api/memory/facts) but a vector point lingers, skip the
-                # hit instead of letting L1ValidationFailed abort the whole turn.
+                # hit and BACKFILL from the next-ranked hit instead of truncating
+                # recall or letting L1ValidationFailed abort the whole turn.
                 try:
                     fact = await self._fact_store.get(source_fact_id)
                 except L1ValidationFailed:
+                    dangling_skipped += 1
                     log.warning(
                         "recall: skipping hit %s — fact %s not in FactStore "
                         "(forgotten or dangling vector)",
@@ -209,6 +234,7 @@ class MemoryRetriever:
                 boosted = raw_score * max(0.05, cred_mean)
 
                 if not include_deprecated and fact.confidence.rank == "deprecated":
+                    deprecated_skipped += 1
                     continue
 
             result_chunks.append(
@@ -225,6 +251,15 @@ class MemoryRetriever:
         result_chunks.sort(key=lambda r: r.boosted_score or 0, reverse=True)
         result_chunks = result_chunks[:top_k]
 
+        # Metric (counts only — never fact contents): a high dangling rate flags a
+        # forget/index-drift problem worth cleaning up.
+        if dangling_skipped or deprecated_skipped:
+            log.info(
+                "recall: backfilled past %d dangling + %d deprecated hit(s) "
+                "over %d candidates for k=%d",
+                dangling_skipped, deprecated_skipped, len(fused), top_k,
+            )
+
         self._query_log.append({
             "ts": datetime.now(timezone.utc).isoformat(),
             "query": query,
@@ -232,7 +267,42 @@ class MemoryRetriever:
             "hop_budget": hop_budget,
             "max_nodes": max_nodes,
             "rank_count": len(fused),
+            "candidate_count": len(fused),
+            "dangling_skipped": dangling_skipped,
+            "deprecated_skipped": deprecated_skipped,
             "result_count": len(result_chunks),
         })
 
         return result_chunks
+
+    def _gather_ranking(
+        self,
+        query_vec: list[float],
+        provider_filters: dict | None,
+        top_k: int,
+    ) -> list:
+        """Fetch a bounded, score-ordered candidate pool for one ranking, paging
+        past the first ``top_k`` so the dangling-skip loop can backfill.
+
+        Stops when: the candidate cap (``_RECALL_CANDIDATE_CAP``) is reached, the
+        provider returns a short page (fewer rows than requested ⇒ exhausted), or a
+        page contributes no new hit ids (provider ignored ``offset`` / repeated).
+        Score order across pages is preserved by appending in provider order.
+        """
+        batch = _recall_batch_size(top_k)
+        hits: list = []
+        seen: set[str] = set()
+        offset = 0
+        while len(hits) < _RECALL_CANDIDATE_CAP:
+            results = self._provider.query_vector(
+                self._store_id, query_vec, batch, provider_filters, offset=offset,
+            )
+            page = list(results.hits)
+            fresh = [h for h in page if h.id not in seen]
+            for h in fresh:
+                seen.add(h.id)
+            hits.extend(fresh)
+            if len(page) < batch or not fresh:
+                break
+            offset += len(page)
+        return hits[:_RECALL_CANDIDATE_CAP]

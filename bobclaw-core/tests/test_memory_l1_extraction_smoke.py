@@ -1,18 +1,25 @@
 """
 End-to-end smoke test for the L1 extraction pipeline.
 
-Tests the full L0->L1->indexed->retrieved loop with live Qdrant + LMStudio.
+Tests the full L0->L1->indexed->retrieved loop with live services.
 Gated behind ``@pytest.mark.integration`` — NOT collected by ``pytest -q``.
+Writes only to a unique throwaway Qdrant collection and proves teardown.
 
 Run::
 
     pytest -m integration tests/test_memory_l1_extraction_smoke.py -v
 
 Requires running:
-- Qdrant on MEMORY_QDRANT_URL (default http://localhost:6333)
-- LMStudio on LMSTUDIO_URL (default http://localhost:1234) serving both
-  ``granite-embedding-311m`` (embed_text slot) and ``gemma-4-e4b-it``
-  (extract_small slot).
+- BoB Qdrant on MEMORY_QDRANT_URL (default http://localhost:6353 — NOT the LKS
+  Qdrant on :6333; see tests/_memory_smoke_util.resolve_bob_qdrant_url).
+- The embed_text slot server on :8081 (``granite-embedding-311m``) — real vectors
+  are indexed and recalled.
+
+The extract_small LLM is stubbed with a deterministic response so the L0->L1
+dedup and recall ASSERTIONS are stable (the live gemma-4-e4b extractor is
+non-deterministic in what it extracts). The R3 dedup identity itself is proven
+deterministically in tests/memory/test_extractor_dedup_identity.py, and the fully
+live extractor is exercised by the operator live-gate smoke.
 """
 from __future__ import annotations
 
@@ -20,25 +27,28 @@ import importlib
 import json
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
-from core.config import config as _cfg
 from core.graph import AgentState, build_graph
 from core.memory._hashing import verify_event_hash
+from tests._memory_smoke_util import (
+    assert_untouched,
+    drop_collection,
+    require_qdrant,
+    resolve_bob_qdrant_url,
+    snapshot_non_throwaway,
+    throwaway_prefix,
+    write_throwaway_stores_toml,
+)
 
 pytestmark = pytest.mark.integration
 
-_MEMORY_STORES_CFG = (
-    os.getenv(
-        "MEMORY_STORES_CONFIG_PATH",
-        str(Path(__file__).parent.parent / "config" / "memory_stores.toml"),
-    )
-)
-_QDRANT_URL = os.getenv("MEMORY_QDRANT_URL", "http://localhost:6333")
-_DEFAULT_STORE_ID = os.getenv("MEMORY_DEFAULT_STORE_ID", "bobclaw_default")
+# Live embed_text slot endpoint (config/memory_slots.toml -> :8081, granite). The
+# extract_small LLM is stubbed for determinism, so :8082 is not required here.
+_EMBEDDER_URL = os.getenv("MEMORY_EMBEDDER_URL", "http://localhost:8081")
+_DEFAULT_STORE_ID = "bobclaw_default"
 
 
 def _build_invoke_state(task: str) -> AgentState:
@@ -99,19 +109,58 @@ def _check_extractor_module():
 
 
 @pytest.fixture
-def _check_services():
-    _check_http(_QDRANT_URL, "/healthz")
-    lurl = os.getenv("LMSTUDIO_URL", "http://localhost:1234")
-    _check_http(lurl, "/v1/models")
+def throwaway_store(tmp_path):
+    """A BoB-Qdrant (:6353) run confined to a unique throwaway collection, with a
+    proven-untouched invariant on every other collection (teardown-safe)."""
+    url = resolve_bob_qdrant_url()
+    require_qdrant(url)
+    prefix = throwaway_prefix()
+    stores_toml = write_throwaway_stores_toml(tmp_path, prefix)
+    before = snapshot_non_throwaway(url, prefix)
+    try:
+        yield {"url": url, "prefix": prefix, "stores_toml": stores_toml}
+    finally:
+        drop_collection(url, f"{prefix}_768")
+        assert_untouched(url, prefix, before)
 
 
-def _bootstrap_memory(sqlite_path: Path) -> object:
+@pytest.fixture
+def _check_services(throwaway_store):
+    # Live deps: BoB Qdrant (via throwaway_store) + the embed slot server (:8081).
+    # The extract_small LLM is stubbed for determinism (see stub_extractor_llm).
+    _check_http(_EMBEDDER_URL, "/v1/models")
+
+
+def _extractor_llm_response(*fact_texts: str) -> dict:
+    """Shape a deterministic LMStudio chat reply carrying the given facts."""
+    facts = [{"text": t} for t in fact_texts]
+    return {"choices": [{"message": {"content": json.dumps({"facts": facts})}}]}
+
+
+@pytest.fixture
+def stub_extractor_llm(monkeypatch):
+    """Return a helper that pins the extractor LLM to a deterministic reply.
+
+    Keeps the whole pipeline live (real events, real input_hash, real Qdrant
+    index + recall) while removing the one non-deterministic component."""
+    from unittest.mock import AsyncMock
+
+    def _pin(*fact_texts: str) -> None:
+        monkeypatch.setattr(
+            "core.backends.lmstudio.LMStudioClient.chat",
+            AsyncMock(return_value=_extractor_llm_response(*fact_texts)),
+        )
+
+    return _pin
+
+
+def _bootstrap_memory(sqlite_path: Path, throwaway: dict) -> object:
     from core.memory.bootstrap import MemoryBootstrapConfig, bootstrap_memory
     bcfg = MemoryBootstrapConfig(
         enabled=True,
         sqlite_path=sqlite_path,
-        qdrant_url=_QDRANT_URL,
-        stores_config_path=Path(_MEMORY_STORES_CFG),
+        qdrant_url=throwaway["url"],
+        stores_config_path=throwaway["stores_toml"],
         default_store_id=_DEFAULT_STORE_ID,
     )
     return bootstrap_memory(bcfg)
@@ -126,19 +175,23 @@ class TestL1ExtractionSmoke:
 
     @pytest.mark.asyncio
     async def test_l1_extraction_smoke_full_loop(
-        self, _check_services, tmp_path, monkeypatch,
+        self, _check_services, throwaway_store, stub_extractor_llm, tmp_path, monkeypatch,
     ):
         """Full L0->L1->indexed->retrieved loop across two turns."""
         monkeypatch.setattr("core.config.config.MEMORY_ENABLED", True, raising=False)
         monkeypatch.setattr(
             "core.config.config.MEMORY_L1_EXTRACTION_ENABLED", True, raising=False
         )
-        monkeypatch.setattr(
-            "core.nodes.execute._send_to_backend",
-            AsyncMock(return_value="Mock response about marine biology."),
+        stub_extractor_llm(
+            "User works as a marine biologist studying octopus cognition at UCSB."
         )
 
-        mem = _bootstrap_memory(tmp_path / "bobclaw_memory.db")
+        async def _fake_stream(messages, backend, model_override=None):
+            yield "Mock response about marine biology."
+
+        monkeypatch.setattr("core.nodes.execute._stream_to_backend", _fake_stream)
+
+        mem = _bootstrap_memory(tmp_path / "bobclaw_memory.db", throwaway_store)
         graph = build_graph(checkpointer=MemorySaver())
 
         # ── Turn 1: seed biographical info ──
@@ -212,19 +265,20 @@ class TestL1ExtractionSmoke:
 
     @pytest.mark.asyncio
     async def test_l1_extraction_disabled_no_facts(
-        self, _check_services, tmp_path, monkeypatch,
+        self, _check_services, throwaway_store, tmp_path, monkeypatch,
     ):
         """With L1 extraction disabled, L0 events write but no L1 facts created."""
         monkeypatch.setattr("core.config.config.MEMORY_ENABLED", True, raising=False)
         monkeypatch.setattr(
             "core.config.config.MEMORY_L1_EXTRACTION_ENABLED", False, raising=False
         )
-        monkeypatch.setattr(
-            "core.nodes.execute._send_to_backend",
-            AsyncMock(return_value="OK."),
-        )
 
-        mem = _bootstrap_memory(tmp_path / "bobclaw_memory_no_l1.db")
+        async def _fake_stream(messages, backend, model_override=None):
+            yield "OK."
+
+        monkeypatch.setattr("core.nodes.execute._stream_to_backend", _fake_stream)
+
+        mem = _bootstrap_memory(tmp_path / "bobclaw_memory_no_l1.db", throwaway_store)
         graph = build_graph(checkpointer=MemorySaver())
 
         state = _build_invoke_state("Hello world")
@@ -247,30 +301,34 @@ class TestL1ExtractionSmoke:
 
     @pytest.mark.asyncio
     async def test_l1_extraction_dedup_across_turns(
-        self, _check_services, tmp_path, monkeypatch,
+        self, _check_services, throwaway_store, stub_extractor_llm, tmp_path, monkeypatch,
     ):
         """Same message across two turns produces 2 L0 events but deduplicated L1 facts."""
         monkeypatch.setattr("core.config.config.MEMORY_ENABLED", True, raising=False)
         monkeypatch.setattr(
             "core.config.config.MEMORY_L1_EXTRACTION_ENABLED", True, raising=False
         )
-        monkeypatch.setattr(
-            "core.nodes.execute._send_to_backend",
-            AsyncMock(return_value="Mock response."),
-        )
+        stub_extractor_llm("User's favorite color is blue.")
 
-        mem = _bootstrap_memory(tmp_path / "bobclaw_memory_dedup.db")
+        async def _fake_stream(messages, backend, model_override=None):
+            yield "Mock response."
+
+        monkeypatch.setattr("core.nodes.execute._stream_to_backend", _fake_stream)
+
+        mem = _bootstrap_memory(tmp_path / "bobclaw_memory_dedup.db", throwaway_store)
         graph = build_graph(checkpointer=MemorySaver())
 
         msg = "My favorite color is blue."
         state = _build_invoke_state(msg)
 
-        # Turn 1
+        # Turn 1 — drain so turn 1's fact is COMMITTED before turn 2 extracts. This
+        # removes the async-extraction race so the test isolates the R3 dedup key.
         result1 = await graph.ainvoke(
             state, {"configurable": {"thread_id": "l1-dedup"}}
         )
+        await mem.drain_extraction_tasks()
 
-        # Turn 2 — same message
+        # Turn 2 — same message (fresh random turn_id ⇒ same canonical identity)
         result2 = await graph.ainvoke(
             state, {"configurable": {"thread_id": "l1-dedup"}}
         )
@@ -295,11 +353,15 @@ class TestL1ExtractionSmoke:
         )
         facts_all = await mem.fact_store.all_ids()
 
-        # Second turn either returned 0 new facts (extractor deduped) or
-        # the fact_store deduplicated via INSERT OR REPLACE on input_hash.
-        # In either case, the total fact count should be at most the count
-        # from turn 1 (not double).
-        assert len(facts_all) <= max(len(facts_turn1), 1), (
-            f"Fact count grew from {len(facts_turn1)} (turn 1) to "
-            f"{len(facts_all)} (total) — expected dedup to prevent doubling"
+        # R3: the two turns differ ONLY in volatile provenance (a fresh random
+        # turn_id per turn), so the canonical extraction identity is equal and the
+        # whole-event dedup gate fires. Turn 2 must add ZERO new facts, and the
+        # total must not grow past turn 1. (Pre-R3 this grew 2 -> 6.)
+        assert len(facts_turn2) == 0, (
+            f"Turn 2 (identical fact, new turn_id) created {len(facts_turn2)} new "
+            f"facts — dedup identity leaked volatile turn metadata"
+        )
+        assert len(facts_all) == len(facts_turn1), (
+            f"Fact count changed from {len(facts_turn1)} (turn 1) to "
+            f"{len(facts_all)} (total) — expected exact dedup, no growth"
         )

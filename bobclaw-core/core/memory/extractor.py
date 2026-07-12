@@ -18,9 +18,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_EXTRACTOR_VERSION = "v1"
+# R3 (v0.98): bumped v1 -> v2 because the extraction *identity* scheme changed
+# (the dedup key is now the canonical extraction input, not the whole event body).
+# The version rides in the input_hash, so a genuine extractor change re-runs
+# extraction instead of silently colliding with a differently-computed v1 hash.
+_EXTRACTOR_VERSION = "v2"
 _PROMPT_VERSION = "v1"
 _GENERATION_METHOD = "extract_facts_from_event"
+
+# The ONLY fields of an agent-turn event that actually feed the extractor LLM
+# (see `extract` below). The canonical dedup identity is built from exactly these
+# so that volatile provenance in `event.body` — a random `turn_id`, `cost_usd`,
+# `duration_ms`, `face_id`, `model_capability_class`, `error` — cannot change the
+# key. Provenance is still preserved ON the fact/event (source_event_id, the L0
+# body), just kept out of the semantic dedup identity.
+_EXTRACTION_INPUT_FIELDS = ("user_message", "assistant_response")
+
+
+def _extraction_identity_input(event: Event) -> dict[str, str]:
+    """The canonical, volatile-free extraction input used for the dedup identity.
+
+    Returns just the fields that determine the extraction output, defaulted to
+    "" so two turns with identical user/assistant text hash equal even if one
+    event body omits an optional field.
+    """
+    body = event.body or {}
+    return {field: body.get(field, "") or "" for field in _EXTRACTION_INPUT_FIELDS}
+
 
 def _normalize(text: str) -> str:
     text = text.lower()
@@ -183,8 +207,12 @@ class FactExtractor:
         facts_data: list[dict],
         event: Event,
     ) -> list[Fact]:
+        # R3: hash the CANONICAL extraction input, not the raw body. The raw body
+        # includes a random per-turn `turn_id` (and cost/duration), so hashing it
+        # made every repeat of the same fact a "new" input_hash and defeated the
+        # whole-event dedup gate below.
         inputs = {
-            "event.body": event.body,
+            "event.extraction_input": _extraction_identity_input(event),
             "event.kind": event.kind,
             "extractor.version": _EXTRACTOR_VERSION,
             "prompt.version": _PROMPT_VERSION,

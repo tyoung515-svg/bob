@@ -1,0 +1,90 @@
+name: tests
+
+# Covers the v0.98 release surface: the three Python pytest suites (core,
+# gateway, pipeline) plus a dependency-integrity check on Windows and Linux, and
+# a separate KMM job (shared JVM tests + desktop Kotlin compile). The pytest
+# suites are network-free by design: pytest-socket blocks sockets and
+# integration tests that need Qdrant/Postgres are skipped unless `-m
+# integration` is passed. So no services are required in CI.
+#
+# Dependencies install from each service's requirements.lock (the same pinned
+# set the installer uses); `pip check` gates that the resolved set is
+# internally consistent. The optional zvec provider is installed best-effort —
+# when unavailable on a platform, the zvec test surface skips with an explicit
+# reason rather than failing.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies (pinned locks)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r bobclaw-core/requirements.lock
+          pip install -r bobclaw-gateway/requirements.lock
+          pip install -r bobclaw-claude-pipeline/requirements.lock
+
+      - name: Install zvec (optional provider, best-effort)
+        continue-on-error: true
+        run: pip install zvec==0.5.1
+
+      - name: pip check (dependency integrity)
+        run: python -m pip check
+
+      - name: Core suite
+        working-directory: bobclaw-core
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q
+
+      - name: Gateway suite
+        working-directory: bobclaw-gateway
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q
+
+      - name: Pipeline suite
+        working-directory: bobclaw-claude-pipeline
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q
+
+  kmm:
+    name: kmm (shared jvmTest + desktop compile)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The shared module declares an Android target, so Gradle needs the
+      # Android SDK even to configure :shared / :desktopApp.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Shared JVM tests + desktop compile
+        working-directory: bobclaw-app
+        run: ./gradlew --no-daemon :shared:jvmTest :desktopApp:compileKotlin

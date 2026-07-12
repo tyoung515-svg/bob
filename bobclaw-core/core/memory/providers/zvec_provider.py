@@ -622,7 +622,13 @@ class ZvecRetrievalProvider:
         vector: list[float],
         k: int = 10,
         filters: FilterExpr | None = None,
+        *,
+        offset: int = 0,
     ) -> RankedResults:
+        # R4 backfill-paging parity with the Qdrant provider: zvec exposes no
+        # native query offset, so page by over-fetching `offset + k` from the
+        # child and slicing after the score sort. offset=0 ⇒ identical to the
+        # unpaged call.
         self._enforce(store_id, next(iter(self.capability_classes)))
         collection = self._collection_name(len(vector))
         path = self._collection_dir(store_id, collection)
@@ -635,7 +641,7 @@ class ZvecRetrievalProvider:
             "query",
             path=str(path),
             vector=vector,
-            k=k,
+            k=k + offset,
             source_fact_id=source_fact_id,
         )
         raw_hits = response.get("hits")
@@ -656,6 +662,8 @@ class ZvecRetrievalProvider:
                 self._malformed_response("query", f"invalid hit score: {exc}")
             hits.append(Hit(id=item["id"], score=score, payload=item["payload"]))
         hits.sort(key=lambda hit: hit.score, reverse=True)
+        if offset:
+            hits = hits[offset:]
         return RankedResults(
             hits=hits,
             provider_id=self.provider_id,

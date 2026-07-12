@@ -9,6 +9,13 @@ import uuid
 
 import pytest
 
+# BobLKS runs on the OPT-IN zvec provider; the native `zvec` package is not a
+# shipped dependency. Without it the storage child cannot start, so this surface
+# skips rather than failing a fresh contributor's suite.
+pytest.importorskip(
+    "zvec", reason="zvec not installed (optional zero-Docker provider: pip install zvec==0.5.1)"
+)
+
 from core.ledger.federation import FederationRegistry
 from core.memory.acl import ACLRegistry
 from core.memory.exceptions import EmbedderUnavailable, RetrievalProviderError

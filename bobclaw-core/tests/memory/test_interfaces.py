@@ -99,7 +99,8 @@ class _StubRetrievalProvider:
         raise NotImplementedError
 
     def query_vector(
-        self, store_id: str, vector: list[float], k: int, filters: FilterExpr | None
+        self, store_id: str, vector: list[float], k: int, filters: FilterExpr | None,
+        *, offset: int = 0,
     ) -> RankedResults:
         return RankedResults(hits=[], provider_id=self.provider_id, latency_ms=0)
 
@@ -129,7 +130,8 @@ class _MinimalRetrievalProvider:
         )
 
     def query_vector(
-        self, store_id: str, vector: list[float], k: int, filters: FilterExpr | None
+        self, store_id: str, vector: list[float], k: int, filters: FilterExpr | None,
+        *, offset: int = 0,
     ) -> RankedResults:
         return RankedResults(
             hits=[Hit(id="chunk-1", score=0.9, payload={"text": "match"})],

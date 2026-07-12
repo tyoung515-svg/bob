@@ -132,7 +132,12 @@ class QdrantRetrievalProvider:
         vector: list[float],
         k: int = 10,
         filters: FilterExpr | None = None,
+        *,
+        offset: int = 0,
     ) -> RankedResults:
+        # `offset` supports the retriever's bounded backfill paging (R4): when the
+        # top hits are dangling (vector lingers, fact forgotten), it pages deeper
+        # to reach `top_k` valid results. Default 0 ⇒ byte-identical to the old call.
         self._enforce(store_id, next(iter(self.capability_classes)))
 
         from qdrant_client.http.models import Filter as QdrantFilter
@@ -167,6 +172,7 @@ class QdrantRetrievalProvider:
                 collection_name=coll,
                 query=vector,
                 limit=k,
+                offset=offset or None,
                 query_filter=qdrant_filter,
             ).points
         except Exception as exc:

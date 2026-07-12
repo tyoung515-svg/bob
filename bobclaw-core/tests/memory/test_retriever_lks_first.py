@@ -27,9 +27,12 @@ class FakeProvider:
     def __init__(self, hits=None):
         self.hits = hits or []
         self.calls = []
-    def query_vector(self, store_id, vector, top_k, filters):
+    def query_vector(self, store_id, vector, top_k, filters, *, offset=0):
         self.calls.append((store_id, top_k, filters))
-        return RankedResults(hits=list(self.hits), provider_id="fake", latency_ms=0)
+        # single-page fake: only the first page (offset 0) carries hits; the
+        # retriever's paging then sees a short/empty follow-up page and stops.
+        hits = list(self.hits) if offset == 0 else []
+        return RankedResults(hits=hits, provider_id="fake", latency_ms=0)
 
 class FakeFactStore:
     def __init__(self, facts=None):

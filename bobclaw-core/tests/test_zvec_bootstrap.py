@@ -11,6 +11,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# The zvec bootstrap path spawns the real storage child; the native `zvec`
+# package is not a shipped dependency (opt-in zero-Docker provider), so this
+# surface skips rather than failing a fresh contributor's suite.
+pytest.importorskip(
+    "zvec", reason="zvec not installed (optional zero-Docker provider: pip install zvec==0.5.1)"
+)
+
 import core.memory.bootstrap as bootstrap_mod
 from core.ledger.federation import FederationRegistry
 from core.memory.bootstrap import MemoryBootstrapConfig, bootstrap_memory, reset_memory

@@ -11,6 +11,7 @@ from core.memory.extractor import (
     _EXTRACTOR_VERSION,
     _GENERATION_METHOD,
     _PROMPT_VERSION,
+    _extraction_identity_input,
 )
 from core.memory.models import ConfidenceStub, Event, Fact, SlotResolution
 
@@ -214,7 +215,7 @@ async def test_extract_handles_wrong_schema_returns_empty():
 async def test_extract_event_level_dedup_via_existing_fact():
     event = _agent_event()
     inputs = {
-        "event.body": event.body,
+        "event.extraction_input": _extraction_identity_input(event),
         "event.kind": event.kind,
         "extractor.version": _EXTRACTOR_VERSION,
         "prompt.version": _PROMPT_VERSION,
@@ -302,7 +303,7 @@ async def test_extract_input_hash_varies_with_prompt_version(monkeypatch: pytest
     assert result[0].input_hash != compute_input_hash(
         _GENERATION_METHOD,
         {
-            "event.body": _agent_event().body,
+            "event.extraction_input": _extraction_identity_input(_agent_event()),
             "event.kind": _agent_event().kind,
             "extractor.version": _EXTRACTOR_VERSION,
             "prompt.version": "v1",

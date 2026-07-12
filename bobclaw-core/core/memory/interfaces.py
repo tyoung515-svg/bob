@@ -90,8 +90,17 @@ class RetrievalProvider(Protocol):
         ...
 
     def query_vector(
-        self, store_id: str, vector: list[float], k: int, filters: FilterExpr | None
+        self,
+        store_id: str,
+        vector: list[float],
+        k: int,
+        filters: FilterExpr | None,
+        *,
+        offset: int = 0,
     ) -> RankedResults:
+        # `offset` pages deeper into the ranking for the retriever's bounded
+        # dangling-hit backfill; providers without native paging may emulate it
+        # (over-fetch + slice). offset=0 must equal the unpaged call.
         ...
 
     def delete(self, store_id: str, item_ids: list[str]) -> None:

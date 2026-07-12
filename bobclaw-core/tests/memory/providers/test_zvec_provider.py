@@ -13,6 +13,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+# The zvec provider is the OPT-IN zero-Docker path; the native `zvec` package is
+# not a shipped dependency. Without it the storage child cannot start, so the
+# zvec surface skips rather than failing a fresh contributor's suite.
+pytest.importorskip(
+    "zvec", reason="zvec not installed (optional zero-Docker provider: pip install zvec==0.5.1)"
+)
+
 from core.ledger.federation import FederationRegistry
 from core.memory.acl import ACLRegistry
 from core.memory.exceptions import RetrievalProviderError

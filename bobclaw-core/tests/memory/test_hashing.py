@@ -52,17 +52,17 @@ class TestComputeInputHash:
         with pytest.raises(HashingError):
             compute_input_hash(
                 "extract_facts_from_event",
-                {"event.body": "x", "event.kind": "y", "unexpected_key": "z"},
+                {"event.extraction_input": "x", "event.kind": "y", "unexpected_key": "z"},
             )
 
     def test_bit_identical_for_same_canonical_inputs(self):
         h1 = compute_input_hash(
             "extract_facts_from_event",
-            {"event.body": {"text": "hi"}, "event.kind": "observation"},
+            {"event.extraction_input": {"text": "hi"}, "event.kind": "observation"},
         )
         h2 = compute_input_hash(
             "extract_facts_from_event",
-            {"event.kind": "observation", "event.body": {"text": "hi"}},
+            {"event.kind": "observation", "event.extraction_input": {"text": "hi"}},
         )
         assert h1 == h2
 

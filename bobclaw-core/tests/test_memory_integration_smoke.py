@@ -1,10 +1,11 @@
 """
 End-to-end smoke test for the memory read path.
 
-Requires a running Qdrant container on MEMORY_QDRANT_URL (default
-http://localhost:6333).  Start via::
+Requires BoB's Qdrant on MEMORY_QDRANT_URL (default http://localhost:6353 — NOT
+the shared LKS Qdrant on :6333). Each run writes only to a unique throwaway
+collection and proves teardown. Start via (from the repo root)::
 
-    docker compose up -d qdrant
+    docker compose --env-file .secrets/bobclaw.env -f docker-compose.yml up -d qdrant
 
 Tests are gated behind ``@pytest.mark.integration`` and are NOT collected
 by ``pytest -q`` (no marker).  Run with::
@@ -15,9 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch as _patch
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
@@ -28,6 +27,15 @@ from core.memory.bootstrap import (
     MemoryBootstrapConfig,
     MemorySingletons,
     bootstrap_memory,
+)
+from tests._memory_smoke_util import (
+    assert_untouched,
+    drop_collection,
+    require_qdrant,
+    resolve_bob_qdrant_url,
+    snapshot_non_throwaway,
+    throwaway_prefix,
+    write_throwaway_stores_toml,
 )
 
 pytestmark = pytest.mark.integration
@@ -112,28 +120,28 @@ def _seed_facts_sync(mem: MemorySingletons, facts_data: list[dict]) -> None:
 # ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def _check_qdrant() -> None:
-    """Probe Qdrant at the default URL; skip test if unreachable."""
-    import http.client
+def throwaway_store(tmp_path):
+    """A BoB-Qdrant (:6353) run confined to a unique throwaway collection.
 
-    url = os.getenv("MEMORY_QDRANT_URL", "http://localhost:6333")
-    host_port = url.replace("http://", "").replace("https://", "")
-    host = host_port.split(":")[0]
-    port = int(host_port.split(":")[1]) if ":" in host_port else 6333
+    Refuses the LKS Qdrant (:6333), snapshots every non-throwaway collection, and
+    on teardown drops the throwaway collection AND asserts nothing else moved."""
+    url = resolve_bob_qdrant_url()
+    require_qdrant(url)
+    prefix = throwaway_prefix()
+    stores_toml = write_throwaway_stores_toml(tmp_path, prefix)
+    before = snapshot_non_throwaway(url, prefix)
     try:
-        conn = http.client.HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/healthz")
-        resp = conn.getresponse()
-        if resp.status != 200:
-            pytest.skip(f"Qdrant at {url} returned status {resp.status}")
-        conn.close()
-    except Exception as exc:
-        pytest.skip(f"Qdrant not reachable at {url}: {exc}")
+        yield {"url": url, "prefix": prefix, "stores_toml": stores_toml}
+    finally:
+        # 768-dim collection is the only one this run can create; drop is idempotent.
+        drop_collection(url, f"{prefix}_768")
+        assert_untouched(url, prefix, before)
 
 
 @pytest.fixture
-def memory_bootstrap(_check_qdrant, tmp_path) -> MemorySingletons:
-    """Bootstrap memory with a temp SQLite DB and seed known facts."""
+def memory_bootstrap(throwaway_store, tmp_path) -> MemorySingletons:
+    """Bootstrap memory with a temp SQLite DB, a throwaway Qdrant collection, and
+    seed known facts."""
     # Reset the module-level singleton so each test starts clean
     from core.memory import bootstrap as _b
 
@@ -146,14 +154,9 @@ def memory_bootstrap(_check_qdrant, tmp_path) -> MemorySingletons:
     bcfg = MemoryBootstrapConfig(
         enabled=True,
         sqlite_path=sqlite_path,
-        qdrant_url=os.getenv("MEMORY_QDRANT_URL", "http://localhost:6333"),
-        stores_config_path=Path(
-            os.getenv(
-                "MEMORY_STORES_CONFIG_PATH",
-                str(Path(__file__).parent.parent / "config" / "memory_stores.toml"),
-            )
-        ),
-        default_store_id=os.getenv("MEMORY_DEFAULT_STORE_ID", "bobclaw_default"),
+        qdrant_url=throwaway_store["url"],
+        stores_config_path=throwaway_store["stores_toml"],
+        default_store_id="bobclaw_default",
     )
     mem = bootstrap_memory(bcfg)
     _seed_facts_sync(mem, facts_data)
@@ -213,9 +216,18 @@ class TestMemoryIntegrationSmoke:
             "core.memory.fact_store.SQLiteFactStore.get", _mock_get
         )
         monkeypatch.setattr("core.config.config.MEMORY_ENABLED", True, raising=False)
-        send_mock = AsyncMock(return_value="Mock response about LangGraph.")
+
+        # R2: intercept the CURRENT streaming seam (`_stream_to_backend`), not the
+        # stale `_send_to_backend`. The local backend path streams via the router
+        # through `_stream_to_backend`, so a `_send_to_backend` mock never fired.
+        captured_messages: list[list] = []
+
+        async def _fake_stream(messages, backend, model_override=None):
+            captured_messages.append(list(messages))
+            yield "Mock response about LangGraph."
+
         monkeypatch.setattr(
-            "core.nodes.execute._send_to_backend", send_mock
+            "core.nodes.execute._stream_to_backend", _fake_stream
         )
 
         graph = build_graph(checkpointer=MemorySaver())
@@ -232,16 +244,15 @@ class TestMemoryIntegrationSmoke:
         bodies = [f.body.get("text", "") for f in recalled]
         assert any("LangGraph" in b for b in bodies), f"LangGraph not in {bodies}"
 
-        # system prompt splice — verify _send_to_backend received Prior context
-        assert send_mock.call_count >= 1, "_send_to_backend was never called"
+        # system prompt splice — verify the streaming seam received Prior context
+        assert captured_messages, "_stream_to_backend was never called"
         all_msg_text = ""
-        for call_args in send_mock.call_args_list:
-            msgs = call_args[0][0] if call_args[0] else []
+        for msgs in captured_messages:
             for m in msgs:
                 if isinstance(m, dict):
                     all_msg_text += m.get("content", "") + " "
         assert "Prior context" in all_msg_text, (
-            f"Prior context not in send_to_backend args: {all_msg_text[:500]}"
+            f"Prior context not in stream_to_backend args: {all_msg_text[:500]}"
         )
         assert "LangGraph" in all_msg_text
 
@@ -266,10 +277,11 @@ class TestMemoryIntegrationSmoke:
     async def test_disabled_no_recall(self, monkeypatch):
         """MEMORY_ENABLED=false: empty recalled_facts, no splice, no L0 write."""
         monkeypatch.setattr("core.config.config.MEMORY_ENABLED", False, raising=False)
-        monkeypatch.setattr(
-            "core.nodes.execute._send_to_backend",
-            AsyncMock(return_value="OK."),
-        )
+
+        async def _fake_stream(messages, backend, model_override=None):
+            yield "OK."
+
+        monkeypatch.setattr("core.nodes.execute._stream_to_backend", _fake_stream)
 
         graph = build_graph(checkpointer=MemorySaver())
         state = _build_invoke_state("Hello")
@@ -288,10 +300,11 @@ class TestMemoryIntegrationSmoke:
     async def test_recall_node_wired_in_graph(self, memory_bootstrap, monkeypatch):
         """Verify the recall node is part of the compiled graph topology."""
         monkeypatch.setattr("core.config.config.MEMORY_ENABLED", True, raising=False)
-        monkeypatch.setattr(
-            "core.nodes.execute._send_to_backend",
-            AsyncMock(return_value="OK."),
-        )
+
+        async def _fake_stream(messages, backend, model_override=None):
+            yield "OK."
+
+        monkeypatch.setattr("core.nodes.execute._stream_to_backend", _fake_stream)
         graph = build_graph(checkpointer=MemorySaver())
         node_names = set(graph.get_graph().nodes.keys())
         assert "recall" in node_names, f"Expected 'recall' node, got {sorted(node_names)}"

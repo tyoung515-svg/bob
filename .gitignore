@@ -92,7 +92,6 @@ Aider gml51 profile.txt
 pytest-cache-files-*/
 audit_report.md
 credentials.json
-run_baseline_tests.ps1
 test_*.log
 docs/.$*
 
