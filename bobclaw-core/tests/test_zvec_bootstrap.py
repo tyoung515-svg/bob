@@ -173,6 +173,58 @@ def test_zvec_selection_arms_fence_initializes_layout_and_stamps_compatible_fing
         reset_memory()
 
 
+def test_memory_slots_file_env_overrides_shipped_slot_config(
+    workspace_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """MEMORY_SLOTS_FILE must be honored by bootstrap — a second install points its
+    embedder/extractor slots away from the shipped defaults (and the dev tree's
+    ports) through this knob. Regression: it was read by core.memory.config but
+    ignored by bootstrap, so the override silently did nothing."""
+    instance_root = workspace_path / "override-root"
+    stores_path = workspace_path / "memory_stores.toml"
+    _write_zvec_stores(stores_path, instance_root)
+    slots_override = workspace_path / "slots-override.toml"
+    slots_override.write_text(
+        "[slot.embed_text]\n"
+        'model = "override-embedder"\n'
+        'backend = "lmstudio"\n'
+        'endpoint = "http://localhost:19999"\n'
+        "embedding_dimension = 768\n"
+        "\n"
+        "[slot.extract_small]\n"
+        'model = "override-extractor"\n'
+        'backend = "lmstudio"\n'
+        'endpoint = "http://localhost:19999"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        "BOBCLAW_LEDGER_INSTANCES", str(workspace_path / "ledger_instances.json")
+    )
+    monkeypatch.setenv(
+        "BOBCLAW_WRITE_FENCE_LOCK_DIR", str(workspace_path / "locks")
+    )
+    monkeypatch.setenv("MEMORY_WRITE_FENCE_ENABLED", "true")
+    monkeypatch.setenv("MEMORY_SLOTS_FILE", str(slots_override))
+
+    with patch(
+        "core.memory.bootstrap.QdrantClient",
+        side_effect=AssertionError("zvec bootstrap must not construct QdrantClient"),
+    ):
+        booted = bootstrap_memory(_config(workspace_path, stores_path))
+    try:
+        fingerprint_path = (
+            instance_root / "instances" / "test_store" / "manifest"
+            / "embed_fingerprint.json"
+        )
+        fingerprint = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+        assert fingerprint["embed"]["model_id"] == "override-embedder"
+        assert fingerprint["embed"]["dim"] == 768
+    finally:
+        booted.indexer._provider.close()
+        booted.write_fence.close()
+        reset_memory()
+
+
 def test_inline_table_zvec_selection_never_contacts_qdrant(
     workspace_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

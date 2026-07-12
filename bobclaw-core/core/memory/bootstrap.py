@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import tomllib
 from dataclasses import dataclass, field
@@ -483,7 +484,19 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
                 ) from exc
 
         log.info("Reading stores config: %s", config.stores_config_path)
-        slots_path = _PROJECT_ROOT / "config" / "memory_slots.toml"
+        # MEMORY_SLOTS_FILE overrides the shipped slot config (same resolution
+        # rule as core.memory.config: relative paths resolve against the project
+        # root). Without honoring it here, the documented knob silently did
+        # nothing — a second install could not point its embedder/extractor
+        # slots away from the dev tree's ports.
+        slots_override = os.getenv("MEMORY_SLOTS_FILE", "").strip()
+        if slots_override:
+            slots_path = Path(slots_override)
+            if not slots_path.is_absolute():
+                slots_path = _PROJECT_ROOT / slots_path
+        else:
+            slots_path = _PROJECT_ROOT / "config" / "memory_slots.toml"
+        log.info("Reading slot config: %s", slots_path)
         slot_resolver = SlotResolver(slots_path)
         if parse_error is not None:
             raise parse_error
