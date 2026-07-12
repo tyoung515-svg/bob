@@ -25,6 +25,18 @@ $py      = Join-Path $repo '.venv\Scripts\python.exe'
 $envFile = Join-Path $repo '.secrets\bobclaw.env'
 if (-not (Test-Path $py)) { throw "venv python not found: $py  (run ./install-bob.ps1 first)" }
 
+# Probe the ports THIS install is configured for — a fixed 7825/7826 probe reads a
+# coexisting install's service as "already running" and silently skips the spawn.
+function Get-EnvValue($key, $default) {
+    if (Test-Path $envFile) {
+        $m = Select-String -LiteralPath $envFile -Pattern "^$key=(.+)$" | Select-Object -First 1
+        if ($m) { return $m.Matches.Groups[1].Value.Trim() }
+    }
+    return $default
+}
+$corePort = Get-EnvValue 'BOBCLAW_CORE_PORT' '7825'
+$gwPort   = Get-EnvValue 'BOBCLAW_GATEWAY_PORT' '7826'
+
 function Step($m) { Write-Host "`n== $m ==" -ForegroundColor Yellow }
 function Ok($m)   { Write-Host "  OK  $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "  !!  $m" -ForegroundColor Yellow }
@@ -59,26 +71,26 @@ if (-not $NoLiteLLM -and (Test-Path $litellmCfg) -and (Test-Path $litellmStart))
     Warn "no litellm\config.yaml — skipping the Codex proxy (Codex faces that route through it are unavailable; GPT via ChatGPT login still works). See README."
 }
 
-# ── core (:7825) ───────────────────────────────────────────────────────────────
+# ── core ───────────────────────────────────────────────────────────────────────
 # NOTE: unlike start-core.ps1 (the dev launcher) we do NOT force MEMORY_ENABLED — the
 # fresh-box path keeps memory at its .env.example OFF default so core boots without
 # the embedder/extractor. Enable memory later via .secrets + start-embedder/extractor.
-Step "Core (:7825)"
-if (Test-Up 'http://127.0.0.1:7825/health') { Ok "core already running on :7825" }
+Step "Core (:$corePort)"
+if (Test-Up "http://127.0.0.1:$corePort/health") { Ok "core already running on :$corePort" }
 else {
     Spawn-Service 'bobclaw-core' (Join-Path $repo 'bobclaw-core') '' 'start.py'
-    if (Wait-Up 'http://127.0.0.1:7825/health' 60) { Ok "core healthy on :7825" } else { Warn "core not healthy yet — check the 'bobclaw-core' window / .logs" }
+    if (Wait-Up "http://127.0.0.1:$corePort/health" 60) { Ok "core healthy on :$corePort" } else { Warn "core not healthy yet — check the 'bobclaw-core' window / .logs" }
 }
 
-# ── gateway (:7826) ────────────────────────────────────────────────────────────
-Step "Gateway (:7826)"
-if (Test-Up 'http://127.0.0.1:7826/health') { Ok "gateway already running on :7826" }
+# ── gateway ────────────────────────────────────────────────────────────────────
+Step "Gateway (:$gwPort)"
+if (Test-Up "http://127.0.0.1:$gwPort/health") { Ok "gateway already running on :$gwPort" }
 else {
     $gwEnv = "`$env:PYTHONPATH='$repo\bobclaw-core'; `$env:REFRESH_TOKEN_DAYS='15';"
     Spawn-Service 'bobclaw-gateway' (Join-Path $repo 'bobclaw-gateway') $gwEnv 'gateway.py --no-tls'
-    if (Wait-Up 'http://127.0.0.1:7826/health' 60) { Ok "gateway healthy on :7826" } else { Warn "gateway not healthy yet — check the 'bobclaw-gateway' window / .logs" }
+    if (Wait-Up "http://127.0.0.1:$gwPort/health" 60) { Ok "gateway healthy on :$gwPort" } else { Warn "gateway not healthy yet — check the 'bobclaw-gateway' window / .logs" }
 }
 
 Write-Host ""
-Write-Host "  Gateway:  http://127.0.0.1:7826  (API — use the desktop app / CLI)" -ForegroundColor Green
+Write-Host "  Gateway:  http://127.0.0.1:$gwPort  (API — use the desktop app / CLI)" -ForegroundColor Green
 Write-Host "  Stop:     ./scripts/win/stop-all.ps1" -ForegroundColor DarkGray
