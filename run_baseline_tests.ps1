@@ -22,14 +22,30 @@ if (-not (Test-Path $python)) {
 # name -> exit code, filled as we go
 $results = [ordered]@{}
 
+# Run a native command, capturing a TRUE exit code. A command that fails to launch
+# (missing exe) throws and leaves $LASTEXITCODE at its STALE prior value, so reset it
+# first and treat a launch failure as a hard failure (code 127) — never inherit the
+# previous suite's success.
+function Invoke-Native {
+    param([scriptblock]$Command, [string]$Log)
+    $global:LASTEXITCODE = 0
+    try {
+        & $Command 2>&1 | Tee-Object -FilePath $Log
+        return $LASTEXITCODE
+    } catch {
+        $_ | Out-String | Tee-Object -FilePath $Log -Append | Out-Null
+        Write-Host "command failed to launch: $_" -ForegroundColor Red
+        return 127
+    }
+}
+
 function Invoke-PySuite {
     param([string]$Name, [string]$Dir, [string]$PyPath)
     Write-Host "=== $Name ===" -ForegroundColor Cyan
     $log = Join-Path $logdir "$Name.log"
     Push-Location (Join-Path $repo $Dir)
     $env:PYTHONPATH = $PyPath
-    & $python -m pytest -q 2>&1 | Tee-Object -FilePath $log
-    $script:results[$Name] = $LASTEXITCODE
+    $script:results[$Name] = Invoke-Native -Command { & $python -m pytest -q } -Log $log
     Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue
     Pop-Location
 }
@@ -42,8 +58,13 @@ Invoke-PySuite -Name "pipeline" -Dir "bobclaw-claude-pipeline" -PyPath "."
 Write-Host "=== kmm (shared jvmTest + desktop compile) ===" -ForegroundColor Cyan
 $kmmLog = Join-Path $logdir "kmm.log"
 Push-Location (Join-Path $repo "bobclaw-app")
-& .\gradlew.bat :shared:jvmTest :desktopApp:compileKotlin 2>&1 | Tee-Object -FilePath $kmmLog
-$results["kmm"] = $LASTEXITCODE
+$gradlew = Join-Path $repo "bobclaw-app\gradlew.bat"
+if (-not (Test-Path $gradlew)) {
+    Write-Host "gradlew.bat not found at $gradlew" -ForegroundColor Red
+    $results["kmm"] = 127
+} else {
+    $results["kmm"] = Invoke-Native -Command { & $gradlew :shared:jvmTest :desktopApp:compileKotlin } -Log $kmmLog
+}
 Pop-Location
 
 # ── dependency integrity ─────────────────────────────────────────────────────
@@ -58,8 +79,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "=== pip check ===" -ForegroundColor Cyan
 $pipLog = Join-Path $logdir "pip_check.log"
-& $python -m pip check 2>&1 | Tee-Object -FilePath $pipLog
-$results["pip_check"] = $LASTEXITCODE
+$results["pip_check"] = Invoke-Native -Command { & $python -m pip check } -Log $pipLog
 
 Write-Host "=== pip-audit (best-effort) ===" -ForegroundColor Cyan
 $auditLog = Join-Path $logdir "pip_audit.log"

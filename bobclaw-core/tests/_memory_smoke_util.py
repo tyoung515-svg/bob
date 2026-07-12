@@ -43,8 +43,14 @@ def resolve_bob_qdrant_url() -> str:
     """
     url = os.getenv("MEMORY_QDRANT_URL", DEFAULT_BOB_QDRANT)
     _, port = _host_port(url)
-    if port == LKS_QDRANT_PORT and not os.getenv("MEMORY_TEST_ALLOW_6333"):
-        pytest.fail(
+    # Opt-in must be an explicit TRUTHY value — "0"/"false"/"" do NOT permit :6333
+    # (a bare `os.getenv(...)` truthiness check let "0" through).
+    allow = os.getenv("MEMORY_TEST_ALLOW_6333", "").strip().lower() in ("1", "true", "yes", "on")
+    if port == LKS_QDRANT_PORT and not allow:
+        # RuntimeError (not pytest.fail): a hard misconfiguration stop that errors the
+        # fixture AND is cleanly catchable in a unit test (pytest.raises ignores the
+        # Failed outcome exception).
+        raise RuntimeError(
             f"Refusing a write-capable memory integration run against {url}: "
             f":{LKS_QDRANT_PORT} is the shared LKS Qdrant. Point MEMORY_QDRANT_URL "
             f"at BoB's Qdrant (:6353), or set MEMORY_TEST_ALLOW_6333=1 ONLY for an "
@@ -75,17 +81,22 @@ def require_qdrant(url: str) -> None:
 
 
 def collection_names(url: str) -> set[str]:
+    # RAISE on a non-200 rather than returning an empty set: a silently-empty
+    # snapshot would let the "nothing mutated" invariant false-pass (both before
+    # and after would be {}). The teardown assertion depends on this being honest.
     status, body = _get(url, "/collections")
     if status != 200:
-        return set()
+        raise AssertionError(f"Qdrant /collections at {url} returned {status}")
     data = json.loads(body)
     return {c["name"] for c in data["result"]["collections"]}
 
 
 def collection_point_count(url: str, name: str) -> int | None:
     status, body = _get(url, f"/collections/{name}")
+    if status == 404:
+        return None  # collection genuinely absent (e.g. a dropped throwaway)
     if status != 200:
-        return None
+        raise AssertionError(f"Qdrant /collections/{name} at {url} returned {status}")
     return json.loads(body)["result"].get("points_count")
 
 
@@ -94,7 +105,14 @@ def drop_collection(url: str, name: str) -> None:
     conn = http.client.HTTPConnection(host, port, timeout=5)
     try:
         conn.request("DELETE", f"/collections/{name}")
-        conn.getresponse().read()
+        resp = conn.getresponse()
+        resp.read()
+        # 200 (dropped) and 404 (already absent) are both fine; anything else is a
+        # teardown failure we must NOT swallow (else a throwaway collection leaks).
+        if resp.status not in (200, 404):
+            raise AssertionError(
+                f"failed to drop throwaway collection {name}: HTTP {resp.status}"
+            )
     finally:
         conn.close()
 
@@ -132,9 +150,12 @@ def snapshot_non_throwaway(url: str, prefix: str) -> dict[str, int | None]:
 
 def assert_untouched(url: str, prefix: str, before: dict[str, int | None]) -> None:
     """Assert every pre-existing (non-throwaway) collection is byte-for-byte
-    unchanged: same set, same point counts. Proves the run stayed inside its
-    throwaway namespace and never mutated the real store."""
-    after = snapshot_non_throwaway(url, prefix)
+    unchanged AND no throwaway collection survived teardown. Proves the run stayed
+    inside its throwaway namespace and never mutated the real store."""
+    names = collection_names(url)  # raises if Qdrant is unreachable — no silent pass
+    residue = sorted(n for n in names if n.startswith(prefix))
+    assert not residue, f"throwaway residue not cleaned up: {residue}"
+    after = {n: collection_point_count(url, n) for n in names if not n.startswith(prefix)}
     assert after == before, (
         "memory integration run mutated a non-throwaway collection.\n"
         f"before={before}\nafter={after}"

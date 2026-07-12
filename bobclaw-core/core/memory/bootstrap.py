@@ -61,7 +61,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 class MemoryBootstrapConfig:
     enabled: bool = False
     sqlite_path: Path = _PROJECT_ROOT / ".memory" / "bobclaw_memory.db"
-    qdrant_url: str = "http://localhost:6333"
+    qdrant_url: str = "http://localhost:6353"  # BoB's own Qdrant (compose host port), never a shared :6333
     stores_config_path: Path = (
         _PROJECT_ROOT / "config" / "memory_stores.toml"
     )
@@ -279,7 +279,7 @@ def _consolidation_enabled() -> bool:
 def _maybe_build_write_fence(
     slot_resolver: SlotResolver,
     collection_prefix: str,
-    qdrant_url: str = "http://localhost:6333",
+    qdrant_url: str = "http://localhost:6353",
     *,
     zvec_instance_root: Path | None = None,
 ):
