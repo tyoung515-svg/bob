@@ -21,6 +21,11 @@ jobs:
   test:
     name: python (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Windows is the supported platform for v0.98 (setup/launchers are
+    # Windows-only). The ubuntu leg is ADVISORY — it surfaces cross-platform
+    # drift (and already caught one real bug) without gating merges on
+    # Windows-only test assumptions. Flip it blocking when Linux is a target.
+    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:

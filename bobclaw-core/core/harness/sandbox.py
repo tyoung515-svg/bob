@@ -53,10 +53,19 @@ class SubprocessSandbox:
                 cwd=cwd,
             )
         except subprocess.TimeoutExpired as exc:
+            # POSIX quirk: TimeoutExpired carries BYTES even when run() was in
+            # text mode (only the Windows kill-then-communicate path re-decodes),
+            # so normalize here or the "never raises" contract leaks a bytes
+            # stderr to callers expecting str.
+            def _text(value: bytes | str | None) -> str:
+                if isinstance(value, bytes):
+                    return value.decode("utf-8", errors="replace")
+                return value if value is not None else ""
+
             return SandboxResult(
                 returncode=-1,
-                stdout=exc.stdout if exc.stdout is not None else "",
-                stderr=exc.stderr if exc.stderr is not None else "",
+                stdout=_text(exc.stdout),
+                stderr=_text(exc.stderr),
                 killed=True,
             )
         except OSError as exc:
