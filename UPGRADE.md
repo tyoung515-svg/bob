@@ -50,7 +50,10 @@ COMPOSE_PROJECT_NAME=bob     # your old project name from the volume prefix
 ```
 
 (Fresh v0.98 installs skip this — they just get the pinned `bobclaw` project.
-Running two installs on one host: give each a distinct `COMPOSE_PROJECT_NAME`.)
+Running two installs on one host: give each a distinct `COMPOSE_PROJECT_NAME`
+**and** distinct datastore host ports — `BOBCLAW_PG_PORT` / `BOBCLAW_REDIS_PORT` /
+`BOBCLAW_QDRANT_PORT` / `BOBCLAW_QDRANT_GRPC_PORT`, with matching `POSTGRES_URL` /
+`REDIS_URL` / `MEMORY_QDRANT_URL`. Defaults are unchanged: 5432 / 6379 / 6353 / 6354.)
 
 ### 2. Default embedder changed (memory users only)
 

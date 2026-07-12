@@ -17,8 +17,11 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    # Host ports are env-parameterized (defaults unchanged) so a second install
+    # on the same machine can pick free ports — pair with COMPOSE_PROJECT_NAME
+    # and matching *_URL values in .secrets/bobclaw.env. See UPGRADE.md.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${BOBCLAW_PG_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: bobclaw
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bobclaw}
@@ -47,7 +50,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${BOBCLAW_REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -62,8 +65,8 @@ services:
     # doesn't collide with any other Qdrant you may already run on 6333. Set
     # MEMORY_QDRANT_URL=http://127.0.0.1:6353 to point BoB at it.
     ports:
-      - "127.0.0.1:6353:6333"
-      - "127.0.0.1:6354:6334"
+      - "127.0.0.1:${BOBCLAW_QDRANT_PORT:-6353}:6333"
+      - "127.0.0.1:${BOBCLAW_QDRANT_GRPC_PORT:-6354}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
