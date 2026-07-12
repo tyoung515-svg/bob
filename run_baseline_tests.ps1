@@ -25,12 +25,15 @@ $results = [ordered]@{}
 # Run a native command, capturing a TRUE exit code. A command that fails to launch
 # (missing exe) throws and leaves $LASTEXITCODE at its STALE prior value, so reset it
 # first and treat a launch failure as a hard failure (code 127) — never inherit the
-# previous suite's success.
+# previous suite's success. The output pipeline MUST terminate in Out-Host: a bare
+# `Tee-Object` would flow every output line into the function's RETURN value
+# (PowerShell functions return the whole pipeline), turning the exit code into a
+# giant array that reads as FAIL even when the suite passed.
 function Invoke-Native {
     param([scriptblock]$Command, [string]$Log)
     $global:LASTEXITCODE = 0
     try {
-        & $Command 2>&1 | Tee-Object -FilePath $Log
+        & $Command 2>&1 | Tee-Object -FilePath $Log | Out-Host
         return $LASTEXITCODE
     } catch {
         $_ | Out-String | Tee-Object -FilePath $Log -Append | Out-Null
@@ -108,7 +111,7 @@ foreach ($name in $results.Keys) {
     if ($code -eq 0) {
         Write-Host ("{0,-10} PASS" -f $name) -ForegroundColor Green
     } else {
-        Write-Host ("{0,-10} FAIL (exit $code)" -f $name) -ForegroundColor Red
+        Write-Host ("{0,-10} FAIL (exit {1})" -f $name, $code) -ForegroundColor Red
         $hardFail = $true
     }
 }
