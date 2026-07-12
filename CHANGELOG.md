@@ -90,8 +90,11 @@ embedder and the compose project naming.
   (soft limits only) — a hard max is filed for v0.99.
 - `pip-audit` is reported UNAVAILABLE (not silently "clean") when the tool
   isn't installed; the baseline runner treats that as neither pass nor fail.
-- Two sandbox-timeout tests (`test_sandbox_timeout*`) can flake on heavily
-  loaded machines (timing-based); they pass consistently on a quiet machine.
+- The two sandbox-timeout tests were failing deterministically on machines
+  where AV scanning pushes `python -c` spawn latency past the old 0.5s test
+  timeout (measured 1.2–2.2s per spawn under Windows Defender) — previously
+  misdiagnosed as load-dependent flakes. Their timeouts now dominate spawn
+  latency (8s), at the cost of a few seconds of suite wall time.
 
 ## [0.97.0]
 

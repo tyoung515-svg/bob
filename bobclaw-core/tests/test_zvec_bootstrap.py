@@ -138,19 +138,22 @@ def test_zvec_selection_arms_fence_initializes_layout_and_stamps_compatible_fing
     assert (instance_dir / "collections").is_dir()
     assert (instance_dir / "l0").is_dir()
     fingerprint = json.loads(fingerprint_path.read_text(encoding="utf-8"))
-    assert fingerprint["embed"]["dim"] == 768
+    # Stamped from the shipped default embed_text slot (qwen3-embedding-4b since
+    # v0.98) — this test deliberately exercises the real config, so the expected
+    # dim tracks config/memory_slots.toml.
+    assert fingerprint["embed"]["dim"] == 2560
 
     provider.index(
         "test_store",
         [
             ChunkRecord(
                 id="chunk:test-store:one",
-                vector=[1.0] + [0.0] * 767,
+                vector=[1.0] + [0.0] * 2559,
                 payload={"source_fact_id": "fact-1", "text": "real zvec boot"},
             )
         ],
     )
-    assert (instance_dir / "collections" / "zvec_test__768").is_dir()
+    assert (instance_dir / "collections" / "zvec_test__2560").is_dir()
 
     provider.close()
     first.write_fence.close()
