@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bobclaw.model.HealthStatus
 import com.bobclaw.network.RestClient
+import com.bobclaw.ui.components.IconGlyph
 import com.bobclaw.ui.theme.BoBClawColors
 import kotlinx.coroutines.delay
 
@@ -115,11 +116,7 @@ private fun HealthRow(health: HealthStatus) {
             "degraded", "warn" -> HealthYellow
             else -> HealthRed
         }
-        Text(
-            text = "●",
-            color = dotColor,
-            fontSize = 10.sp,
-        )
+        IconGlyph(name = "point-filled", tint = dotColor, size = 9.dp)
         Spacer(Modifier.width(6.dp))
         Text(
             text = health.name,

@@ -66,13 +66,42 @@ class BoBClawWebSocket(private val url: String) {
         }
     }
 
-    suspend fun sendMessage(conversationId: String, content: String, faceId: String?, locale: String? = null) {
+    suspend fun sendMessage(
+        conversationId: String,
+        content: String,
+        faceId: String?,
+        locale: String? = null,
+        // MS9-W1: the Council screen's start-turn passes true to stream the live theater frames.
+        // Default false ⇒ the chat screen's calls are byte-identical (field absent on the wire).
+        emitEvents: Boolean = false,
+    ) {
         sendClientMessage(
             ClientMessage.ChatMessage(
                 conversationId = conversationId,
                 content = content,
                 faceId = faceId,
-                locale = locale
+                locale = locale,
+                emitEvents = emitEvents
+            )
+        )
+    }
+
+    /** U5 Ask-Bob helper bubble: a chat turn that carries the screen's [pageContext] snapshot.
+     *  Same `message` frame as [sendMessage]; the added field rides through the gateway to core. */
+    suspend fun sendMessageWithPageContext(
+        conversationId: String,
+        content: String,
+        faceId: String?,
+        pageContext: com.bobclaw.model.PageContext,
+        locale: String? = null,
+    ) {
+        sendClientMessage(
+            ClientMessage.ChatMessage(
+                conversationId = conversationId,
+                content = content,
+                faceId = faceId,
+                locale = locale,
+                pageContext = pageContext
             )
         )
     }

@@ -31,6 +31,12 @@ from __future__ import annotations
 import logging
 
 from core.config import COUNCIL_MAX_ROUNDS, COUNCIL_MAX_USD, DEBATE_ROUND_USD
+from core.council.events import (
+    PHASE_BLOCKED,
+    PHASE_ROUND_ADVANCED,
+    PHASE_ROUND_CONVERGED,
+    emit_council_event,
+)
 from core.nodes._bounds import bound_float, bound_int
 
 logger = logging.getLogger(__name__)
@@ -115,10 +121,22 @@ async def debate_converge_node(state: dict) -> dict:
             msg = (f"Council debate cost ceiling reached (${cost_after:.2f} spent, "
                    f"ceiling ${max_usd:.2f}); returning the best answer so far.")
             logger.warning("debate ceiling breach: %s", msg)
+            # U7 (opt-in): the theater's blocked/ceiling banner. NO-OP + byte-identical
+            # when opt-in absent (does not touch the commit / final-answer path).
+            await emit_council_event(
+                spec, state, PHASE_BLOCKED, round_idx=round_idx,
+                extra={"reason": "cost_ceiling", "cost_usd": round(cost_after, 6),
+                       "active_debate": sorted(current)},
+            )
             return await _commit(state, cost_usd=cost_after, error=msg)
 
     if converged:
         logger.info("debate converged after round %d (%s); committing", round_idx, reason)
+        # U7 (opt-in): the theater's converged banner (round closed → END).
+        await emit_council_event(
+            spec, state, PHASE_ROUND_CONVERGED, round_idx=round_idx,
+            extra={"reason": reason, "active_debate": sorted(current)},
+        )
         return await _commit(state, cost_usd=cost_after)
 
     # ── Loop: set up the next round ──────────────────────────────────────────
@@ -128,6 +146,12 @@ async def debate_converge_node(state: dict) -> dict:
     spec.pop("panel_task", None)
     logger.info("debate round %d → %d (active debate: %s)", round_idx, round_idx + 1,
                 sorted(current))
+    # U7 (opt-in): the theater's "round advanced" transition (loop to next round).
+    # NO-OP + byte-identical when opt-in absent (does not alter the loop delta).
+    await emit_council_event(
+        spec, state, PHASE_ROUND_ADVANCED, round_idx=round_idx,
+        extra={"next_round": round_idx + 1, "active_debate": sorted(current)},
+    )
     return {
         "council_spec": spec,
         "council_round": round_idx + 1,

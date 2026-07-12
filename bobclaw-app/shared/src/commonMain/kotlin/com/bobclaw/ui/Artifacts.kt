@@ -21,7 +21,7 @@ fun extractHtmlArtifact(text: String): String? {
 
 /**
  * Pull a written file path out of a reply (the claude_code planner writes artifacts to its scratch
- * dir and says e.g. "Wrote `C:\Temp\bobclaw\cc\<conv>\hello.html`"). Returns the absolute Windows
+ * dir and says e.g. "Wrote `C:\dev\scratch\cc\<conv>\hello.html`"). Returns the absolute Windows
  * path to a renderable file (.html/.htm/.svg), or null. The canvas loads it via a file:// URL.
  */
 fun extractFileArtifact(text: String): String? =

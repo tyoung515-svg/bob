@@ -24,12 +24,14 @@ from config import config
 from db import close_postgres_pool, get_postgres_pool, init_db
 from redis_client import close_redis
 from routers.auth_routes import router as auth_router
+from routers.capabilities import router as capabilities_router
 from routers.chat import router as chat_router
 from routers.approvals import router as approvals_router
 from routers.conversations import router as conversations_router
 from routers.faces import router as faces_router
 from routers.ideas import router as ideas_router
 from routers.memory import router as memory_router
+from routers.memory_graph import router as memory_graph_router
 from routers.models import router as models_router
 from routers.projects import router as projects_router
 from routers.routing_view import router as routing_view_router
@@ -105,8 +107,10 @@ def build_app(state_overrides: dict[web.AppKey, Any] | None = None) -> web.Appli
     app.router.add_routes(faces_router)
     app.router.add_routes(ideas_router)
     app.router.add_routes(approvals_router)
+    app.router.add_routes(capabilities_router)
     app.router.add_routes(models_router)
     app.router.add_routes(memory_router)
+    app.router.add_routes(memory_graph_router)
     app.router.add_routes(routing_view_router)
     app.router.add_routes(teams_router)
     app.router.add_routes(system_router)

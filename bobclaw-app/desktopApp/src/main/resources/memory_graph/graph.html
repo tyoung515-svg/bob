@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BoBClaw Memory Graph</title>
+<!--
+  NO-CDN INVARIANT (SPEC-UI-OVERHAUL §4 / D5 / U4b accept #3):
+  every <script> below is a LOCAL, bundled sibling file loaded over file:// —
+  there are ZERO external (http/https) script, style, font or image references
+  on this page. three.js + 3d-force-graph are vendored next to this file. The
+  runtime therefore renders with the network fully disabled. See NOTICE.txt.
+-->
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+               background: #0b0f14; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #graph { position: fixed; inset: 0; }
+  #legend { position: fixed; top: 10px; left: 12px; z-index: 5; color: #cbd5e1;
+            font-size: 11px; line-height: 1.6; pointer-events: none;
+            background: rgba(11,15,20,0.55); padding: 8px 10px; border-radius: 8px;
+            border: 1px solid rgba(148,163,184,0.18); max-width: 260px; }
+  #legend .row { display: flex; align-items: center; gap: 6px; }
+  #legend .swatch { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+  #status { position: fixed; bottom: 10px; left: 12px; z-index: 5; color: #64748b;
+            font-size: 10px; background: rgba(11,15,20,0.55); padding: 4px 8px;
+            border-radius: 6px; }
+  #empty { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+           color: #64748b; font-size: 13px; z-index: 4; text-align: center; }
+</style>
+</head>
+<body>
+  <div id="graph"></div>
+  <div id="legend"></div>
+  <div id="status">initializing…</div>
+  <div id="empty">No memory yet — talk to Bob and facts will appear here.</div>
+
+  <!-- LOCAL bundled libraries (MIT). three first (window.THREE), then the graph lib. -->
+  <script src="three.min.js"></script>
+  <script src="3d-force-graph.min.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    // ---- type → colour (stable hash for substrates the client can't know a priori) ----
+    var FIXED = { fact: "#34d399", conversation: "#60a5fa", research_forest: "#f59e0b" };
+    function hashColor(t) {
+      var h = 0;
+      for (var i = 0; i < t.length; i++) { h = (h * 31 + t.charCodeAt(i)) & 0xffffff; }
+      var hue = h % 360;
+      return "hsl(" + hue + ",70%,62%)";
+    }
+    function typeColor(t) { return FIXED[t] || hashColor(String(t || "node")); }
+    function linkColor(e) {
+      if (e.type === "provenance") return "rgba(96,165,250,0.55)";
+      if (e.type === "knn") return "rgba(52,211,153,0.35)";
+      return "rgba(148,163,184,0.35)";
+    }
+
+    var el = document.getElementById("graph");
+    var statusEl = document.getElementById("status");
+    var legendEl = document.getElementById("legend");
+    var emptyEl = document.getElementById("empty");
+
+    if (typeof ForceGraph3D === "undefined") {
+      statusEl.textContent = "render engine failed to load";
+      return;
+    }
+
+    var nodeCache = {};   // id -> node object (preserves x/y/z/fx/fy/fz across re-renders)
+    var highlightId = null;
+    var lastData = { nodes: [], links: [] };
+
+    var Graph = ForceGraph3D()(el)
+      .backgroundColor("#0b0f14")
+      .nodeId("id")
+      .nodeLabel(function (n) { return "<div style='max-width:320px'>" + escapeHtml(n.label || n.id) + "</div>"; })
+      .nodeColor(function (n) { return n.id === highlightId ? "#ffffff" : typeColor(n.type); })
+      .nodeVal(function (n) { return n.id === highlightId ? 8 : 3; })
+      .nodeOpacity(0.92)
+      .linkColor(linkColor)
+      .linkWidth(function (e) { return e.type === "provenance" ? 1.2 : 0.5; })
+      .linkDirectionalParticles(function (e) { return e.type === "provenance" ? 2 : 0; })
+      .linkDirectionalParticleWidth(1.2)
+      .onNodeClick(function (n) { select(n.id); flyTo(n.id); })
+      .onNodeDragEnd(function (n) {  // drag-to-pin: fix the node where the user dropped it
+        n.fx = n.x; n.fy = n.y; n.fz = n.z;
+      });
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    // ---- JS -> Kotlin bridge (JCEF message router; guarded for non-JCEF dev) ----
+    function select(id) {
+      highlightId = id;
+      Graph.nodeColor(Graph.nodeColor()).nodeVal(Graph.nodeVal());  // re-eval accessors
+      if (window.cefQuery) {
+        window.cefQuery({
+          request: JSON.stringify({ type: "select", id: id }),
+          onSuccess: function () {}, onFailure: function () {}
+        });
+      }
+    }
+
+    // ---- Kotlin -> JS API ----
+    // Kotlin pushes payloads base64-encoded (UTF-8 safe across the JCEF executeJavaScript
+    // boundary — no escaping/U+2028 hazards); _dec base64 -> UTF-8 string.
+    window.BClaw = {
+      _dec: function (b) {
+        var bin = atob(b), by = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) by[i] = bin.charCodeAt(i);
+        return new TextDecoder("utf-8").decode(by);
+      },
+      parse: function (b) { return JSON.parse(this._dec(b)); },
+      parseStr: function (b) { return this._dec(b); },
+      render: function (data) {
+        data = data || {};
+        var incoming = data.nodes || [];
+        var edges = data.edges || data.links || [];
+        var nodes = incoming.map(function (n) {
+          var cached = nodeCache[n.id];
+          if (cached) { cached.type = n.type; cached.label = n.label; return cached; }
+          var obj = { id: n.id, type: n.type, label: n.label };
+          nodeCache[n.id] = obj;
+          return obj;
+        });
+        var present = {};
+        nodes.forEach(function (n) { present[n.id] = true; });
+        Object.keys(nodeCache).forEach(function (k) { if (!present[k]) delete nodeCache[k]; });
+        var links = edges
+          .filter(function (e) { return present[e.source] && present[e.target]; })
+          .map(function (e) { return { source: e.source, target: e.target, type: e.type, weight: e.weight }; });
+        lastData = { nodes: nodes, links: links };
+        Graph.graphData(lastData);
+        emptyEl.style.display = nodes.length === 0 ? "flex" : "none";
+        updateLegend(nodes);
+        statusEl.textContent = nodes.length + " nodes · " + links.length + " edges";
+      },
+      flyTo: function (id) {
+        var tries = 0;
+        (function attempt() {
+          var node = nodeCache[id];
+          if (node && typeof node.x === "number") {
+            var d = 140;
+            var r = 1 + d / Math.hypot(node.x, node.y, node.z || 0.001);
+            Graph.cameraPosition({ x: node.x * r, y: node.y * r, z: (node.z || 0) * r }, node, 1200);
+            highlightId = id;
+            Graph.nodeColor(Graph.nodeColor()).nodeVal(Graph.nodeVal());
+          } else if (tries++ < 20) {
+            setTimeout(attempt, 150);  // wait for the force layout to place the node
+          }
+        })();
+      },
+      remove: function (id) {
+        delete nodeCache[id];
+        if (highlightId === id) highlightId = null;
+        var nodes = lastData.nodes.filter(function (n) { return n.id !== id; });
+        var links = lastData.links.filter(function (e) {
+          var s = e.source.id || e.source, t = e.target.id || e.target;
+          return s !== id && t !== id;
+        });
+        lastData = { nodes: nodes, links: links };
+        Graph.graphData(lastData);
+        emptyEl.style.display = nodes.length === 0 ? "flex" : "none";
+        updateLegend(nodes);
+        statusEl.textContent = nodes.length + " nodes · " + links.length + " edges";
+      }
+    };
+
+    function updateLegend(nodes) {
+      var types = {};
+      nodes.forEach(function (n) { types[n.type] = (types[n.type] || 0) + 1; });
+      var keys = Object.keys(types).sort();
+      legendEl.innerHTML = keys.map(function (t) {
+        return "<div class='row'><span class='swatch' style='background:" + typeColor(t) +
+               "'></span>" + escapeHtml(t) + " (" + types[t] + ")</div>";
+      }).join("") || "<div class='row'>—</div>";
+    }
+
+    // size the canvas to the window
+    function resize() { Graph.width(window.innerWidth).height(window.innerHeight); }
+    window.addEventListener("resize", resize);
+    resize();
+    statusEl.textContent = "ready — awaiting graph…";
+  })();
+  </script>
+</body>
+</html>

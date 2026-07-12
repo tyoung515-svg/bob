@@ -1,6 +1,8 @@
 id: assistant-actions
 role: worker
 name: Assistant (Actions)
+display_name: "Assistant with Actions"
+blurb: "The everyday assistant that can also create projects and take simple actions for you."
 avatar: "🛠️"
 system_prompt: |
   You are the Assistant with action tools enabled. You can create projects and

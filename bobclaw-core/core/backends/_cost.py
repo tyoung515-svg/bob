@@ -32,6 +32,22 @@ def _prune() -> None:
         del _DAILY_USD[k]
 
 
+def usd_for(
+    input_tokens: int = 0,
+    cached_tokens: int = 0,
+    output_tokens: int = 0,
+) -> float:
+    """USD cost of ONE call from its token usage, at the K2.6 PAYG rates.
+
+    Split out of :func:`track_cost` so the per-flight spend meter (L0.4) can attribute
+    the SAME per-call USD to a flight without re-deriving the rate math. Pure."""
+    return (
+        (input_tokens / 1_000_000) * _INPUT_USD_PER_M
+        + (cached_tokens / 1_000_000) * _CACHED_USD_PER_M
+        + (output_tokens / 1_000_000) * _OUTPUT_USD_PER_M
+    )
+
+
 def track_cost(
     input_tokens: int = 0,
     cached_tokens: int = 0,
@@ -46,11 +62,7 @@ def track_cost(
     """
     _prune()
     today = _today()
-    spend = (
-        (input_tokens / 1_000_000) * _INPUT_USD_PER_M
-        + (cached_tokens / 1_000_000) * _CACHED_USD_PER_M
-        + (output_tokens / 1_000_000) * _OUTPUT_USD_PER_M
-    )
+    spend = usd_for(input_tokens, cached_tokens, output_tokens)
     _DAILY_USD[today] = _DAILY_USD.get(today, 0.0) + spend
     return _DAILY_USD[today]
 

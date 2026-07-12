@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bobclaw.model.ApprovalItem
 import com.bobclaw.network.RestClient
+import com.bobclaw.ui.components.IconGlyph
 import com.bobclaw.ui.components.Tile
 import com.bobclaw.ui.theme.BoBClawColors
 import kotlinx.coroutines.delay
@@ -91,7 +92,7 @@ fun ApprovalsTile(
                 )
                 if (pending.isNotEmpty()) {
                     Spacer(Modifier.width(6.dp))
-                    Text(text = "●", color = BoBClawColors.AccentGreen, fontSize = 10.sp)
+                    IconGlyph(name = "point-filled", tint = BoBClawColors.AccentGreen, size = 8.dp)
                 }
             }
         }
@@ -198,10 +199,10 @@ private fun ApprovalCard(approval: ApprovalItem, restClient: RestClient?) {
             )
             if (decisionState != null) {
                 Spacer(Modifier.width(4.dp))
-                Text(
-                    text = if (decisionState == "approved") "✓" else "✗",
-                    color = if (decisionState == "approved") BoBClawColors.KpiGreen else DenyRed,
-                    fontSize = 12.sp,
+                IconGlyph(
+                    name = if (decisionState == "approved") "checks" else "x",
+                    tint = if (decisionState == "approved") BoBClawColors.KpiGreen else DenyRed,
+                    size = 12.dp,
                 )
             }
         }

@@ -1,0 +1,44 @@
+BoBClaw Memory 3D graph — bundled third-party assets (MS9 U4b)
+==============================================================
+
+These files are loaded by the desktop Memory screen inside the embedded-Chromium
+(JCEF) canvas. They are BUNDLED LOCALLY and loaded over file:// with the network
+disabled — there is no CDN, no external <script>/<link>, and no runtime fetch to
+any remote host (SPEC-UI-OVERHAUL §4 / decision D5 / U4b accept #3).
+
+Files
+-----
+  three.min.js               three.js r150 (UMD build)          — MIT
+  3d-force-graph.min.js      3d-force-graph v1.73.4 (UMD)       — MIT
+  graph.html                 BoBClaw graph page + JS<->Kotlin bridge (this repo)
+  LICENSE-three.txt          three.js MIT license text
+  LICENSE-3d-force-graph.txt 3d-force-graph MIT license text
+
+three.js vendoring note
+-----------------------
+The 3d-force-graph UMD bundle (dist/3d-force-graph.min.js) is SELF-CONTAINED: it
+vendors its own copy of three.js internally (its factory takes no THREE argument
+and ignores window.THREE). We additionally bundle the standalone three.min.js and
+load it first so the "bundle three.js + 3d-force-graph locally" contract is met
+with both libraries physically present and present on the page; the standalone
+global THREE is harmless (the graph engine never mixes objects with it, so there
+is no dual-instance interaction). Both MIT license texts ship regardless because
+three.js source is embedded in the graph bundle.
+
+No-CDN proof
+------------
+  * Every <script src> in graph.html is a relative local filename (three.min.js,
+    3d-force-graph.min.js) — no scheme, no host.
+  * The only http/https strings inside the vendored .js files are XML namespaces
+    (http://www.w3.org/1999/xhtml, used by createElementNS), documentation links
+    inside comments, and error-message URLs — none are fetched at runtime.
+  * The page is served from ~/.bobclaw/memory-graph/ over file:// (see
+    MemoryGraphView.kt / MemoryGraphAssets), so there is no HTTP origin at all.
+
+Provenance
+----------
+Fetched once (network carve-out for bundling) from:
+  https://unpkg.com/three@0.150.1/build/three.min.js
+  https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js
+  https://raw.githubusercontent.com/mrdoob/three.js/r150/LICENSE
+  https://raw.githubusercontent.com/vasturiano/3d-force-graph/master/LICENSE

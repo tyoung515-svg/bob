@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bobclaw.auth.AuthManager
+import com.bobclaw.model.Capabilities
 import com.bobclaw.model.Conversation
 import com.bobclaw.model.Face
 import com.bobclaw.model.ProjectSummary
@@ -76,6 +77,7 @@ import com.bobclaw.network.RestClient
 import com.bobclaw.ui.MarkdownText
 import com.bobclaw.ui.extractFileArtifact
 import com.bobclaw.ui.extractHtmlArtifact
+import com.bobclaw.ui.components.IconGlyph
 import com.bobclaw.ui.theme.BoBClawColors
 import com.bobclaw.ui.theme.BoBClawShapes
 import com.bobclaw.ui.theme.BoBClawType
@@ -85,7 +87,7 @@ import com.bobclaw.ui.theme.glassMorphism
 import kotlinx.coroutines.launch
 
 /** Local chat-bubble model (decoupled from the persisted Message wire type). */
-private data class ChatBubble(
+internal data class ChatBubble(
     val id: String,
     val role: String,        // "user" | "assistant"
     val content: String,
@@ -153,11 +155,21 @@ fun ChatScreen(
     artifactRenderer: @Composable (html: String?, url: String?, modifier: Modifier) -> Unit = { _, _, _ -> },
     locale: String = "en",
     onSetLocale: (String) -> Unit = {},
+    // U9 (SPEC §6): Simple vs Pro chat calibration. Pro renders exactly today's chips/placeholder
+    // (byte-identical); Simple swaps the face pill for a plain-language mode picker, collapses the
+    // jargon power chips (backend/profile) behind a "Details" affordance, and uses "Message Bob…".
+    experienceLevel: String = "simple",
+    // U11 (SPEC §7): the `voice_beta` preview flag, forwarded to the composer (mic) + message rows
+    // (read-aloud). OFF (default) ⇒ chat surface byte-identical; ON ⇒ inert affordances render.
+    voiceBeta: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
 
     val bubbles = remember { mutableStateListOf<ChatBubble>() }
     var faces by remember { mutableStateOf<List<Face>>(emptyList()) }
+    // Live capability registry (faces/backends/capabilities) for the composer `/` palette (MS8-G1).
+    // null until the GET /capabilities fetch lands (or if it fails) — the palette degrades gracefully.
+    var capabilities by remember { mutableStateOf<Capabilities?>(null) }
     var selectedFaceId by remember { mutableStateOf(DEFAULT_FACE_ID) }
     // null = Auto / unpinned (clears the backend pin). Seeded from the opened conversation's pin.
     var selectedBackend by remember { mutableStateOf<String?>(null) }
@@ -169,6 +181,9 @@ fun ChatScreen(
     var generating by remember { mutableStateOf(false) }
     var faceMenuOpen by remember { mutableStateOf(false) }
     var backendMenuOpen by remember { mutableStateOf(false) }
+    // U9: in Simple mode the jargon power chips (backend/profile) are collapsed behind "Details";
+    // this toggles them visible on demand. In Pro they are always inline (this is ignored).
+    var powerExpanded by remember { mutableStateOf(false) }
     // Profile (HOW layer) pin: null = off. Sends switch_profile; a council-shaped
     // profile then runs its role-prompted seats for this conversation.
     var selectedProfile by remember { mutableStateOf<String?>(null) }
@@ -353,6 +368,13 @@ fun ChatScreen(
         runCatching { restClient.getProfiles() }
             .onSuccess { loaded -> profileNames = loaded.map { it.name } }
 
+        // 3c) capabilities registry (faces/backends/capabilities) for the composer `/` palette
+        //     (MS8-G1, GET /capabilities). Fail-soft: a null document just means the palette shows
+        //     the init action until the fetch lands; a partial outage still lists what it composed.
+        runCatching { restClient.getCapabilities() }
+            .onSuccess { capabilities = it }
+            .onFailure { println("[chat] capabilities load failed: ${it.message}") }
+
         // 4) conversation list + selection:
         //    openConversationId (if present in the list) → most-recent → create one.
         runCatching { restClient.getConversations(limit = 30, offset = 0) }
@@ -459,8 +481,10 @@ fun ChatScreen(
         }
     }
 
-    fun send() {
-        val text = input.trim()
+    // [rawText] defaults to the composer input; the `/init` palette action passes a canned prompt
+    // so one-click init sends regardless of what's typed. Either way the composer is cleared.
+    fun send(rawText: String = input) {
+        val text = rawText.trim()
         val convId = conversationId
         if (text.isEmpty() || convId == null || generating) {
             println("[chat] send ignored (empty=${text.isEmpty()} convId=$convId generating=$generating)")
@@ -630,7 +654,8 @@ fun ChatScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     PillChip(
-                        text = if (sidebarCollapsed) "☰" else "«",
+                        // guillemets (not emoji): » reveal the sidebar, « collapse it
+                        text = if (sidebarCollapsed) "»" else "«",
                         onClick = { sidebarCollapsed = !sidebarCollapsed },
                     )
                     Spacer(Modifier.width(8.dp))
@@ -642,6 +667,21 @@ fun ChatScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
+                    // U9 face selector: Simple = plain mode picker (data-driven off simple_slot);
+                    // Pro = the pre-U9 face pill + dropdown, verbatim. The mode picker only takes over
+                    // once the live faces expose simple_slot faces (else the pill is the fallback).
+                    val simpleModeRows =
+                        if (useModePicker(experienceLevel)) simpleModes(faces) else emptyList()
+                    // Power chips (backend + profile) are inline in Pro; in Simple they hide behind
+                    // "Details". Pro: always true → the Pro chip cluster stays byte-identical to pre-U9.
+                    val powerVisible = showPowerChipsInline(experienceLevel) || powerExpanded
+                    if (simpleModeRows.isNotEmpty()) {
+                        SimpleModeSelector(
+                            modes = simpleModeRows,
+                            selectedFaceId = selectedFaceId,
+                            onPick = { selectedFaceId = it },
+                        )
+                    } else {
                     Box {
                         val label = faces.firstOrNull { it.id == selectedFaceId }?.name ?: selectedFaceId
                         PillChip(
@@ -670,12 +710,32 @@ fun ChatScreen(
                             }
                         }
                     }
+                    }
+                    // Model/backend picker — pins a model for this conversation, or "Auto" (clears
+                    // the pin → face routing), mirroring the Face picker. W2: rows are labeled with
+                    // the FRIENDLY model name from the live GET /capabilities registry (e.g. "Opus
+                    // 4.8" for claude_code) + a backend·availability caption, so "hit Opus" is a
+                    // first-class choice; they degrade to the bare backend id until the registry
+                    // loads. Selecting a row pins its backend over the UNCHANGED switchModel /
+                    // backendPreference path (backend ↔ model is 1:1 in the registry).
+                    // U9: inline in Pro; in Simple hidden behind "Details" until [powerVisible].
+                    if (powerVisible) {
                     Spacer(Modifier.width(8.dp))
-                    // Backend picker — lets the user pin a backend or pick "Auto" (clears the pin),
-                    // mirroring the Face picker. Applies live to the active conversation via switchModel.
                     Box {
+                        val modelOptions = buildModelPickerOptions(
+                            liveBackends = capabilities?.backends ?: emptyList(),
+                            staticBackends = PROJECT_BACKENDS,
+                            selectedBackend = selectedBackend,
+                            autoLabel = stringResource(Res.string.chat_backend_auto),
+                            availableLabel = stringResource(Res.string.settings_models_available),
+                            unavailableLabel = stringResource(Res.string.settings_models_unavailable),
+                        )
+                        // The chip shows the pinned model's friendly name (or "Auto" when unpinned).
+                        val chipValue = chatBackendChipLabel(
+                            modelOptions, stringResource(Res.string.chat_backend_auto),
+                        )
                         PillChip(
-                            text = stringResource(Res.string.chat_backend_pill, selectedBackend ?: stringResource(Res.string.chat_backend_auto)),
+                            text = stringResource(Res.string.chat_backend_pill, chipValue),
                             onClick = { backendMenuOpen = true },
                             active = selectedBackend != null,
                         )
@@ -686,29 +746,35 @@ fun ChatScreen(
                                 .background(LocalBoBClawColors.surfaceCard, BoBClawShapes.control)
                                 .border(1.dp, LocalBoBClawColors.borderCard, BoBClawShapes.control),
                         ) {
-                            // Pick a backend, or "Auto" to clear the pin (empty backend = clear → face routing).
+                            // Pin a backend (null = Auto ⇒ empty backend = clear → face routing).
+                            // Same wire as before: model stays "" (backend ↔ model is 1:1).
                             fun applyBackend(backend: String?) {
                                 selectedBackend = backend
                                 backendMenuOpen = false
                                 val convId = conversationId
                                 if (convId != null) {
+                                    // MS9-W4 (fix D): mirror the pin onto the LOCAL conversation row so a
+                                    // later switchTo(convId)/reseed keeps it — otherwise the chip reverts
+                                    // to "Auto" from the stale (pre-pin) backendPreference even though the
+                                    // server pin persisted (routing still changed). Server write is async.
+                                    val idx = conversations.indexOfFirst { it.id == convId }
+                                    if (idx >= 0) {
+                                        conversations[idx] = conversations[idx].copy(backendPreference = backend)
+                                    }
                                     scope.launch {
                                         runCatching { webSocket.switchModel(convId, "", backend ?: "") }
                                             .onFailure { errorBanner = "Backend switch failed: ${it.message}" }
                                     }
                                 }
                             }
-                            DropdownMenuItem(
-                                text = { MenuLabel(stringResource(Res.string.chat_auto), active = selectedBackend == null, mono = true) },
-                                onClick = { applyBackend(null) },
-                            )
-                            PROJECT_BACKENDS.forEach { backend ->
+                            modelOptions.forEach { option ->
                                 DropdownMenuItem(
-                                    text = { MenuLabel(backend, active = selectedBackend == backend, mono = true) },
-                                    onClick = { applyBackend(backend) },
+                                    text = { ModelMenuLabel(option) },
+                                    onClick = { applyBackend(option.backendId) },
                                 )
                             }
                         }
+                    }
                     }
                     Spacer(Modifier.width(8.dp))
                     // Locale toggle (i18n) — cycles EN -> 简 -> 繁; flips BOTH the UI catalog
@@ -725,9 +791,11 @@ fun ChatScreen(
                         },
                         active = locale != "en",
                     )
-                    Spacer(Modifier.width(8.dp))
                     // Profile picker (HOW layer) — pin a saved profile (e.g. a council) to
                     // this conversation, or "Off" to clear it. Applies via switch_profile.
+                    // U9: inline in Pro; in Simple hidden behind "Details" until [powerVisible].
+                    if (powerVisible) {
+                    Spacer(Modifier.width(8.dp))
                     Box {
                         PillChip(
                             text = stringResource(Res.string.chat_profile_pill, selectedProfile ?: stringResource(Res.string.chat_profile_off)),
@@ -763,6 +831,18 @@ fun ChatScreen(
                                 )
                             }
                         }
+                    }
+                    }
+                    // U9 "Details" affordance (Simple only): reveals the collapsed power chips
+                    // (backend + profile) on demand. Absent entirely in Pro (byte-identical surface).
+                    if (!showPowerChipsInline(experienceLevel)) {
+                        Spacer(Modifier.width(8.dp))
+                        PillChip(
+                            text = if (powerExpanded) stringResource(Res.string.chat_details_hide)
+                                   else stringResource(Res.string.chat_details),
+                            onClick = { powerExpanded = !powerExpanded },
+                            active = powerExpanded,
+                        )
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(
@@ -837,7 +917,7 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(bubbles, key = { it.id }) { bubble ->
-                        MessageRow(bubble)
+                        MessageRow(bubble, voiceBeta = voiceBeta)
                         if (bubble.role == "assistant") {
                             val inlineHtml = extractHtmlArtifact(bubble.content)
                             val filePath = extractFileArtifact(bubble.content)
@@ -855,129 +935,44 @@ fun ChatScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // input row
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        placeholder = { Text(stringResource(Res.string.chat_message_placeholder), color = LocalBoBClawColors.textMuted) },
-                        enabled = conversationId != null,
-                        textStyle = BoBClawType.body,
-                        shape = BoBClawShapes.control,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { send() }),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = LocalBoBClawColors.surfaceCard,
-                            unfocusedContainerColor = LocalBoBClawColors.surfaceCard,
-                            disabledContainerColor = LocalBoBClawColors.surfaceCard,
-                            focusedTextColor = LocalBoBClawColors.textBody,
-                            unfocusedTextColor = LocalBoBClawColors.textBody,
-                            focusedBorderColor = LocalBoBClawColors.accent,
-                            unfocusedBorderColor = LocalBoBClawColors.borderControl,
-                            cursorColor = LocalBoBClawColors.accent,
-                        ),
-                        // Enter sends; Shift+Enter inserts a newline. (imeAction doesn't catch a
-                        // hardware Enter on desktop, so intercept the key event directly.)
-                        modifier = Modifier
-                            .weight(1f)
-                            .onPreviewKeyEvent { ev ->
-                                if (ev.type == KeyEventType.KeyDown && ev.key == Key.Enter && !ev.isShiftPressed) {
-                                    send()
-                                    true
-                                } else {
-                                    false
-                                }
-                            },
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    if (generating) {
-                        OutlinedButton(
-                            onClick = { scope.launch { runCatching { webSocket.stopGeneration() } } },
-                            shape = BoBClawShapes.control,
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = LocalBoBClawColors.alert),
-                        ) { Text(stringResource(Res.string.chat_stop), style = BoBClawType.label) }
-                    } else {
-                        Button(
-                            onClick = { send() },
-                            enabled = conversationId != null && input.isNotBlank(),
-                            shape = BoBClawShapes.control,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = LocalBoBClawColors.accent,
-                                contentColor = LocalBoBClawColors.onAccent,
-                                disabledContainerColor = LocalBoBClawColors.surfaceCard,
-                                disabledContentColor = LocalBoBClawColors.textMuted,
-                            ),
-                        ) { Text(stringResource(Res.string.chat_send), style = BoBClawType.label) }
-                    }
-                }
+                ComposerBar(
+                    input = input,
+                    onInputChange = { input = it },
+                    enabled = conversationId != null,
+                    generating = generating,
+                    capabilities = capabilities,
+                    onSend = { send() },
+                    onStop = { scope.launch { runCatching { webSocket.stopGeneration() } } },
+                    onPickFace = { id -> selectedFaceId = id },
+                    onPickBackend = { name ->
+                        selectedBackend = name
+                        val convId = conversationId
+                        if (convId != null) {
+                            scope.launch {
+                                runCatching { webSocket.switchModel(convId, "", name) }
+                                    .onFailure { errorBanner = "Backend switch failed: ${it.message}" }
+                            }
+                        }
+                    },
+                    onRunInit = { send(INIT_PROMPT) },
+                    experienceLevel = experienceLevel,
+                    voiceBeta = voiceBeta,
+                )
             }
 
             // ---- canvas pane (collapsible right) ----
             if (canvasOpen && (canvasHtml != null || canvasUrl != null)) {
                 Spacer(Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            stringResource(Res.string.chat_canvas),
-                            color = BoBClawColors.TextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        OutlinedButton(
-                            onClick = { canvasOpen = false },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = BoBClawColors.TextSecondary),
-                        ) { Text("✕") }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    // URL bar — turns the canvas into a mini-browser. Enter or "Go" navigates;
-                    // "Clear" blanks it. Mirrors the chat input's onPreviewKeyEvent Enter handling.
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = canvasUrlInput,
-                            onValueChange = { canvasUrlInput = it },
-                            singleLine = true,
-                            placeholder = { Text(stringResource(Res.string.chat_enter_url)) },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = { goToCanvasUrl(canvasUrlInput) }),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = BoBClawColors.TextPrimary,
-                                unfocusedTextColor = BoBClawColors.TextPrimary,
-                                focusedBorderColor = BoBClawColors.AccentGreen,
-                                unfocusedBorderColor = BoBClawColors.BorderSubtle,
-                                cursorColor = BoBClawColors.AccentGreen,
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .onPreviewKeyEvent { ev ->
-                                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.Enter && !ev.isShiftPressed) {
-                                        goToCanvasUrl(canvasUrlInput)
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                },
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Button(
-                            onClick = { goToCanvasUrl(canvasUrlInput) },
-                            enabled = canvasUrlInput.isNotBlank(),
-                            colors = ButtonDefaults.buttonColors(containerColor = BoBClawColors.AccentGreen),
-                        ) { Text(stringResource(Res.string.chat_go)) }
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                canvasUrlInput = ""
-                                canvasUrl = null
-                                canvasHtml = null
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = BoBClawColors.TextSecondary),
-                        ) { Text(stringResource(Res.string.chat_clear)) }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Box(modifier = Modifier.fillMaxSize().glassMorphism()) {
-                        artifactRenderer(canvasHtml, canvasUrl, Modifier.fillMaxSize())
-                    }
-                }
+                ArtifactPanel(
+                    canvasHtml = canvasHtml,
+                    canvasUrl = canvasUrl,
+                    canvasUrlInput = canvasUrlInput,
+                    onUrlInputChange = { canvasUrlInput = it },
+                    onGo = { goToCanvasUrl(canvasUrlInput) },
+                    onClear = { canvasUrlInput = ""; canvasUrl = null; canvasHtml = null },
+                    onClose = { canvasOpen = false },
+                    artifactRenderer = artifactRenderer,
+                )
             }
         }
     }
@@ -1056,625 +1051,29 @@ fun ChatScreen(
     }
 }
 
-// Sentinel id for the synthetic "Unfiled" group (conversations with no/dangling assignment).
-private const val UNFILED_ID = "__unfiled__"
-
-// "Auto (none)" sentinel for the face/backend dropdowns (maps to a null wire value).
-private const val AUTO_NONE = "Auto (none)"
-
-// Fixed backend choices for the project default-backend dropdown (bare strings, server contract).
-private val PROJECT_BACKENDS = listOf(
-    "deepseek_v4_flash", "claude_code", "minimax", "kimi_code", "gemini_flash", "local",
-)
-
-// Editable field bundle for the Create Project dialog.
-private data class ProjectDraft(
-    val name: String = "",
-    val description: String = "",
-    val instructions: String = "",
-    val defaultFaceId: String? = null,
-    val defaultBackend: String? = null,
-)
-
-// Edit-dialog draft: carries the project id alongside the editable fields.
-private data class EditProjectDraft(
-    val id: String,
-    val name: String,
-    val description: String,
-    val instructions: String,
-    val defaultFaceId: String?,
-    val defaultBackend: String?,
-) {
-    fun toDraft(): ProjectDraft = ProjectDraft(name, description, instructions, defaultFaceId, defaultBackend)
-    fun withDraft(d: ProjectDraft): EditProjectDraft =
-        copy(name = d.name, description = d.description, instructions = d.instructions,
-            defaultFaceId = d.defaultFaceId, defaultBackend = d.defaultBackend)
-}
-
-// Shared create/edit project dialog. Name (required), Description (single line), Instructions
-// (multiline), Default face + Default backend dropdowns (each with an "Auto (none)" → null option).
-@Composable
-private fun ProjectDialog(
-    title: String,
-    confirmLabel: String,
-    draft: ProjectDraft,
-    faces: List<Face>,
-    onDraftChange: (ProjectDraft) -> Unit,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = BoBClawColors.TextPrimary,
-        unfocusedTextColor = BoBClawColors.TextPrimary,
-        focusedBorderColor = BoBClawColors.AccentGreen,
-        unfocusedBorderColor = BoBClawColors.BorderSubtle,
-        cursorColor = BoBClawColors.AccentGreen,
-    )
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title, color = BoBClawColors.TextPrimary) },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-                OutlinedTextField(
-                    value = draft.name,
-                    onValueChange = { onDraftChange(draft.copy(name = it)) },
-                    singleLine = true,
-                    placeholder = { Text(stringResource(Res.string.chat_project_name)) },
-                    label = { Text(stringResource(Res.string.chat_name)) },
-                    colors = fieldColors,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = draft.description,
-                    onValueChange = { onDraftChange(draft.copy(description = it)) },
-                    singleLine = true,
-                    placeholder = { Text(stringResource(Res.string.chat_short_description)) },
-                    label = { Text(stringResource(Res.string.chat_description)) },
-                    colors = fieldColors,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = draft.instructions,
-                    onValueChange = { onDraftChange(draft.copy(instructions = it)) },
-                    placeholder = { Text(stringResource(Res.string.chat_applied_to_every_conversation_in_this_project)) },
-                    label = { Text(stringResource(Res.string.chat_project_context_instructions)) },
-                    colors = fieldColors,
-                    modifier = Modifier.fillMaxWidth().height(120.dp),
-                )
-                Spacer(Modifier.height(8.dp))
-                // Default face dropdown ("Auto (none)" → null).
-                val faceLabel = draft.defaultFaceId
-                    ?.let { id -> faces.firstOrNull { it.id == id }?.name ?: id }
-                    ?: AUTO_NONE
-                ProjectDropdown(
-                    label = stringResource(Res.string.chat_default_face),
-                    current = faceLabel,
-                ) { dismiss ->
-                    DropdownMenuItem(
-                        text = { Text(AUTO_NONE) },
-                        onClick = { onDraftChange(draft.copy(defaultFaceId = null)); dismiss() },
-                    )
-                    faces.forEach { face ->
-                        DropdownMenuItem(
-                            text = { Text(face.name) },
-                            onClick = { onDraftChange(draft.copy(defaultFaceId = face.id)); dismiss() },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                // Default backend dropdown ("Auto (none)" → null + a fixed set).
-                ProjectDropdown(
-                    label = stringResource(Res.string.chat_default_backend),
-                    current = draft.defaultBackend ?: AUTO_NONE,
-                ) { dismiss ->
-                    DropdownMenuItem(
-                        text = { Text(AUTO_NONE) },
-                        onClick = { onDraftChange(draft.copy(defaultBackend = null)); dismiss() },
-                    )
-                    PROJECT_BACKENDS.forEach { backend ->
-                        DropdownMenuItem(
-                            text = { Text(backend) },
-                            onClick = { onDraftChange(draft.copy(defaultBackend = backend)); dismiss() },
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = draft.name.isNotBlank(),
-                onClick = onConfirm,
-            ) { Text(confirmLabel, color = BoBClawColors.AccentGreen) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(Res.string.chat_cancel), color = BoBClawColors.TextSecondary)
-            }
-        },
-        containerColor = BoBClawColors.GradientBottom,
-    )
-}
-
-// A labelled dropdown rendered as a bordered, clickable row (OutlinedTextField is read-only on
-// desktop, so we hand-roll the trigger to match the dialog's look). [items] is given a dismiss fn.
-@Composable
-private fun ProjectDropdown(
-    label: String,
-    current: String,
-    items: @Composable (dismiss: () -> Unit) -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = BoBClawColors.TextSecondary, fontSize = 11.sp)
-        Spacer(Modifier.height(2.dp))
-        Box {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(BoBClawColors.ZoneHeaderBg, RoundedCornerShape(8.dp))
-                    .clickable { open = true }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = current,
-                    color = BoBClawColors.TextPrimary,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text("▾", color = BoBClawColors.TextSecondary, fontSize = 12.sp)
-            }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                items { open = false }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConversationSidebar(
-    conversations: List<Conversation>,
-    activeId: String?,
-    generating: Boolean,
-    projects: List<ProjectSummary>,
-    collapsedProjectIds: List<String>,
-    onNewChat: () -> Unit,
-    onNewProject: () -> Unit,
-    onToggleCollapse: (String) -> Unit,
-    onSelect: (String) -> Unit,
-    onRename: (Conversation) -> Unit,
-    onArchive: (Conversation) -> Unit,
-    onMove: (Conversation, String?) -> Unit,
-    onNewChatInProject: (ProjectSummary) -> Unit,
-    onProjectSettings: (ProjectSummary) -> Unit,
-    onDeleteProject: (ProjectSummary) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // Group conversations by server project. A conversation whose projectId is null OR points at a
-    // project not in the list (dangling) is treated as Unfiled. Preserve the gateway's newest-first order.
-    val validProjectIds = projects.mapTo(HashSet()) { it.id }
-    val byProject: Map<String, List<Conversation>> = conversations.groupBy { conv ->
-        val pid = conv.projectId
-        if (pid != null && pid in validProjectIds) pid else UNFILED_ID
-    }
-
-    Column(modifier = modifier.glassMorphism().padding(8.dp)) {
-        Button(
-            onClick = onNewChat,
-            enabled = !generating,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = BoBClawColors.AccentGreen),
-        ) { Text(stringResource(Res.string.chat_plus_new_chat)) }
-
-        Spacer(Modifier.height(8.dp))
-
-        OutlinedButton(
-            onClick = onNewProject,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = BoBClawColors.AccentGreen),
-        ) { Text(stringResource(Res.string.chat_plus_new_project)) }
-
-        Spacer(Modifier.height(8.dp))
-
-        if (conversations.isEmpty() && projects.isEmpty()) {
-            Text(
-                stringResource(Res.string.chat_no_conversations_yet),
-                color = BoBClawColors.TextSecondary,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(8.dp),
-            )
-        } else {
-            val unfiled = byProject[UNFILED_ID].orEmpty()
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                // Named projects, in server list order.
-                projects.forEach { project ->
-                    val convs = byProject[project.id].orEmpty()
-                    val collapsed = collapsedProjectIds.contains(project.id)
-                    item(key = "project-${project.id}") {
-                        ProjectHeaderRow(
-                            name = project.name,
-                            count = convs.size,
-                            collapsed = collapsed,
-                            onToggle = { onToggleCollapse(project.id) },
-                            onNewChatHere = { onNewChatInProject(project) },
-                            onSettings = { onProjectSettings(project) },
-                            onDelete = { onDeleteProject(project) },
-                        )
-                    }
-                    if (!collapsed) {
-                        items(convs, key = { it.id }) { conv ->
-                            ConversationSidebarRow(
-                                conv = conv,
-                                active = conv.id == activeId,
-                                generating = generating,
-                                projects = projects,
-                                onSelect = { onSelect(conv.id) },
-                                onRename = { onRename(conv) },
-                                onArchive = { onArchive(conv) },
-                                onMove = { projectId -> onMove(conv, projectId) },
-                            )
-                        }
-                    }
-                }
-
-                // Unfiled group (always last). Shown even when empty if any projects exist,
-                // so it's an obvious drop target; hidden only when there are no projects at all.
-                if (unfiled.isNotEmpty() || projects.isNotEmpty()) {
-                    val collapsed = collapsedProjectIds.contains(UNFILED_ID)
-                    item(key = "project-unfiled") {
-                        ProjectHeaderRow(
-                            name = stringResource(Res.string.chat_unfiled),
-                            count = unfiled.size,
-                            collapsed = collapsed,
-                            onToggle = { onToggleCollapse(UNFILED_ID) },
-                            onNewChatHere = null,
-                            onSettings = null,
-                            onDelete = null,
-                        )
-                    }
-                    if (!collapsed) {
-                        items(unfiled, key = { it.id }) { conv ->
-                            ConversationSidebarRow(
-                                conv = conv,
-                                active = conv.id == activeId,
-                                generating = generating,
-                                projects = projects,
-                                onSelect = { onSelect(conv.id) },
-                                onRename = { onRename(conv) },
-                                onArchive = { onArchive(conv) },
-                                onMove = { projectId -> onMove(conv, projectId) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProjectHeaderRow(
-    name: String,
-    count: Int,
-    collapsed: Boolean,
-    onToggle: () -> Unit,
-    onNewChatHere: (() -> Unit)?,
-    onSettings: (() -> Unit)?,
-    onDelete: (() -> Unit)?,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(BoBClawColors.ZoneHeaderBg, RoundedCornerShape(8.dp))
-            .clickable { onToggle() }
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // chevron: ▼ when expanded, ▶ when collapsed
-        Text(
-            text = if (collapsed) "▶" else "▼",
-            color = BoBClawColors.TextSecondary,
-            fontSize = 10.sp,
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = name,
-            color = BoBClawColors.TextPrimary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = "$count",
-            color = BoBClawColors.TextSecondary,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        // Project actions menu (Unfiled passes null callbacks → no menu shown).
-        if (onNewChatHere != null || onSettings != null || onDelete != null) {
-            Box {
-                Text(
-                    text = "⋯",
-                    color = BoBClawColors.TextSecondary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clickable { menuOpen = true }
-                        .padding(horizontal = 6.dp),
-                )
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    if (onNewChatHere != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(Res.string.chat_new_conversation_here)) },
-                            onClick = {
-                                menuOpen = false
-                                onNewChatHere()
-                            },
-                        )
-                    }
-                    if (onSettings != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(Res.string.chat_project_settings)) },
-                            onClick = {
-                                menuOpen = false
-                                onSettings()
-                            },
-                        )
-                    }
-                    if (onDelete != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(Res.string.chat_delete_project)) },
-                            onClick = {
-                                menuOpen = false
-                                onDelete()
-                            },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConversationSidebarRow(
-    conv: Conversation,
-    active: Boolean,
-    generating: Boolean,
-    projects: List<ProjectSummary>,
-    onSelect: () -> Unit,
-    onRename: () -> Unit,
-    onArchive: () -> Unit,
-    onMove: (String?) -> Unit,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    // Second menu for "Move to project ▸" (a flat project picker; opened from the row ⋯ menu).
-    var moveMenuOpen by remember { mutableStateOf(false) }
-    val title = conv.title?.takeIf { it.isNotBlank() } ?: conv.lastMessagePreview ?: stringResource(Res.string.chat_new_chat)
-    // grey rows out while generating (switching is disabled in that window)
-    val titleColor = if (generating && !active) BoBClawColors.TextSecondary else BoBClawColors.TextPrimary
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 8.dp)
-            .background(
-                if (active) BoBClawColors.AccentGreen.copy(alpha = 0.18f) else Color.Transparent,
-                RoundedCornerShape(8.dp),
-            )
-            .clickable(enabled = !generating) { onSelect() }
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = titleColor,
-                fontSize = 12.sp,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            conv.lastMessagePreview?.takeIf { it.isNotBlank() }?.let { preview ->
-                Text(
-                    text = preview,
-                    color = BoBClawColors.TextSecondary,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Box {
-            Text(
-                text = "⋯",
-                color = BoBClawColors.TextSecondary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable { menuOpen = true }
-                    .padding(horizontal = 6.dp),
-            )
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(Res.string.chat_rename)) },
-                    onClick = {
-                        menuOpen = false
-                        onRename()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(Res.string.chat_move_to_project)) },
-                    onClick = {
-                        menuOpen = false
-                        moveMenuOpen = true
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(Res.string.chat_archive)) },
-                    onClick = {
-                        menuOpen = false
-                        onArchive()
-                    },
-                )
-            }
-            // "Move to project" picker: every project + Unfiled.
-            DropdownMenu(expanded = moveMenuOpen, onDismissRequest = { moveMenuOpen = false }) {
-                projects.forEach { project ->
-                    DropdownMenuItem(
-                        text = { Text(project.name) },
-                        onClick = {
-                            moveMenuOpen = false
-                            onMove(project.id)
-                        },
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text(stringResource(Res.string.chat_unfiled_menu)) },
-                    onClick = {
-                        moveMenuOpen = false
-                        onMove(null)
-                    },
-                )
-            }
-        }
-    }
-}
-
 /**
- * A themed pill-chip trigger (DESIGN §6.1 / §3.6): `surfaceCard` fill + `borderControl` hairline,
- * 20px pill radius, `accent` text when [active] (a pinned/owned value) else `textSecondary`.
- * Used for the top-bar face/backend/nav triggers — the DropdownMenu logic stays on the call site.
+ * U9 Simple-mode picker (SPEC §6): a row of plain-language mode pills (e.g. Quick / Think hard /
+ * Team of experts), built ENTIRELY from [SimpleMode] rows derived off `Face.simpleSlot` — there is
+ * no hardcoded app-side faceId→mode map. Picking a mode applies its `faceId` as the chat's
+ * `selectedFaceId` pin — the SAME mechanism the Pro face dropdown uses (presentation only, no routing
+ * change). The active pill is whichever mode's faceId is currently pinned.
  */
 @Composable
-private fun PillChip(
-    text: String,
-    onClick: () -> Unit,
-    active: Boolean = false,
+private fun SimpleModeSelector(
+    modes: List<SimpleMode>,
+    selectedFaceId: String,
+    onPick: (String) -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .clip(BoBClawShapes.pill)
-            .background(LocalBoBClawColors.surfaceCard, BoBClawShapes.pill)
-            .border(1.dp, LocalBoBClawColors.borderControl, BoBClawShapes.pill)
-            .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = text,
-            color = if (active) LocalBoBClawColors.accent else LocalBoBClawColors.textSecondary,
-            style = BoBClawType.label,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/** Token-colored dropdown menu item label; mono for machine values (backends), accent when selected. */
-@Composable
-private fun MenuLabel(text: String, active: Boolean = false, mono: Boolean = false) {
-    Text(
-        text = text,
-        color = if (active) LocalBoBClawColors.accent else LocalBoBClawColors.textBody,
-        style = if (mono) BoBClawType.monoLabel else BoBClawType.body,
-    )
-}
-
-/** Current time as an ISO instant string (live message timestamps). */
-private fun nowIso(): String = Clock.System.now().toString()
-
-/** Format an ISO instant to local HH:MM. Dep-free of String.format (JVM-only on KMM common);
- *  falls back to slicing HH:MM out of the raw ISO string if parsing fails. */
-private fun formatTime(iso: String): String = runCatching {
-    val lt = Instant.parse(iso).toLocalDateTime(TimeZone.currentSystemDefault())
-    "${lt.hour.toString().padStart(2, '0')}:${lt.minute.toString().padStart(2, '0')}"
-}.getOrElse {
-    val t = iso.substringAfter('T', "")
-    if (t.length >= 5) t.take(5) else ""
-}
-
-@Composable
-private fun MessageRow(bubble: ChatBubble) {
-    val isUser = bubble.role == "user"
-    val fill = if (isUser) LocalBoBClawColors.surfaceAccent else LocalBoBClawColors.surfaceCard
-    val outline = if (isUser) LocalBoBClawColors.borderAccent else LocalBoBClawColors.borderCard
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 560.dp)
-                .clip(BoBClawShapes.card)
-                .background(fill, BoBClawShapes.card)
-                .border(1.dp, outline, BoBClawShapes.card)
-                .padding(12.dp),
-        ) {
-            val clipboard = LocalClipboardManager.current
-            // Header: sender label (leading) ─── timestamp + Copy (trailing), full-width so the
-            // label aligns consistently across user/assistant bubbles and the actions sit right.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = if (isUser) stringResource(Res.string.chat_you) else stringResource(Res.string.chat_assistant),
-                    color = if (isUser) LocalBoBClawColors.accentEmphasis else LocalBoBClawColors.textSecondary,
-                    style = BoBClawType.label,
-                )
-                // subtle streaming indicator: a muted blinking caret on the live bubble
-                if (bubble.streaming) {
-                    Spacer(Modifier.width(6.dp))
-                    Text("▌", color = LocalBoBClawColors.textMuted, style = BoBClawType.monoLabel)
-                }
-                Spacer(Modifier.weight(1f))
-                bubble.timestamp?.let { ts ->
-                    val t = formatTime(ts)
-                    if (t.isNotEmpty()) {
-                        Text(t, color = LocalBoBClawColors.textMuted, style = BoBClawType.monoCaption)
-                    }
-                }
-                if (bubble.content.isNotEmpty()) {
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = stringResource(Res.string.chat_copy),
-                        color = LocalBoBClawColors.textMuted,
-                        style = BoBClawType.monoCaption,
-                        modifier = Modifier
-                            .clip(BoBClawShapes.control)
-                            .clickable { clipboard.setText(AnnotatedString(bubble.content)) }
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            when {
-                // empty streaming assistant bubble: show the typing placeholder
-                bubble.content.isEmpty() && bubble.streaming -> Text(
-                    text = "…",
-                    color = LocalBoBClawColors.textMuted,
-                    style = BoBClawType.body,
-                )
-                // user messages stay plain (assistant replies are what we format)
-                isUser -> Text(
-                    text = bubble.content,
-                    color = LocalBoBClawColors.textBody,
-                    style = BoBClawType.body,
-                )
-                // assistant replies: hand-rolled markdown
-                else -> MarkdownText(bubble.content, color = LocalBoBClawColors.textBody)
-            }
+        modes.forEach { mode ->
+            PillChip(
+                text = mode.label,
+                onClick = { onPick(mode.faceId) },
+                active = mode.faceId == selectedFaceId,
+            )
         }
     }
 }

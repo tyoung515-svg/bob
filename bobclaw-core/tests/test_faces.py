@@ -333,3 +333,123 @@ def test_face_model_strips_system_prompt_whitespace():
         system_prompt="  Hello world  ",
     )
     assert face.system_prompt == "Hello world"
+
+
+# ─── U2 (D10): display metadata — optional, display-only, id-fallback ──────────
+
+_DISPLAY_FIELDS = ("display_name", "blurb", "simple_slot")
+
+
+def test_display_fields_default_none_when_absent():
+    """A face that declares none of the display fields gets all three as None."""
+    face = Face(id="bare", name="Bare", system_prompt="Hi")
+    assert face.display_name is None
+    assert face.blurb is None
+    assert face.simple_slot is None
+
+
+def test_display_name_falls_back_to_id_when_absent(registry: FaceRegistry):
+    """Absent display_name ⇒ the documented convention resolves to the id."""
+    face = Face(id="bare", name="Bare", system_prompt="Hi")
+    assert (face.display_name or face.id) == "bare"
+    # and via a real registry face constructed without the field
+    stripped = registry.get_face("assistant").model_copy(
+        update={"display_name": None}
+    )
+    assert (stripped.display_name or stripped.id) == "assistant"
+
+
+def test_all_profiles_have_display_name_and_blurb(registry: FaceRegistry):
+    """Every face in profiles/*.yaml is populated with display_name + blurb (D10)."""
+    for face in registry.all_faces():
+        assert face.display_name and face.display_name.strip(), (
+            f"face '{face.id}' missing display_name"
+        )
+        assert face.blurb and face.blurb.strip(), f"face '{face.id}' missing blurb"
+
+
+def test_simple_slots_unique_and_canonical(registry: FaceRegistry):
+    """Each plain-language Simple-mode slot maps to exactly ONE face (unambiguous
+    picker), and the three canonical §6 slots are all present."""
+    slots = {f.id: f.simple_slot for f in registry.all_faces() if f.simple_slot}
+    values = list(slots.values())
+    assert len(values) == len(set(values)), f"duplicate simple_slot: {slots}"
+    assert set(values) == {"quick", "think_hard", "team_of_experts"}, slots
+    # faces without a Simple-mode slot leave it None (Pro-only / internal faces)
+    unslotted = [f.id for f in registry.all_faces() if f.simple_slot is None]
+    assert len(unslotted) == len(registry) - 3
+
+
+def test_face_summary_carries_display_metadata(registry: FaceRegistry):
+    """list_faces() summaries (the /api/faces surface) carry the display fields."""
+    by_id = {s.id: s for s in registry.list_faces()}
+    asst = by_id["assistant"]
+    assert asst.display_name == "Everyday Assistant"
+    assert asst.simple_slot == "quick"
+    assert asst.blurb
+    # a face with no Simple slot keeps it None on the summary too
+    assert by_id["reviewer"].simple_slot is None
+    assert by_id["reviewer"].display_name == "Reviewer"
+
+
+def test_display_metadata_is_orthogonal_to_prompt():
+    """Two faces identical except display metadata are byte-identical everywhere
+    else, and their system_prompt (the ONLY face→prompt contribution) is equal."""
+    base = dict(id="x", name="X", system_prompt="Do exactly one thing.")
+    plain = Face(**base)
+    decorated = Face(
+        **base,
+        display_name="Friendly X",
+        blurb="Does exactly one thing.",
+        simple_slot="quick",
+    )
+    plain_d = plain.model_dump()
+    dec_d = decorated.model_dump()
+    for k in _DISPLAY_FIELDS:
+        plain_d.pop(k)
+        dec_d.pop(k)
+    assert plain_d == dec_d  # every non-display field is identical
+    assert plain.system_prompt == decorated.system_prompt
+
+
+def test_prompt_assembly_byte_identical_with_and_without_display(tmp_path):
+    """END-TO-END at the registry assembly seam: the SAME face loaded WITH vs
+    WITHOUT display metadata produces a byte-for-byte identical assembled prompt.
+    Proves the fields are display-only and never enter prompt assembly (SPEC U2)."""
+    import yaml as _yaml
+
+    base = {
+        "id": "meta-face",
+        "name": "Meta",
+        "system_prompt": "You are Meta.\nDo one thing, then stop.\n",
+    }
+    d_with = tmp_path / "with"
+    d_without = tmp_path / "without"
+    d_with.mkdir()
+    d_without.mkdir()
+    (d_with / "f.yaml").write_text(
+        _yaml.safe_dump(
+            {
+                **base,
+                "display_name": "Friendly Meta",
+                "blurb": "A friendly meta face.",
+                "simple_slot": "quick",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (d_without / "f.yaml").write_text(_yaml.safe_dump(base), encoding="utf-8")
+
+    reg_with = FaceRegistry(profiles_dir=d_with)
+    reg_without = FaceRegistry(profiles_dir=d_without)
+
+    # the assembled system prompt is byte-for-byte identical …
+    assert reg_with.get_system_prompt("meta-face") == reg_without.get_system_prompt(
+        "meta-face"
+    )
+    # … even though one carries display metadata and the other does not.
+    assert reg_with.get_face("meta-face").display_name == "Friendly Meta"
+    assert reg_without.get_face("meta-face").display_name is None
+
+
+# ─── R0: GPT-5.6 roster (Sol / Terra / Luna) ──────────────────────────────────

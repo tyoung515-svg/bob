@@ -287,6 +287,23 @@ async def test_chat_times_out_and_kills():
 
 
 @pytest.mark.asyncio
+async def test_spawn_cancel_kills_proc_and_reraises():
+    """MS9-W5 (finding B, agy guard): when the OUTER per-seat timeout cancels a spawn
+    (agy — a hang-prone vendor CLI — stopped responding and WORKER_TIMEOUT_SECONDS is
+    shorter than AGY_TIMEOUT_SECONDS), _spawn KILLS the subprocess (no orphan zombie)
+    and re-raises CancelledError so the seat degrades via its fallback chain."""
+    import asyncio as _a
+
+    c = _make_client(timeout=300)  # long agy timeout — the OUTER cancel wins first
+    proc = _fake_proc()
+    proc.communicate = AsyncMock(side_effect=_a.CancelledError())
+    with _patch_exec(proc):
+        with pytest.raises(_a.CancelledError):
+            await c.chat(prompt="x")
+    proc.kill.assert_called_once()  # the hung agy process was torn down, not orphaned
+
+
+@pytest.mark.asyncio
 async def test_chat_missing_binary_raises_error():
     c = _make_client()
     with _patch_exec(side_effect=FileNotFoundError("no agy")):

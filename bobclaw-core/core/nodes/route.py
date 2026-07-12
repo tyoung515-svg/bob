@@ -61,20 +61,29 @@ def _build_council_spec(state: "AgentState") -> dict:
     override = (state.get("model_override") or "").strip().lower()
     mode = override if override in ("fusion", "sequential") else COUNCIL_MODE_DEFAULT
     synth_backend = COUNCIL_SEAT_BACKENDS[COUNCIL_DEFAULT_SYNTH_POSTURE]["backend"]
-    return {
+    spec: dict = {
         "mode": mode,
         "seats": list(COUNCIL_DEFAULT_SEATS),
         "synth_backend": synth_backend,
     }
+    # MS9-W1 (live theater opt-in): stamp the U7 emit gate ONLY when the request opted in
+    # (state["emit_events"] truthy). Absent/falsy ⇒ key NOT added ⇒ spec byte-identical ⇒
+    # events_enabled() False ⇒ nothing new emitted. The gate is the load-bearing safety.
+    if state.get("emit_events"):
+        spec["emit_events"] = True
+    return spec
 
 
-def _build_council_spec_from_profile(profile: dict) -> dict:
+def _build_council_spec_from_profile(profile: dict, *, emit_events: bool = False) -> dict:
     """Compile a council-shaped profile into a ``council_spec`` for the panel/council
     nodes. Generalizes :func:`_build_council_spec` to any saved profile: its seats
     (postures) + per-seat backend/role_prompt overrides (the ``panel.py`` ``profile``
     hook) + ``synth_backend`` + ``bounds`` (consumed in Phase 3b). A seat that omits a
     backend inherits the posture default; a seat that sets only a role_prompt steers
     the angle without changing the vendor.
+
+    MS9-W1: ``emit_events`` stamps the U7 live-theater gate onto the spec (default False ⇒
+    key NOT added ⇒ byte-identical). Mirrors :func:`_build_council_spec`.
     """
     from core.config import (
         COUNCIL_DEFAULT_SEATS,
@@ -121,13 +130,16 @@ def _build_council_spec_from_profile(profile: dict) -> dict:
             logger.warning("profile %r: shape=debate uses the debate convergence "
                            "gate, so the grounding bound is IGNORED (web grounding "
                            "for debate is not wired yet)", profile.get("name"))
-    return {
+    spec: dict = {
         "mode": mode,
         "seats": postures or list(COUNCIL_DEFAULT_SEATS),
         "synth_backend": profile.get("synth_backend") or default_synth,
         "profile": seat_profile or None,
         "bounds": bounds,
     }
+    if emit_events:
+        spec["emit_events"] = True
+    return spec
 
 
 async def _select_face(state: "AgentState") -> tuple[str | None, str | None]:
@@ -226,7 +238,9 @@ async def route_node(state: "AgentState") -> dict:
                 "face_id": face_id,
                 "escalation_backend": "claude_api",
                 "cc_posture": {},
-                "council_spec": _build_council_spec_from_profile(prof),
+                "council_spec": _build_council_spec_from_profile(
+                    prof, emit_events=bool(state.get("emit_events"))
+                ),
             }
         if prof is None:
             logger.warning("unknown profile %r; ignoring", profile_name)

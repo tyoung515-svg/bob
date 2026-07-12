@@ -162,6 +162,13 @@ class AgentState(TypedDict):
     # the system prompt (mirrors the recalled_facts splice). None when the
     # conversation belongs to no project.
     project_instructions: Optional[str]
+    # ── Ask-Bob helper bubble page context (MS9 U5) ──
+    # The screen the user is viewing when they ask the helper bubble a question:
+    # {"page": <str>, "snapshot": <str|dict>}, resolved app-side and forwarded by the
+    # gateway on the /api/chat payload. execute_node splices it as an additive
+    # front-adjacent system card (identity-card pattern) ONLY when config.PAGE_CONTEXT_ENABLED
+    # is on — flag off ⇒ prompt assembly byte-identical. None/absent for every non-bubble turn.
+    page_context: Optional[dict]
     # ── Gate Router scope (GR-P2/P4) ──
     # Declared blast radius/intent for the job. Threaded to the cc_edit Gate
     # path and to fan-out workers for scope-drift review. None/{} when absent.
@@ -184,6 +191,13 @@ class AgentState(TypedDict):
     # synth_backend, resolved_seats (added by panel_dispatch), panel_task}.
     # When None/absent the graph behaves exactly as today (additive branch).
     council_spec: Optional[dict]
+    # ── MS9-W1: live council theater opt-in ──
+    # When True (set by the /api/chat request, forwarded by the gateway from the app's
+    # start-turn), route_node stamps council_spec["emit_events"]=True so the U7 council
+    # lifecycle tap (core/council/events.py) emits council_event frames AND the SSE relay
+    # forwards the council_event/council_seat/council_synth frames to the client. Absent/
+    # falsy ⇒ not stamped ⇒ U7 stays OFF and the relay drops council frames ⇒ byte-identical.
+    emit_events: Optional[bool]
     # Reserved for P3 debate loop / P2 grounded restart. Unused in P1b but
     # declared now so state is stable across phases.
     council_round: Optional[int]

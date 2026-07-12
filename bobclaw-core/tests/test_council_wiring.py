@@ -178,6 +178,9 @@ def test_panel_route_empty_spec_falls_through_to_synthesize():
 # ─── fusion: panel_worker (backend + fallback walk) ──────────────────────────
 
 async def test_panel_worker_returns_idx_carrying_entry():
+    from core.nodes.budget_runtime import measure_spend
+    from core.nodes.panel import council_token_usd
+
     sub = {
         "seat_posture": "framer",
         "backend": "claude_api",
@@ -189,10 +192,22 @@ async def test_panel_worker_returns_idx_carrying_entry():
     with patch("core.nodes.panel._send_to_backend",
                AsyncMock(return_value="framer voice text")):
         out = await panel_worker_node(sub)
+    # COST-2: the entry now carries a post-hoc token estimate + its USD at the
+    # reference rate table. Recompute both from the SAME primitives the node
+    # uses (the seat's real request messages + response) — rate-consistent, not
+    # a magic number.
+    _messages = [
+        {"role": "system", "content": _COUNCIL_SYSTEM_BASE},
+        {"role": "user", "content": "the shared prompt"},
+    ]
+    _tokens = measure_spend(_messages, "framer voice text", None)
+    _cost = council_token_usd(_tokens)
     assert out["panel_results"] == [
         {"idx": 2, "posture": "framer", "backend": "claude_api",
-         "text": "framer voice text", "round": 0}
+         "text": "framer voice text", "round": 0,
+         "tokens": _tokens, "cost_usd": _cost}
     ]
+    assert _tokens > 0 and _cost > 0.0  # non-zero rate-consistent per-seat cost
 
 
 async def test_panel_worker_walks_fallback_on_error():

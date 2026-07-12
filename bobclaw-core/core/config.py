@@ -325,8 +325,13 @@ class BoBClawConfig:
     MEMORY_SQLITE_PATH: str = os.getenv(
         "MEMORY_SQLITE_PATH", ".memory/bobclaw_memory.db"
     )
+    # Default to BoB's OWN Qdrant (:6353, the compose host port + what the launchers
+    # export), NOT the shared LKS Qdrant (:6333). A non-empty default means validate()
+    # can't catch a missing value, so the default itself must be fail-safe: enabling
+    # memory without an explicit MEMORY_QDRANT_URL must never write to LKS. C6
+    # consolidation (when deployed) repoints this explicitly via env / MEMORY_SINGLE_QDRANT.
     MEMORY_QDRANT_URL: str = os.getenv(
-        "MEMORY_QDRANT_URL", "http://localhost:6333"
+        "MEMORY_QDRANT_URL", "http://localhost:6353"
     )
     MEMORY_STORES_CONFIG_PATH: str = os.getenv(
         "MEMORY_STORES_CONFIG_PATH", "config/memory_stores.toml"
@@ -349,11 +354,23 @@ class BoBClawConfig:
     # provably single-endpoint: MEMORY_LKS_QDRANT_URL must be empty or == MEMORY_QDRANT_URL (a differing value is
     # the two-Qdrant footgun → fail-closed at bootstrap), AND the C4 single-writer write fence is FORCED ON (BoB
     # writes only its own collection; corpus collections stay read-only). DEFAULT OFF ⇒ byte-identical to C5 (the
-    # C4/C5 flags govern independently). MEMORY_QDRANT_URL is intentionally NOT re-defaulted (already :6333); the
-    # operational repoint (launcher :6353 → :6333 + the data migration) is left to the operator, never silently
+    # C4/C5 flags govern independently). The MEMORY_QDRANT_URL default is BoB's own :6353 (fail-safe, above);
+    # C6 consolidation onto a single endpoint is an explicit operator repoint + data migration, never silently
     # flipped. .strip().lower() == "true" — the same parse as the other MEMORY_* flags (the config attribute and
     # the bootstrap seam must agree on the flag's effective state even with surrounding whitespace).
     MEMORY_SINGLE_QDRANT: bool = os.getenv("MEMORY_SINGLE_QDRANT", "false").strip().lower() == "true"
+
+    # ── Ask-Bob helper bubble page context (MS9 U5, SPEC §3 / D3) ─────────
+    # The "Ask Bob" helper bubble sends an additive ``page_context`` field on the chat
+    # start-turn frame; the gateway forwards it and execute_node splices it as a
+    # front-adjacent system card (the identity-card pattern — same shape as the project
+    # context splice). FLAG-GATED and DEFAULT OFF: flag off ⇒ page_context_card() returns
+    # None ⇒ the assembled prompt is BYTE-IDENTICAL to today regardless of what the client
+    # sent (U5 accept criterion #1). NOT in validate() — same posture as CC_EDIT_APPLY_ENABLED /
+    # T1_FASTPATH_ENABLED. .strip().lower() so a padded " true " agrees everywhere.
+    PAGE_CONTEXT_ENABLED: bool = (
+        os.getenv("PAGE_CONTEXT_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+    )
 
     # ── Redis ────────────────────────────────────────────
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -461,6 +478,17 @@ WORKER_TIMEOUT_SECONDS: int = 180   # asyncio.wait_for per worker (handoff 006)
 # Bounded action space (approve|flag|reject) + structured JSON output, so
 # timeout is shorter than worker timeout.
 CRITIC_TIMEOUT_SECONDS: int = 60
+
+# -- Council synth-step timeout (MS9-W5, finding B) --
+# The fusion/debate FINALIZATION synth call (``synthesize_node``) must be bounded like
+# the per-seat worker call (``WORKER_TIMEOUT_SECONDS``). A synth backend that HANGS (no
+# exception — e.g. an open socket that never responds) previously stalled the whole
+# council forever: no completing ``council_synth`` / terminal ``council_event`` ever
+# fired, so the app banner stuck on "Deliberating… $0.0000" (the live finding-B hang).
+# On trip → the fallback chain advances; on total failure the node DEGRADES to the best
+# answer so far AND emits a terminal frame (never hangs). Shorter than the worker cap
+# (the synth is one bounded reconcile call, not an agentic worker turn).
+COUNCIL_SYNTH_TIMEOUT_SECONDS: int = int(os.getenv("COUNCIL_SYNTH_TIMEOUT_SECONDS", "120"))
 
 # -- Fan-out cost cap (handoff 007) --
 # Per-backend pessimistic worst-case cost per worker. Pre-flight in

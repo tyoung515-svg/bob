@@ -1,6 +1,8 @@
 id: worker-kimi
 role: worker
 name: Kimi Worker
+display_name: "Build Worker"
+blurb: "A build worker that takes one task from start to done: edits, tests, and a status report."
 avatar: "⚙️"
 system_prompt: |
   You are a Kimi build worker. You receive a single, atomic, self-contained

@@ -24,6 +24,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bobclaw.ui.theme.BoBClawColors
+import com.bobclaw.ui.theme.BoBClawType
 import com.bobclaw.ui.theme.LocalBoBClawColors
 
 /**
@@ -47,13 +48,14 @@ fun MarkdownText(
     color: Color = BoBClawColors.TextPrimary,
 ) {
     val blocks = remember(text) { parseBlocks(text) }
-    // Resolve the link color in composable scope (the accent is now a CompositionLocal-backed
-    // accessor) and thread it down to the NON-composable inline parser as a plain param.
+    // Resolve the link color AND the bundled mono face in composable scope (both are now
+    // CompositionLocal-backed) and thread them down to the NON-composable inline parser as plain params.
     val linkColor = LocalBoBClawColors.accent
+    val codeFont = BoBClawType.mono
     Column(modifier = modifier) {
         blocks.forEachIndexed { index, block ->
             if (index > 0) Spacer(Modifier.height(6.dp))
-            RenderBlock(block, color, linkColor)
+            RenderBlock(block, color, linkColor, codeFont)
         }
     }
 }
@@ -208,7 +210,7 @@ internal fun parseOrderedItem(t: String): MdBlock.ListItem? {
 // ---------------------------------------------------------------------------------------------
 
 @Composable
-private fun RenderBlock(block: MdBlock, color: Color, linkColor: Color) {
+private fun RenderBlock(block: MdBlock, color: Color, linkColor: Color, codeFont: FontFamily) {
     when (block) {
         is MdBlock.Heading -> {
             val size = when (block.level) {
@@ -220,14 +222,14 @@ private fun RenderBlock(block: MdBlock, color: Color, linkColor: Color) {
                 else -> 13.sp
             }
             Text(
-                text = inlineAnnotated(block.text, color, linkColor),
+                text = inlineAnnotated(block.text, color, linkColor, codeFont),
                 color = color,
                 fontSize = size,
                 fontWeight = FontWeight.Bold,
             )
         }
         is MdBlock.Paragraph -> {
-            Text(text = inlineAnnotated(block.text, color, linkColor), color = color, fontSize = 13.sp)
+            Text(text = inlineAnnotated(block.text, color, linkColor, codeFont), color = color, fontSize = 13.sp)
         }
         is MdBlock.Code -> {
             Box(
@@ -240,7 +242,7 @@ private fun RenderBlock(block: MdBlock, color: Color, linkColor: Color) {
                     text = block.code,
                     color = color,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = codeFont,
                 )
             }
         }
@@ -249,7 +251,7 @@ private fun RenderBlock(block: MdBlock, color: Color, linkColor: Color) {
             // layout robust across Compose versions — no IntrinsicSize needed.
             Row(modifier = Modifier.fillMaxWidth().padding(start = 12.dp)) {
                 Text(
-                    text = inlineAnnotated(block.text, BoBClawColors.TextSecondary, linkColor),
+                    text = inlineAnnotated(block.text, BoBClawColors.TextSecondary, linkColor, codeFont),
                     color = BoBClawColors.TextSecondary,
                     fontSize = 13.sp,
                     fontStyle = FontStyle.Italic,
@@ -265,7 +267,7 @@ private fun RenderBlock(block: MdBlock, color: Color, linkColor: Color) {
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = inlineAnnotated(block.text, color, linkColor),
+                    text = inlineAnnotated(block.text, color, linkColor, codeFont),
                     color = color,
                     fontSize = 13.sp,
                     modifier = Modifier.weight(1f),
@@ -305,7 +307,12 @@ private val InlineCodeBg = Color(0x33000000)
  * [baseColor] is accepted for symmetry/future use; spans set their own color where needed and
  * otherwise inherit the caller's Text color.
  */
-internal fun inlineAnnotated(text: String, baseColor: Color, linkColor: Color): AnnotatedString = buildAnnotatedString {
+internal fun inlineAnnotated(
+    text: String,
+    baseColor: Color,
+    linkColor: Color,
+    codeFont: FontFamily = FontFamily.Monospace,
+): AnnotatedString = buildAnnotatedString {
     if (text.isEmpty()) return@buildAnnotatedString
     var i = 0
     val n = text.length
@@ -317,7 +324,7 @@ internal fun inlineAnnotated(text: String, baseColor: Color, linkColor: Color): 
                 val close = text.indexOf('`', startIndex = i + 1)
                 if (close > i) {
                     withStyle(
-                        SpanStyle(fontFamily = FontFamily.Monospace, background = InlineCodeBg)
+                        SpanStyle(fontFamily = codeFont, background = InlineCodeBg)
                     ) {
                         append(text.substring(i + 1, close))
                     }

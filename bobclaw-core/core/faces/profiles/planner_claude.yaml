@@ -1,6 +1,8 @@
 id: planner-claude
 role: apex
 name: Planner (Claude)
+display_name: "Concept Planner"
+blurb: "A thoughtful planner for ambiguous, concept-shaped problems and big architectural decisions."
 avatar: "🧠"
 system_prompt: |
   You are the Claude Planner. You handle planning that is concept-shaped:

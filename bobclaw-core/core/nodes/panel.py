@@ -37,14 +37,24 @@ from typing import Optional, Union
 
 from langgraph.types import Send
 
+from core.backends import _cost
 from core.config import (
     COUNCIL_DEFAULT_SEATS,
     COUNCIL_SEAT_BACKENDS,
     WORKER_TIMEOUT_SECONDS,
 )
 from core.council.engine import BackendFn, CostFn
+from core.council.events import (
+    PHASE_PANEL_START,
+    PHASE_SEAT_START,
+    emit_council_event,
+    emit_council_event_sync,
+)
 from core.council.protocol import _PROTOCOLS_SUMMARY_TEMPLATE, load_protocols
+from core.nodes.budget_runtime import measure_spend
 from core.nodes.execute import _send_to_backend
+from core.telemetry.emit import KIND_COUNCIL_SEAT, emit_event
+from core.telemetry.flight import resolve_flight_id
 
 logger = logging.getLogger(__name__)
 
@@ -77,18 +87,67 @@ def make_backend_fn(backend: str) -> BackendFn:
     return _fn
 
 
-def make_cost_fn() -> Optional[CostFn]:
-    """Adapt Bob's cost metering to the engine's ``cost_fn`` hook, or None.
+# COST-2 estimation basis (MS5-C1) — EXPLICIT + HONEST.
+#
+# The council seams expose only a COMBINED token count (the engine's
+# ``CouncilVoice.tokens_used`` = ``len(prompt)//4 + len(response)//4``; a fusion
+# seat's ``measure_spend(messages, text)``), never the provider's real
+# per-direction ``usage`` — the send seam ``_send_to_backend`` returns a bare
+# string and DROPS ``usage`` (COST-1, explicitly OUT OF SCOPE here). So every
+# council $ figure below is a POST-HOC TEXT-DERIVED ESTIMATE, not a metered draw.
+# Two documented approximations make the combined count priceable:
+#   1. SPLIT — we split the combined count 50/50 input/output (``_COUNCIL_INPUT_
+#      FRACTION``) so ``_cost.usd_for`` (which prices input vs output separately)
+#      can be applied. When real ``usage`` IS threaded (future / non-council
+#      callers), we use it verbatim instead of the 50/50 split.
+#   2. RATE — we apply ONE proven reference rate (``_cost.usd_for``'s PAYG table,
+#      the same rates ``tests/telemetry/test_spend.py`` pins) to EVERY seat,
+#      regardless of vendor. Per-vendor $ maps are subscription-amortized
+#      fictions (COST-3), so a single proven reference rate is the honest basis;
+#      the ``name`` arg is accepted (seam contract + future differentiation) but
+#      does NOT vary the rate today.
+# NET: this is a rate-consistent ESTIMATE for the cost-credibility story, NOT a
+# provider-metered figure — eyeball it before any published number leans on it.
+_COUNCIL_INPUT_FRACTION: float = 0.5
 
-    The engine's ``cost_fn`` is ``(model/backend name, token_count) -> usd``.
-    ``core/backends/_cost.py`` exposes daily-spend tracking + per-call caps but
-    NO clean per-(name, tokens) price function, and the design explicitly says
-    NOT to invent a price map (the stale ``claude-opus-4-6``/``gemini-2.0-flash``
-    map was dropped in the port). So P1b passes ``cost_fn=None`` (per-session
-    cost 0.0 / metering skipped). TODO(P2): wire a real per-(backend, tokens)
-    estimator once the budget/ceiling work lands (design §A3).
+
+def council_token_usd(tokens: int, usage: Optional[dict] = None) -> float:
+    """USD for one council seat's I/O, via the proven ``_cost.usd_for`` rate table.
+
+    ``usage`` (real provider token metadata, Moonshot/OpenAI-shaped) is preferred
+    WHEN PRESENT — it carries the true input/cached/output split, so we price it
+    verbatim. It is NOT available on the current council send seam (COST-1), so in
+    practice the ``tokens`` fallback runs: a combined post-hoc token estimate,
+    split 50/50 input/output (see the module note) and priced via ``usd_for``.
+    Pure; never negative; ``None``/0/absent ⇒ 0.0.
     """
-    return None
+    if isinstance(usage, dict) and usage:
+        parsed = _cost.parse_usage({"usage": usage})
+        return _cost.usd_for(**parsed)
+    t = int(tokens or 0)
+    if t <= 0:
+        return 0.0
+    input_tokens = int(round(t * _COUNCIL_INPUT_FRACTION))
+    output_tokens = t - input_tokens
+    return _cost.usd_for(input_tokens=input_tokens, output_tokens=output_tokens)
+
+
+def make_cost_fn() -> CostFn:
+    """The engine's ``cost_fn`` hook: ``(model/backend name, token_count) -> usd``.
+
+    COST-2 (MS5-C1): P1b returned ``None`` (metering skipped → per-session cost
+    0.0). This now returns a REAL per-token meter that prices the seat's token
+    count via :func:`council_token_usd` (the proven ``_cost.usd_for`` rate table).
+    ``name`` is accepted for the seam contract but does not vary the rate — a
+    single reference PAYG rate is applied to every seat (COST-3: per-vendor maps
+    are amortized fictions; the stale ``claude-opus-4-6``/``gemini-2.0-flash`` map
+    was rightly dropped in the port). The estimation basis is documented on the
+    module note above; the figure is an ESTIMATE, not a metered draw.
+    """
+    def _cost_fn(name: str, tokens: int) -> float:
+        return council_token_usd(tokens)
+
+    return _cost_fn
 
 
 # ── Seat → backend selector (design table E) ─────────────────────────────────
@@ -236,6 +295,18 @@ def panel_dispatch_node(state: dict) -> dict:
 
     spec["resolved_seats"] = resolved
     spec["panel_task"] = _build_panel_task(topic, context, reseed_context)
+
+    # U7 (opt-in): mark the start of this panel round so the theater can render
+    # "round N began · seats=[...]" BEFORE any seat completes (the existing
+    # council_seat frame fires only on completion). Sync node ⇒ emit_event_sync
+    # (stream fork in-turn; Redis fork scheduled iff a loop is running — the same
+    # policy as dispatch's fleet_start). NO-OP + byte-identical when opt-in absent.
+    panel_round = (state.get("council_round") if mode == "debate"
+                   else state.get("council_restart")) or 0
+    emit_council_event_sync(
+        spec, state, PHASE_PANEL_START, round_idx=panel_round,
+        extra={"mode": mode, "seats": [r["posture"] for r in resolved]},
+    )
     return {"council_spec": spec}
 
 
@@ -260,6 +331,9 @@ def _route_after_panel(state: dict) -> Union[list[Send], str]:
                    else state.get("council_restart")) or 0
     if not resolved:
         return "synthesize"
+    # L0.2: thread the resolved flight so per-seat council_seat events group under the
+    # right flight (panel sub-states carry no conversation_id; resolve once here).
+    flight_id = resolve_flight_id(state)
     return [
         Send(
             "panel_worker",
@@ -271,6 +345,11 @@ def _route_after_panel(state: dict) -> Union[list[Send], str]:
                 "task": task,
                 "seat_idx": seat["idx"],
                 "panel_round": panel_round,
+                "flight_id": flight_id,
+                # U7 (opt-in): thread the emit gate onto the per-seat Send sub-state
+                # (panel_worker gets a sub-state, NOT the full council_spec). Inert
+                # bool; panel_worker ignores it when falsy ⇒ byte-identical.
+                "emit_events": bool(spec.get("emit_events")),
                 "messages": [],
             },
         )
@@ -307,6 +386,16 @@ async def panel_worker_node(sub_state: dict) -> dict:
         {"role": "user", "content": task},
     ]
 
+    # U7 (opt-in): announce this seat is ABOUT to speak — the theater's "who's
+    # speaking now" signal (the existing council_seat frame below fires only on
+    # completion). sub_state carries the threaded emit_events gate; NO-OP + byte-
+    # identical when opt-in absent.
+    await emit_council_event(
+        sub_state, sub_state, PHASE_SEAT_START,
+        round_idx=panel_round, seat=seat_idx, posture=posture,
+        extra={"backend": primary},
+    )
+
     text = ""
     used_backend = primary
     last_error: Optional[Exception] = None
@@ -327,6 +416,18 @@ async def panel_worker_node(sub_state: dict) -> dict:
             )
             continue
 
+    # COST-2 (MS5-C1): a post-hoc token estimate of this seat's REAL I/O (request
+    # messages + response text). No provider `usage` on the send seam (COST-1), so
+    # this is the text-derived basis synthesize_node sums into the real council_cost_
+    # usd meter (see council_token_usd). Fail-soft to 0 — never break a seat on a
+    # metering estimate.
+    _seat_tokens = 0
+    try:
+        _seat_tokens = measure_spend(messages, text or "", None)
+    except Exception:  # noqa: BLE001
+        _seat_tokens = 0
+    _seat_cost_usd = council_token_usd(_seat_tokens)
+
     entry = {
         "idx": seat_idx,
         "posture": posture,
@@ -336,7 +437,17 @@ async def panel_worker_node(sub_state: dict) -> dict:
         # reads only the max-round entries so a grounded restart's re-run round
         # supersedes the prior round (panel_results is operator.add-accumulated).
         "round": panel_round,
+        # COST-2: per-seat token estimate + its USD at the reference rate table.
+        # synthesize_node sums the latest round's cost_usd into council_cost_usd.
+        "tokens": _seat_tokens,
+        "cost_usd": _seat_cost_usd,
     }
     if last_error is not None and not text:
         entry["error"] = str(last_error)
+    # L0.2: emit this seat's completion (council per-seat, per KICKOFF §6 L0.2).
+    await emit_event(
+        KIND_COUNCIL_SEAT, resolve_flight_id(sub_state),
+        {"idx": seat_idx, "posture": posture, "backend": used_backend,
+         "round": panel_round, "status": "ok" if text else "failed", "tokens": _seat_tokens},
+    )
     return {"panel_results": [entry]}

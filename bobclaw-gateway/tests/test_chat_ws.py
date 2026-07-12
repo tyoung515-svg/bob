@@ -43,8 +43,20 @@ class TestChatWebSocket(unittest.TestCase):
                     events = [
                         {"type": "chunk", "content": "Hello", "model": body.get("model") or "gpt-5", "backend": body.get("backend") or "core"},
                         {"type": "chunk", "content": " world", "model": body.get("model") or "gpt-5", "backend": body.get("backend") or "core"},
-                        {"type": "message_complete", "message_id": "assistant-1", "tokens_in": 4, "tokens_out": 2, "elapsed_ms": 12},
                     ]
+                    # MS9-W1: core streams the council theater frames ONLY when the turn
+                    # opted into emit_events. Mirror that so the relay passthrough is tested.
+                    if body.get("emit_events") is True:
+                        events += [
+                            {"type": "council_event", "phase": "panel_start", "round": 0,
+                             "seats": ["framer", "stress"], "flight_id": "f", "ts": "t"},
+                            {"type": "council_seat", "idx": 0, "posture": "framer",
+                             "backend": "claude_api", "round": 0, "status": "ok", "tokens": 12},
+                            {"type": "council_synth", "backend": "minimax", "status": "ok"},
+                        ]
+                    events.append(
+                        {"type": "message_complete", "message_id": "assistant-1", "tokens_in": 4, "tokens_out": 2, "elapsed_ms": 12}
+                    )
                 for event in events:
                     await response.write((json.dumps(event) + "\n").encode())
                 await response.write_eof()
@@ -258,6 +270,65 @@ class TestChatWebSocket(unittest.TestCase):
         self.assertIn("Unknown backend", first["message"])
         self.assertEqual(complete["type"], "message_complete")
         self._run(ws.close())
+
+    def test_council_emit_events_forwarded_to_core_upstream(self):
+        """MS9-W1: a `message` frame that sets emit_events forwards it to core
+        (byte-identical upstream when absent — proven by the no-key control below)."""
+        self.core_requests.clear()
+        ws = self._run(
+            self._client.ws_connect(
+                "/ws/chat", headers={"Authorization": f"Bearer {self._token()}"}
+            )
+        )
+        self._run(ws.send_json({
+            "type": "message", "conversation_id": "conv-ws",
+            "content": "deliberate", "emit_events": True,
+        }))
+        # Drain: 2 chunks + 3 council frames + message_complete.
+        for _ in range(6):
+            self._run(ws.receive_json())
+        self._run(ws.close())
+        self.assertEqual(self.core_requests[-1].get("emit_events"), True)
+
+    def test_council_frames_relayed_when_opted_in(self):
+        """The three council theater frames reach the WS client verbatim, additively,
+        while the existing chunk/message_complete frames are unchanged."""
+        ws = self._run(
+            self._client.ws_connect(
+                "/ws/chat", headers={"Authorization": f"Bearer {self._token()}"}
+            )
+        )
+        self._run(ws.send_json({
+            "type": "message", "conversation_id": "conv-ws",
+            "content": "deliberate", "emit_events": True,
+        }))
+        frames = [self._run(ws.receive_json()) for _ in range(6)]
+        self._run(ws.close())
+        types = [f["type"] for f in frames]
+        self.assertEqual(types, [
+            "chunk", "chunk", "council_event", "council_seat", "council_synth",
+            "message_complete",
+        ])
+        ce = next(f for f in frames if f["type"] == "council_event")
+        self.assertEqual(ce["phase"], "panel_start")
+        self.assertEqual(ce["seats"], ["framer", "stress"])  # verbatim passthrough
+
+    def test_chat_path_byte_identical_without_emit_events(self):
+        """No emit_events ⇒ NO council frames + NO emit_events forwarded upstream:
+        the chat path is byte-identical to before."""
+        self.core_requests.clear()
+        ws = self._run(
+            self._client.ws_connect(
+                "/ws/chat", headers={"Authorization": f"Bearer {self._token()}"}
+            )
+        )
+        self._run(ws.send_json({
+            "type": "message", "conversation_id": "conv-ws", "content": "hi",
+        }))
+        frames = [self._run(ws.receive_json()) for _ in range(3)]
+        self._run(ws.close())
+        self.assertEqual([f["type"] for f in frames], ["chunk", "chunk", "message_complete"])
+        self.assertNotIn("emit_events", self.core_requests[-1])  # no key ⇒ byte-identical
 
     def test_face_switching(self):
         ws = self._run(

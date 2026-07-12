@@ -1,16 +1,19 @@
 package com.bobclaw.network
 
 import com.bobclaw.model.ApprovalItem
+import com.bobclaw.model.ApprovalKind
 import com.bobclaw.model.Build
 import com.bobclaw.model.Conversation
 import com.bobclaw.model.Face
 import com.bobclaw.model.HealthStatus
 import com.bobclaw.model.Idea
+import com.bobclaw.model.MemoryGraph
 import com.bobclaw.model.MessagePage
 import com.bobclaw.model.ModelInfo
 import com.bobclaw.model.Project
 import com.bobclaw.model.ProjectSummary
 import com.bobclaw.model.BackendPalette
+import com.bobclaw.model.Capabilities
 import com.bobclaw.model.ChatTurn
 import com.bobclaw.model.RefineResult
 import com.bobclaw.model.RoutingView
@@ -38,6 +41,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 class RestClient(baseUrl: String) {
     private val baseUrl = baseUrl.trimEnd('/')
@@ -66,6 +72,10 @@ class RestClient(baseUrl: String) {
     }
 
     fun currentTokens(): TokenPair? = tokenPair
+
+    /** The configured gateway base URL (trailing slash trimmed) — read-only, for the U10
+     *  Settings → Connections pane. This is exactly the URL every call above is issued against. */
+    fun gatewayBaseUrl(): String = baseUrl
 
     suspend fun login(password: String, totpCode: String?): TokenPair {
         val tokenPair = try {
@@ -231,6 +241,17 @@ class RestClient(baseUrl: String) {
             }.body()
         }
 
+    // GET /capabilities (gateway aggregate, MS8-G1) — the live registry the chat `/` palette lists
+    // (faces / backends / capabilities), read-only. JWT-gated like every other route, so it rides
+    // withAuthorizedRetry. The endpoint degrades a partial core outage to a 200 + `warnings`; a total
+    // outage surfaces 502 (→ ClientRequestException here, callers fail-soft to a null document).
+    suspend fun getCapabilities(): Capabilities =
+        withAuthorizedRetry { accessToken ->
+            httpClient.get("$baseUrl/capabilities") {
+                bearerAuth(accessToken)
+            }.body()
+        }
+
     // GET /routing-view (gateway proxy → core JOAT v0). Read-only. `team` previews a
     // specific built-in fleet without changing the process default. Returns the live
     // faces → role → resolved-backend map + active_team + teams + live_probe.
@@ -308,14 +329,18 @@ class RestClient(baseUrl: String) {
             }.body<TeamListResponse>().items
         }
 
-    // The draft IS the profile envelope ({name, roles, shape?, protocol_bounds?}).
-    suspend fun createProfile(draft: TeamDraft): Team =
+    // The draft IS the profile envelope ({name, roles, shape?, protocol_bounds?}). [overwrite] REPLACES
+    // an existing custom profile of the same name (edit-a-team path): there is NO in-place update
+    // endpoint, and core POST /profiles errors "profile already exists" unless the body carries
+    // overwrite:true (core reads `overwrite=bool(body.get("overwrite"))`; the gateway forwards the body
+    // verbatim). overwrite:false is byte-compatible with the create path (core strips the key on create).
+    suspend fun createProfile(draft: TeamDraft, overwrite: Boolean = false): Team =
         withAuthorizedRetry { accessToken ->
             try {
                 httpClient.post("$baseUrl/profiles") {
                     bearerAuth(accessToken)
                     contentType(ContentType.Application.Json)
-                    setBody(draft)
+                    setBody(profileBody(draft, overwrite))
                 }.body()
             } catch (e: ClientRequestException) {
                 if (e.response.status == HttpStatusCode.Unauthorized) throw e
@@ -333,6 +358,14 @@ class RestClient(baseUrl: String) {
                 bearerAuth(accessToken)
             }
         }
+
+    // The profile POST body = the draft envelope + an `overwrite` flag (edit-a-team replace path).
+    // Built by merging the serialized draft with the flag so the envelope shape stays the single
+    // source of truth (no parallel request class to drift). overwrite:false ≈ the old create body.
+    private fun profileBody(draft: TeamDraft, overwrite: Boolean): JsonObject {
+        val base = json.encodeToJsonElement(TeamDraft.serializer(), draft).jsonObject
+        return JsonObject(base + ("overwrite" to JsonPrimitive(overwrite)))
+    }
 
     suspend fun getModels(): List<ModelInfo> =
         withAuthorizedRetry { accessToken ->
@@ -362,6 +395,25 @@ class RestClient(baseUrl: String) {
             httpClient.get("$baseUrl/approvals") {
                 bearerAuth(accessToken)
             }.body<ApprovalListResponse>().items
+        }
+
+    // GET /approvals/{id} — a single approval's freshest record (U6 detail view). Additive: the list
+    // already carries the full ApprovalItem, so this only refreshes one item's latest state on expand.
+    suspend fun getApproval(approvalId: String): ApprovalItem =
+        withAuthorizedRetry { accessToken ->
+            httpClient.get("$baseUrl/approvals/$approvalId") {
+                bearerAuth(accessToken)
+            }.body()
+        }
+
+    // GET /approvals/kinds — the read-only kind→metadata map (label / description / proposal_only).
+    // U6 display-only enrichment: friendly labels + a "proposal — never auto-applies" badge. Static
+    // on the server (needs no DB), so it stays available during a Postgres outage → fail-soft to [].
+    suspend fun getApprovalKinds(): List<ApprovalKind> =
+        withAuthorizedRetry { accessToken ->
+            httpClient.get("$baseUrl/approvals/kinds") {
+                bearerAuth(accessToken)
+            }.body<ApprovalKindsResponse>().kinds
         }
 
     suspend fun postApprovalDecision(approvalId: String, decision: String) =
@@ -395,6 +447,35 @@ class RestClient(baseUrl: String) {
     suspend fun archiveIdea(ideaId: String) =
         withAuthorizedRetry { accessToken ->
             httpClient.delete("$baseUrl/ideas/$ideaId") {
+                bearerAuth(accessToken)
+            }
+        }
+
+    // ---- Memory graph (U4a `GET /memory/graph`) + Forget (existing DELETE op) ----
+
+    // Read-only 3D-graph assembly of the internal memory substrate (L0/L1/Qdrant), SPEC §4/D9.
+    // Server assembles + caps; params clamp server-side. JWT-gated → withAuthorizedRetry.
+    suspend fun getMemoryGraph(
+        nodes: Int? = null,
+        k: Int? = null,
+        floor: Double? = null,
+        types: String? = null,
+    ): MemoryGraph =
+        withAuthorizedRetry { accessToken ->
+            httpClient.get("$baseUrl/memory/graph") {
+                bearerAuth(accessToken)
+                nodes?.let { parameter("nodes", it) }
+                k?.let { parameter("k", it) }
+                floor?.let { parameter("floor", it) }
+                types?.let { parameter("types", it) }
+            }.body()
+        }
+
+    // Forget a fact — the EXISTING gateway op (DELETE /memory/facts/{id}); the Memory screen's
+    // ONLY mutation (U4b fence: view + forget only). Response {status,fact_id} — no body parse.
+    suspend fun forgetFact(factId: String) =
+        withAuthorizedRetry { accessToken ->
+            httpClient.delete("$baseUrl/memory/facts/$factId") {
                 bearerAuth(accessToken)
             }
         }
@@ -491,6 +572,11 @@ class RestClient(baseUrl: String) {
     @Serializable
     private data class ApprovalDecisionRequest(
         val decision: String
+    )
+
+    @Serializable
+    private data class ApprovalKindsResponse(
+        val kinds: List<ApprovalKind> = emptyList()
     )
 
     @Serializable

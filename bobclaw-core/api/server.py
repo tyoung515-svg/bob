@@ -92,6 +92,14 @@ APPROVALS_KEY: web.AppKey[dict] = web.AppKey("approvals", dict)
 
 routes = web.RouteTableDef()
 
+# MS9-W1 — the U7/U8 council-theater lifecycle + completion frames. The chat SSE relay
+# below forwards these custom-channel frames to the client ONLY when the turn opted into
+# emit_events (the app's Council theater). Absent opt-in ⇒ the relay drops them exactly as
+# today (only ``type == "token"`` was ever forwarded) ⇒ byte-identical. council_seat /
+# council_synth are ungated telemetry, so relay-gating (not source-gating) is what keeps a
+# council turn WITHOUT emit_events byte-identical.
+_COUNCIL_SSE_FRAME_TYPES = frozenset({"council_event", "council_seat", "council_synth"})
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -602,6 +610,59 @@ async def forget_memory_fact(request: web.Request) -> web.Response:
     return web.json_response({"status": "forgotten", "fact_id": fact_id})
 
 
+# ─── Memory graph: read-only assembly for the 3D memory page (U4a) ────────────
+
+_EMPTY_GRAPH = {"nodes": [], "edges": [], "meta": {"node_count": 0, "edge_count": 0}}
+
+
+@routes.get("/api/memory/graph")
+async def memory_graph(request: web.Request) -> web.Response:
+    """Assemble a read-only graph of the internal memory substrate (U4a).
+
+    Nodes = L1 facts + L0 conversation turns + any additional live Qdrant
+    collections. Edges = provenance (fact → source conversation) + vector k-NN.
+    Query params: ``nodes`` (node cap, default 500), ``k`` (k-NN neighbours,
+    default/max 5), ``floor`` (k-NN score floor, default 0.35), ``types``
+    (comma-separated node-type filter). Returns an empty graph (never 500) when
+    memory is disabled or not yet bootstrapped. ZERO writes anywhere (inv. 16).
+    """
+    if not config.MEMORY_ENABLED:
+        return web.json_response(_EMPTY_GRAPH)
+    try:
+        mem = get_memory()
+    except MemoryConfigError:
+        return web.json_response(_EMPTY_GRAPH)
+
+    from core.memory_graph import (
+        DEFAULT_KNN_SCORE_FLOOR,
+        DEFAULT_NODE_CAP,
+        build_graph_from_memory,
+    )
+
+    q = request.query
+    try:
+        node_cap = int(q["nodes"]) if "nodes" in q else DEFAULT_NODE_CAP
+        knn_k = int(q["k"]) if "k" in q else 5
+        floor = float(q["floor"]) if "floor" in q else DEFAULT_KNN_SCORE_FLOOR
+    except ValueError:
+        return web.json_response(
+            error_event("nodes/k must be integers and floor a number", code="invalid_request"),
+            status=400,
+        )
+    type_filter = (
+        [t.strip() for t in q["types"].split(",") if t.strip()] if q.get("types") else None
+    )
+
+    graph = await build_graph_from_memory(
+        mem,
+        node_cap=node_cap,
+        knn_k=knn_k,
+        knn_score_floor=floor,
+        type_filter=type_filter,
+    )
+    return web.json_response(graph)
+
+
 # ─── SSE streamer (shared by /api/chat and /api/chat/approval) ────────────────
 
 async def _stream_graph_turn(
@@ -615,12 +676,18 @@ async def _stream_graph_turn(
     user_content: str,
     model_override: Optional[str],
     backend_override: Optional[str],
+    emit_council_events: bool = False,
 ) -> web.StreamResponse:
     """Run a graph turn and stream SSE events back to the client.
 
     ``graph_input`` is either a fresh initial AgentState (``/api/chat``)
     or a :class:`langgraph.types.Command` (``/api/chat/approval``) that
     resumes an interrupted checkpointed thread.
+
+    ``emit_council_events`` (MS9-W1): when True (the turn opted into the live council
+    theater), the U7 ``council_event`` lifecycle frames + the ``council_seat`` /
+    ``council_synth`` completion frames on the custom channel are forwarded VERBATIM to
+    the client. Default False ⇒ they are dropped exactly as before ⇒ byte-identical.
     """
     # recursion_limit must cover the deepest council loop (a debate of up to
     # COUNCIL_MAX_ROUNDS_CEILING rounds, grounded restarts, fan-out waves) — the
@@ -672,6 +739,17 @@ async def _stream_graph_turn(
                             thread_id,
                         ):
                             disconnected = True
+                # MS9-W1: additively forward the council theater frames — ONLY when the turn
+                # opted in. Verbatim (the U8 client parses the flat frame by top-level type;
+                # extra keys like flight_id/ts are ignored). Gated ⇒ a council turn without
+                # emit_events streams exactly what it does today (byte-identical).
+                elif (
+                    emit_council_events
+                    and isinstance(chunk, dict)
+                    and chunk.get("type") in _COUNCIL_SSE_FRAME_TYPES
+                ):
+                    if not await _safe_write(response, _sse_line(chunk), thread_id):
+                        disconnected = True
                 continue
 
             # ── Per-node state updates ───────────────────────────────────────
@@ -919,6 +997,13 @@ async def chat(request: web.Request) -> web.StreamResponse:
     # -> project). Spliced into the system prompt by execute_node. None/absent
     # when the conversation has no project.
     project_instructions = payload.get("project_instructions") or None
+    # U5 Ask-Bob helper bubble: the screen the user is viewing, forwarded by the gateway
+    # ({"page", "snapshot"}). execute_node splices it as a front-adjacent system card ONLY
+    # when config.PAGE_CONTEXT_ENABLED is on (flag off ⇒ prompt assembly byte-identical).
+    # Kept as a dict or None; a non-dict value is ignored (defensive) so it can never
+    # perturb assembly. Threaded plainly — it carries no capability, only context.
+    _raw_page_context = payload.get("page_context")
+    page_context = _raw_page_context if isinstance(_raw_page_context, dict) and _raw_page_context else None
     # Gateway-derived user identity (JWT subject), threaded to tool contextvars.
     user_id = payload.get("user_id")
     # Headless contract: the gateway sets this for an agent-token turn whose face was
@@ -933,6 +1018,12 @@ async def chat(request: web.Request) -> web.StreamResponse:
     # F8: require a real JSON `true` — `bool()` would cast the strings "false"/"0" (and any
     # truthy junk) to True. Mirrors the strict bool the profile path validates in teams.py.
     hierarchical = payload.get("hierarchical") is True
+    # MS9-W1 — live council theater opt-in. The app's Council screen sets this on its start
+    # turn; the gateway forwards it. route_node stamps council_spec["emit_events"] so the U7
+    # tap emits council_event frames, and the SSE relay forwards the council_* frames to the
+    # client. Require a real JSON `true` (mirrors `hierarchical`) so a stray truthy value can't
+    # flip it. Absent/false ⇒ U7 OFF + relay drops council frames ⇒ byte-identical.
+    emit_events = payload.get("emit_events") is True
     # Neck Beard P3 — scope ingress. The gateway forwards the agent token's Gate scope
     # plus an HMAC vouch it minted with the shared BOBCLAW_SECRET. Honor the scope ONLY
     # when the vouch validates (else strip → destructive sub-actions fall back to human).
@@ -969,6 +1060,8 @@ async def chat(request: web.Request) -> web.StreamResponse:
         "locale": locale,
         "pin_authoritative": pin_authoritative,
         "hierarchical": hierarchical,
+        # MS9-W1: threaded to route_node so a council turn stamps council_spec["emit_events"].
+        "emit_events": emit_events,
         "backend": backend_override or "local",
         "tools_allowed": tools_allowed,
         "approval_required": False,
@@ -976,6 +1069,9 @@ async def chat(request: web.Request) -> web.StreamResponse:
         "artifacts": [],
         "error": None,
         "project_instructions": project_instructions,
+        # U5: the helper-bubble page snapshot (None for every non-bubble turn). Spliced by
+        # execute_node only under config.PAGE_CONTEXT_ENABLED (flag off ⇒ byte-identical).
+        "page_context": page_context,
         # P3: only set when a valid gateway-vouched scope rode in (else None ⇒ today's
         # human-gated behaviour). The Gate (execute/dispatch/worker) reads state["scope"].
         "scope": resolved_scope,
@@ -992,6 +1088,7 @@ async def chat(request: web.Request) -> web.StreamResponse:
         user_content=content,
         model_override=model_override,
         backend_override=backend_override,
+        emit_council_events=emit_events,
     )
 
 

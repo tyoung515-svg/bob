@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 
 router = web.RouteTableDef()
 
+# MS9-W1 — the U7/U8 council theater frames. Core emits these on the chat SSE stream ONLY
+# when the turn opted into emit_events (the app's Council theater start-turn); the relay
+# below forwards them VERBATIM so the app's Live view renders the real seat/round stream.
+# A chat turn that never opts in receives none of these ⇒ the relay is byte-identical, and
+# a client that ignores unknown types is unaffected (chat-safe).
+_COUNCIL_FRAME_TYPES = frozenset({"council_event", "council_seat", "council_synth"})
+
 
 def _agent_scope_fields(token_claims: dict | None, secret: str) -> dict:
     """The ``scope`` + ``scope_vouch`` to forward to core for an AGENT token (P3).
@@ -39,6 +46,47 @@ def _agent_scope_fields(token_claims: dict | None, secret: str) -> dict:
     if not isinstance(token_scope, dict):
         return {}
     return {"scope": token_scope, "scope_vouch": scope_vouch(token_scope, secret)}
+
+
+def _page_context_field(frame: dict | None) -> dict:
+    """The additive ``page_context`` to forward to core for the U5 Ask-Bob helper bubble.
+
+    Chat WS → core forward contract (truth table — what the gateway adds to the upstream
+    ``/api/chat`` payload, and when):
+
+    ============================  ====================================  =======================
+    client ``message`` frame      condition                             forwarded to core
+    ============================  ====================================  =======================
+    (no ``page_context`` key)     absent                                nothing (byte-identical)
+    ``page_context: null``        not a dict                            nothing (byte-identical)
+    ``page_context: {}``          empty dict                            nothing (byte-identical)
+    ``page_context: {"page":…}``  non-empty dict                        ``{"page_context": {…}}``
+    ============================  ====================================  =======================
+
+    So a page_context-free chat turn (every existing client + the main chat screen) forwards a
+    BYTE-IDENTICAL upstream payload — the helper bubble is the only sender. Core additionally
+    flag-gates the splice (``PAGE_CONTEXT_ENABLED``), so even a forwarded page_context changes
+    nothing in the assembled prompt until the flag is on (U5 accept #1). The field carries only
+    screen context, never capability — unlike ``scope`` it needs no vouch.
+    """
+    page_context = (frame or {}).get("page_context")
+    if isinstance(page_context, dict) and page_context:
+        return {"page_context": page_context}
+    return {}
+
+
+def _emit_events_field(frame: dict | None) -> dict:
+    """The additive ``emit_events`` opt-in to forward to core (MS9-W1 live council theater).
+
+    Returns ``{"emit_events": True}`` ONLY when the client ``message`` frame set
+    ``emit_events`` to a real JSON ``true`` (the app's Council-theater start-turn) — else
+    ``{}`` so every ordinary chat turn forwards a BYTE-IDENTICAL upstream payload. Strict
+    ``is True`` (mirrors core's parse) so a truthy string can't flip it. Core then stamps
+    ``council_spec["emit_events"]`` and streams the council_* frames the relay forwards.
+    """
+    if (frame or {}).get("emit_events") is True:
+        return {"emit_events": True}
+    return {}
 
 
 def _is_pin_authoritative(token_claims: dict | None, face_id) -> bool:
@@ -273,6 +321,14 @@ async def _stream_chat_to_client(ws, conversation_id: str, payload: dict, conv_s
     # the Gate for destructive sub-actions (no-op for human tokens — byte-identical).
     upstream_payload.update(_agent_scope_fields(token_claims, config.BOBCLAW_SECRET))
 
+    # U5 Ask-Bob helper bubble — forward the additive page_context snapshot when the bubble
+    # sent one (no key added for an ordinary page_context-free turn ⇒ byte-identical upstream).
+    upstream_payload.update(_page_context_field(payload))
+
+    # MS9-W1 — forward the additive council-theater opt-in (no key added for an ordinary chat
+    # turn ⇒ byte-identical upstream). Only the Council screen's start-turn sets it.
+    upstream_payload.update(_emit_events_field(payload))
+
     try:
         # A CoCouncil restart turn (two claude_code grounding spawns + an extra
         # panel round) runs well past aiohttp's default 300s total timeout, and a
@@ -346,6 +402,13 @@ async def _stream_chat_to_client(ws, conversation_id: str, payload: dict, conv_s
                                 str(event.get("message") or "upstream error"),
                                 str(event.get("code") or "upstream_error"),
                             )
+                        elif event_type in _COUNCIL_FRAME_TYPES:
+                            # MS9-W1: relay the U7/U8 council theater frames VERBATIM. Core
+                            # only emits them when the turn opted into emit_events, so an
+                            # ordinary chat turn never reaches this branch (byte-identical).
+                            # Additive: the chunk/approval/error/message_complete paths above
+                            # are untouched, and a client ignoring unknown types is unaffected.
+                            await ws.send_json(event)
                         elif event_type == "message_complete":
                             completion = event
     except asyncio.CancelledError:

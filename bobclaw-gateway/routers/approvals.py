@@ -34,6 +34,73 @@ router = web.RouteTableDef()
 _VALID_STATUSES = {"pending", "approved", "rejected", "expired"}
 _VALID_DECISIONS = {"approve", "reject"}
 
+# Recognized approval kinds (``action_type`` values) + their display/policy metadata. The approvals
+# surface itself stays action_type-AGNOSTIC (any kind still lists/decides through the existing
+# endpoints) — this registry only lets a client label a kind and know whether it is a proposal that
+# never auto-applies. Additive: adding a kind here lights up its metadata without touching a route.
+# MS9-F7 adds ``forest_fork`` (a research-forest fork proposal): proposal-only, always human-decided.
+# MS9-F6 adds ``forest_experiment`` (a research-forest experiment above the §7.4 auto-budget OR a
+# state-mutating one): proposal-only, always human-decided — mirrors the ``forest_fork`` pattern.
+KNOWN_APPROVAL_KINDS: dict[str, dict] = {
+    "task_approval": {
+        "label": "Task approval",
+        "proposal_only": False,
+        "requires_human": True,
+        "description": "A generic gated task action (email / form / purchase / dangerous shell).",
+    },
+    "cc_edit": {
+        "label": "Code edit",
+        "proposal_only": True,
+        "requires_human": True,
+        "description": "A proposed code diff to review (and optionally edit) before it is applied.",
+    },
+    "worker_scope_review": {
+        "label": "Worker scope review",
+        "proposal_only": False,
+        "requires_human": True,
+        "description": "A fan-out worker's output flagged for scope-drift review.",
+    },
+    "forest_fork": {
+        "label": "Research-forest fork",
+        "proposal_only": True,
+        "requires_human": True,
+        "description": (
+            "A proposal to fork a research subtree into its own standing program. Carries a "
+            "'why it can't stay a subtree' rationale and a verifiable seed key; nothing is applied "
+            "until it is approved."
+        ),
+    },
+    "forest_experiment": {
+        "label": "Research-forest experiment",
+        "proposal_only": True,
+        "requires_human": True,
+        "description": (
+            "A proposal to run a research-forest experiment that is above the auto-budget "
+            "($2/tree/epoch, $5/day forest-wide) OR is state-mutating. Carries the runner, config, "
+            "estimated cost, and the budget math; nothing runs until it is approved."
+        ),
+    },
+}
+
+
+def kind_metadata(action_type: str | None) -> dict:
+    """Return the metadata for *action_type*, or a null-safe default for an unknown kind.
+
+    Keeps the surface action_type-agnostic: an unrecognized kind still resolves to a usable record
+    (labelled by its raw action_type, treated as human-decided, not proposal-only) so a new core
+    kind is served before it is ever registered here.
+    """
+    meta = KNOWN_APPROVAL_KINDS.get(action_type or "")
+    if meta is not None:
+        return {"action_type": action_type, **meta}
+    return {
+        "action_type": action_type,
+        "label": action_type or "unknown",
+        "proposal_only": False,
+        "requires_human": True,
+        "description": "",
+    }
+
 
 def _jsonable(value):
     if isinstance(value, dict):
@@ -158,6 +225,19 @@ async def approvals_digest(request: web.Request) -> web.Response:
         },
         "limit": limit,
     })
+
+
+@router.get("/approvals/kinds")
+async def list_approval_kinds(request: web.Request) -> web.Response:
+    """Serve the recognized approval kinds + their metadata (read-only, static).
+
+    Registered BEFORE ``/approvals/{approval_id}`` so the literal path wins over the id pattern
+    (mirrors ``/approvals/digest``). Backs a dashboard that labels a pending item and marks a
+    proposal-only kind (e.g. ``forest_fork``) as one that never auto-applies. Needs no Postgres, so
+    it stays available during a DB outage.
+    """
+    kinds = [kind_metadata(k) for k in sorted(KNOWN_APPROVAL_KINDS)]
+    return web.json_response({"kinds": kinds})
 
 
 @router.get("/approvals/{approval_id}")

@@ -36,6 +36,9 @@ data class Team(
     val roles: Map<String, List<TeamSlot>> = emptyMap(),
     val shape: String? = null,
     @SerialName("protocol_bounds") val protocolBounds: ProtocolBounds? = null,
+    // Present on `/api/profiles` envelopes that carry an unattended cron (P5). Absent (null) on
+    // built-ins / unscheduled profiles. Drives the Home "scheduled fires" tile (U1/D2).
+    val schedule: Schedule? = null,
 )
 
 /** One entry in the backend palette (`/backends`): a backend + its cost / width caps. */

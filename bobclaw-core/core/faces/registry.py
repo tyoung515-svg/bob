@@ -33,6 +33,19 @@ class Face(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     escalation_backend: str = "claude_api"
     ui_theme: str = "grey"
+    # ── Display metadata (U2, Decision D10) ──
+    # Friendly, human-readable presentation fields consumed by UI surfaces (the
+    # G1 ``/capabilities`` payload, the Simple/Pro mode picker). ALL optional and
+    # DISPLAY-ONLY: they never enter prompt assembly (the face's only prompt
+    # contribution is ``system_prompt``). Absent ⇒ a consumer falls back to ``id``.
+    #   display_name — a normie-facing name (no vendor/backend jargon).
+    #   blurb        — a one-line description of what the face does.
+    #   simple_slot  — plain-language Simple-mode slot (e.g. quick | think_hard |
+    #                  team_of_experts) driving §6's mode picker with NO hardcoded
+    #                  app-side map; None ⇒ the face is not surfaced in Simple mode.
+    display_name: Optional[str] = None
+    blurb: Optional[str] = None
+    simple_slot: Optional[str] = None
     # ── JOAT v0: role/tier dimension (apex|worker|critic) ──
     # Orthogonal to which face answers (_select_face is unchanged). Optional so
     # every existing profile still loads. The `teams.resolve` layer maps
@@ -112,6 +125,12 @@ class FaceSummary(BaseModel):
     avatar: str
     preferred_backend: str
     ui_theme: str
+    # Display metadata (U2/D10) — carried onto the compact summary so it reaches
+    # ``/api/faces`` and, in turn, the gateway ``/capabilities`` payload. Optional;
+    # null when the face does not populate them.
+    display_name: Optional[str] = None
+    blurb: Optional[str] = None
+    simple_slot: Optional[str] = None
 
 
 # ─── Registry ─────────────────────────────────────────────────────────────────
@@ -163,6 +182,9 @@ class FaceRegistry:
                 avatar=f.avatar,
                 preferred_backend=f.preferred_backend,
                 ui_theme=f.ui_theme,
+                display_name=f.display_name,
+                blurb=f.blurb,
+                simple_slot=f.simple_slot,
             )
             for f in self._faces.values()
         ]

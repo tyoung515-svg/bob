@@ -93,6 +93,52 @@ def bob_identity_message(state: dict) -> Optional[dict]:
     return {"role": "system", "content": content}
 
 
+# ── Ask-Bob helper bubble page context (MS9 U5, SPEC §3 / D3) ──────────────────
+# The header line the page-context system card leads with. Captured as a constant so a
+# test can assert exact bytes (guards drift), mirroring LOCALE_DIRECTIVE.
+PAGE_CONTEXT_HEADER = (
+    "The user is viewing a screen in the BoBClaw app (not this chat) and is asking the "
+    "Ask-Bob helper about it. Use the following snapshot to answer questions about what "
+    "is on their screen; do not invent state that is not shown."
+)
+
+
+def page_context_card(page_context, *, enabled: bool) -> Optional[dict]:
+    """The front-adjacent system card for the helper bubble's page snapshot, or None.
+
+    The SINGLE source of the page-context injection predicate (execute_node and the U5
+    tests both call this — mirrors ``locale_directive_message``). Returns None — injecting
+    NOTHING — whenever:
+
+    * ``enabled`` is False (``config.PAGE_CONTEXT_ENABLED`` off) — the HARD flag gate: the
+      assembled prompt is byte-identical regardless of what the client sent (U5 accept #1); or
+    * ``page_context`` is not a non-empty dict (absent / None / wrong type / ``{}``).
+
+    Otherwise returns ``{"role": "system", "content": <deterministic card>}``: the header,
+    then ``Screen: <page>`` when a string ``page`` is present, then ``Visible state:\\n<snap>``
+    where ``snapshot`` is used verbatim if a string, else JSON with ``sort_keys=True`` (a
+    stable rendering so the same snapshot always yields the same bytes).
+    """
+    if not enabled:
+        return None
+    if not isinstance(page_context, dict) or not page_context:
+        return None
+    lines = [PAGE_CONTEXT_HEADER]
+    page = page_context.get("page")
+    if isinstance(page, str) and page.strip():
+        lines.append(f"Screen: {page.strip()}")
+    snapshot = page_context.get("snapshot")
+    if snapshot is not None:
+        snap_text = (
+            snapshot.strip()
+            if isinstance(snapshot, str)
+            else json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
+        )
+        if snap_text:
+            lines.append(f"Visible state:\n{snap_text}")
+    return {"role": "system", "content": "\n".join(lines)}
+
+
 # ── LangChain / LangGraph imports for the opt-in tool loop (P0) ────────────────
 # Imported locally so the rest of execute.py keeps running even if these
 # packages are not available; P0 adds langchain-openai as a required dep.
@@ -1175,6 +1221,16 @@ async def execute_node(state: "AgentState") -> dict:
     project_instructions = (state.get("project_instructions") or "").strip()
     if project_instructions:
         messages.insert(0, {"role": "system", "content": f"Project context:\n{project_instructions}"})
+    # ── Ask-Bob helper bubble page-context splice (MS9 U5) ───────────────────
+    # An additive front-adjacent system card carrying the screen the user is viewing —
+    # the same identity-card pattern as the project splice above. FLAG-GATED: page_context_card
+    # returns None (⇒ nothing inserted ⇒ byte-identical prompt) whenever PAGE_CONTEXT_ENABLED is
+    # off OR no page_context rode in. Reaches every backend via the same path as the project card.
+    _page_context_card = page_context_card(
+        state.get("page_context"), enabled=config.PAGE_CONTEXT_ENABLED
+    )
+    if _page_context_card is not None:
+        messages.insert(0, _page_context_card)
     # This is the ONE locale injection point, front-most, covering both the HTTP join
     # and the subprocess _messages_to_prompt (both concatenate role:"system" messages in order).
     # locale_directive_message() is the single source of the guard (None => English, never raises).

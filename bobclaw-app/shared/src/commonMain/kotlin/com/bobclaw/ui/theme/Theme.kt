@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -19,6 +20,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.bobclaw.shared.resources.Res
+import com.bobclaw.shared.resources.inter_medium
+import com.bobclaw.shared.resources.inter_regular
+import com.bobclaw.shared.resources.inter_semibold
+import com.bobclaw.shared.resources.jetbrainsmono_medium
+import com.bobclaw.shared.resources.jetbrainsmono_regular
+import com.bobclaw.shared.resources.jetbrainsmono_semibold
+import org.jetbrains.compose.resources.Font
+import kotlin.math.pow
 
 /**
  * BoBClaw "command-center" theme tokens (DESIGN rev 1, 2026-06-19).
@@ -35,6 +45,28 @@ import androidx.compose.ui.unit.sp
 
 /** Default user-settable accent (DESIGN §3.4 — teal). */
 val TealDefault: Color = Color(0xFF2DD4BF)
+
+/**
+ * The rendered light/dark mode of the token set (UIUX-PLAN §4.1). `System` in the user's
+ * [com.bobclaw.network.UserPrefs.theme] is resolved to one of these at the root (App.kt) from
+ * the OS setting; [bobclawColors] itself only knows a concrete mode.
+ *
+ * [DARK] reproduces the landed rev-1 palette BYTE-FOR-BYTE (the §6.3 pre-flight gate: "Dark values
+ * stay EXACTLY as landed"). [LIGHT] is the §4.1 light ramp, shipped beta-flagged behind the Settings
+ * toggle. Derivation formulas (`surfaceAccent` tint %, `accentEmphasis`, `onAccent`) are mode-aware.
+ */
+enum class ThemeMode { DARK, LIGHT }
+
+/**
+ * Resolve the persisted [com.bobclaw.network.UserPrefs.theme] string (`dark|light|system`) plus the
+ * OS's current setting into a concrete [ThemeMode]. `system` follows the OS; anything unrecognized
+ * falls back to [ThemeMode.DARK] (the app's historical default). Pure → unit-tested.
+ */
+fun resolveThemeMode(themePref: String, systemInDark: Boolean): ThemeMode = when (themePref) {
+    "light" -> ThemeMode.LIGHT
+    "system" -> if (systemInDark) ThemeMode.DARK else ThemeMode.LIGHT
+    else -> ThemeMode.DARK // "dark" and any unknown/corrupt value
+}
 
 /**
  * The full §3 token set. Accent-tinted tokens are DERIVED from [accent] in [bobclawColors]
@@ -81,7 +113,19 @@ data class BoBClawColorSet(
  * `accentEmphasis ~#5EEAD4`, `onAccent ~#06211E`) — the hex in §3 are illustrative; §3.4 specifies
  * these tokens as DERIVED, so the derivation rule is the source of truth, not the example hex.
  */
-fun bobclawColors(accent: Color = TealDefault): BoBClawColorSet {
+fun bobclawColors(
+    accent: Color = TealDefault,
+    mode: ThemeMode = ThemeMode.DARK,
+): BoBClawColorSet = when (mode) {
+    ThemeMode.DARK -> darkColors(accent)
+    ThemeMode.LIGHT -> lightColors(accent)
+}
+
+/**
+ * DARK palette — reproduces the landed rev-1 values BYTE-FOR-BYTE (§6.3: "Dark values stay EXACTLY
+ * as landed"). Do not tweak: the mode-aware split must be a no-op for existing dark rendering.
+ */
+private fun darkColors(accent: Color): BoBClawColorSet {
     val canvas = Color(0xFF0F1316)
     return BoBClawColorSet(
         // §3.1 Surfaces
@@ -109,6 +153,76 @@ fun bobclawColors(accent: Color = TealDefault): BoBClawColorSet {
         warn = Color(0xFFFBBF24),
         alert = Color(0xFFFB923C),
     )
+}
+
+/**
+ * LIGHT palette — the exact UIUX-PLAN §4.1 ramp approved at the §6.3 pre-flight gate. Surfaces
+ * lighten, borders DARKEN (vs the dark palette's lighten), the text ramp inverts, and status hues
+ * are re-anchored for contrast on white. Mode-aware derivations:
+ *  - `surfaceAccent` = accent @ **8%** over the light canvas (10% in dark);
+ *  - `accentEmphasis` DARKENS toward black (dark LIGHTENS toward white) — emphasis reads on a light bg;
+ *  - `onAccent` is luminance-picked (text on an accent FILL): near-black on a light accent, near-white
+ *    on a dark one, so a saturated pill/badge stays legible for every one of the 20 presets.
+ * Ships beta-flagged behind the Settings toggle.
+ */
+private fun lightColors(accent: Color): BoBClawColorSet {
+    val canvas = Color(0xFFF6F8F9)
+    return BoBClawColorSet(
+        // §4.1 Surfaces
+        canvas = canvas,
+        rail = Color(0xFFEFF2F4),
+        surfaceCard = Color(0xFFFFFFFF),
+        surfaceRaised = Color(0xFFF1F4F6),
+        surfaceAccent = accent.copy(alpha = 0.08f).compositeOver(canvas),
+        // §4.1 Borders (darken instead of lighten): section subtlest → control strongest
+        borderSection = Color(0xFFD8DEE3),
+        borderCard = Color(0xFFCDD5DB),
+        borderControl = Color(0xFFC2CBD2),
+        borderAccent = accent.copy(alpha = 0.30f).compositeOver(canvas),
+        // §4.1 Text ramp (inverted): dark ink on light surfaces
+        textPrimary = Color(0xFF16212A),
+        textBody = Color(0xFF2E3B44),
+        textSecondary = Color(0xFF5A6873),
+        textMuted = Color(0xFF8B98A2),
+        // §4.1 Accent + mode-aware derivations
+        accent = accent,
+        accentEmphasis = lerp(accent, Color.Black, 0.15f),
+        onAccent = onAccentForLight(accent),
+        // §4.1 Status re-anchored for ≥4.5:1 on white
+        success = Color(0xFF1F883D),
+        warn = Color(0xFFB58500),
+        alert = Color(0xFFD9530B),
+    )
+}
+
+/**
+ * Pick the ink that sits ON a filled accent in light mode. Vivid/light accents (teal, yellow, lime)
+ * take near-black; the rare dark accent takes near-white — chosen by the accent's own WCAG relative
+ * luminance so every preset's badge/pill text clears contrast.
+ */
+private fun onAccentForLight(accent: Color): Color =
+    if (relativeLuminance(accent) > 0.4) lerp(accent, Color.Black, 0.88f)
+    else lerp(accent, Color.White, 0.92f)
+
+/**
+ * WCAG 2.1 relative luminance of an sRGB [color] (all app colors are sRGB `Color(0xFF..)`).
+ * Exposed (not private) so the contrast unit test and any contrast-aware component share ONE formula.
+ */
+fun relativeLuminance(color: Color): Double {
+    fun lin(c: Float): Double {
+        val cs = c.toDouble()
+        return if (cs <= 0.03928) cs / 12.92 else ((cs + 0.055) / 1.055).pow(2.4)
+    }
+    return 0.2126 * lin(color.red) + 0.7152 * lin(color.green) + 0.0722 * lin(color.blue)
+}
+
+/** WCAG 2.1 contrast ratio between two colors, in [1.0, 21.0]. Symmetric. */
+fun contrastRatio(a: Color, b: Color): Double {
+    val la = relativeLuminance(a)
+    val lb = relativeLuminance(b)
+    val hi = maxOf(la, lb)
+    val lo = minOf(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
 }
 
 /**
@@ -196,12 +310,48 @@ object BoBClawColors {
 }
 
 /**
+ * The bundled type faces (ASSET-MANIFEST §2): **Inter** (sans / body / UI) + **JetBrains Mono**
+ * (machine data), weights 400/500/600. Provided at the app root from [rememberBobclawFonts];
+ * [BoBClawType] reads the active families from [LocalBoBClawFonts]. The default falls back to the
+ * platform sans/mono so previews and unit tests that never install a provider still resolve.
+ */
+data class BoBClawFonts(val sans: FontFamily, val mono: FontFamily)
+
+/** Fallback = platform Default/Monospace (previews/tests); the real bundled faces come from the root. */
+val LocalBoBClawFonts = staticCompositionLocalOf { BoBClawFonts(FontFamily.Default, FontFamily.Monospace) }
+
+/**
+ * Build the bundled [BoBClawFonts] from Compose Resources. `@Composable` because Compose Resources'
+ * [Font] is composable; `remember`ed so the FontFamily objects stay stable across recompositions.
+ * Installed once at the app root (App.kt) — this is what actually kills the `FontFamily.Monospace`
+ * placeholder (finding A8) app-wide, since [BoBClawType] resolves its families from the local.
+ */
+@Composable
+fun rememberBobclawFonts(): BoBClawFonts {
+    val sans = FontFamily(
+        Font(Res.font.inter_regular, FontWeight.W400),
+        Font(Res.font.inter_medium, FontWeight.W500),
+        Font(Res.font.inter_semibold, FontWeight.W600),
+    )
+    val mono = FontFamily(
+        Font(Res.font.jetbrainsmono_regular, FontWeight.W400),
+        Font(Res.font.jetbrainsmono_medium, FontWeight.W500),
+        Font(Res.font.jetbrainsmono_semibold, FontWeight.W600),
+    )
+    // Keyless remember: the bundled faces are constant for the app's life, so compute the wrapper
+    // ONCE and keep a stable identity — avoids re-providing LocalBoBClawFonts (and recomposing its
+    // readers) on every root recomposition, regardless of whether resource-Font equality is by value.
+    return remember { BoBClawFonts(sans, mono) }
+}
+
+/**
  * §3.6 Type & shape tokens.
  *
- * Two families: a sans UI family (default) + a mono family for ALL machine data
- * (IDs, timestamps, backend names, latencies, costs, paths). The mono/sans split is
- * the core of the "command-center" feel. The BUNDLED mono font asset is a later lane —
- * for now the mono styles use [FontFamily.Monospace] so the split exists today.
+ * Two families: a sans UI family + a mono family for ALL machine data (IDs, timestamps, backend
+ * names, latencies, costs, paths). The mono/sans split is the core of the "command-center" feel.
+ * The families now resolve the BUNDLED faces (Inter / JetBrains Mono) from [LocalBoBClawFonts] via
+ * the same `@Composable @ReadOnlyComposable get()` pattern as the [BoBClawColors] aliases, so every
+ * existing `BoBClawType.*` call site keeps compiling UNCHANGED while picking up the real fonts.
  *
  * Weights: 400 / 500 / 600 only. Radii: controls/cells 8 · cards 10–12 · pills 20 · dots/avatars full.
  */
@@ -224,40 +374,41 @@ object BoBClawType {
     val medium = FontWeight.W500
     val semibold = FontWeight.W600
 
-    val sans = FontFamily.Default
-    // Bundled mono asset arrives in a later lane; the split exists now via Monospace.
-    val mono = FontFamily.Monospace
+    // Families resolve the bundled Inter / JetBrains Mono from the composition local (see
+    // [LocalBoBClawFonts]); @Composable @ReadOnlyComposable so the existing call sites are untouched.
+    val sans: FontFamily @Composable @ReadOnlyComposable get() = LocalBoBClawFonts.current.sans
+    val mono: FontFamily @Composable @ReadOnlyComposable get() = LocalBoBClawFonts.current.mono
 
     /** titles / names — 14.5–16, 600 */
-    val title = TextStyle(
+    val title: TextStyle @Composable @ReadOnlyComposable get() = TextStyle(
         fontFamily = sans,
         fontWeight = semibold,
         fontSize = 15.sp,
     )
 
     /** nav / body copy — 12.5–13.5, 400/500 */
-    val body = TextStyle(
+    val body: TextStyle @Composable @ReadOnlyComposable get() = TextStyle(
         fontFamily = sans,
         fontWeight = regular,
         fontSize = 13.sp,
     )
 
     /** labels / secondary — 12.5, 500 */
-    val label = TextStyle(
+    val label: TextStyle @Composable @ReadOnlyComposable get() = TextStyle(
         fontFamily = sans,
         fontWeight = medium,
         fontSize = 12.5.sp,
     )
 
     /** mono labels — IDs / timestamps / backends / latencies / costs — 10–11 */
-    val monoLabel = TextStyle(
+    val monoLabel: TextStyle @Composable @ReadOnlyComposable get() = TextStyle(
         fontFamily = mono,
         fontWeight = medium,
         fontSize = 11.sp,
     )
 
     /** section captions — 10, mono, wide tracking, textMuted (caller applies color) */
-    val monoCaption = TextStyle(
+    val monoCaption: TextStyle @Composable @ReadOnlyComposable get() = TextStyle(
         fontFamily = mono,
         fontWeight = regular,
         fontSize = 10.sp,

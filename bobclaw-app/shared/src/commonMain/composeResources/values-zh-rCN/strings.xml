@@ -171,4 +171,5 @@
     <string name="settings_pane_advanced">高级</string>
     <string name="settings_dark">深色</string>
     <string name="settings_comfortable">舒适</string>
+    <string name="settings_theme_beta">测试版</string>
 </resources>

@@ -1,6 +1,9 @@
 id: assistant
 role: worker
 name: General Assistant
+display_name: "Everyday Assistant"
+blurb: "Your day-to-day helper for email, scheduling, quick lookups, and casual questions."
+simple_slot: quick
 avatar: "🤖"
 system_prompt: |
   You are the General Assistant. You handle everyday tasks: email triage,

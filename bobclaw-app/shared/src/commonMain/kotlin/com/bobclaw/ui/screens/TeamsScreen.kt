@@ -21,12 +21,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,11 +47,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.bobclaw.model.BackendPalette
+import com.bobclaw.model.Capabilities
 import com.bobclaw.model.ProtocolBounds
 import com.bobclaw.model.Team
 import com.bobclaw.model.TeamDraft
 import com.bobclaw.model.TeamSlot
 import com.bobclaw.network.RestClient
+import com.bobclaw.ui.components.ActionDisposition
+import com.bobclaw.ui.components.IconGlyph
 import com.bobclaw.ui.theme.BoBClawShapes
 import com.bobclaw.ui.theme.BoBClawType
 import com.bobclaw.ui.theme.GradientBackground
@@ -59,6 +64,9 @@ import kotlinx.coroutines.launch
 private val ErrorRed = Color(0xFFE74C3C)
 private val OkGreen = Color(0xFF2ECC71)
 private val SHAPES = listOf("fusion", "sequential", "debate")
+
+/** MS9-W6: a team APPLY awaiting the D12 confirm-once dialog (the roster to write + replace-or-create). */
+private data class PendingApply(val draft: TeamDraft, val overwrite: Boolean)
 
 // ── immutable draft edits (single source the form + refine both update) ──────────
 private fun TeamDraft.withName(n: String) = copy(name = n)
@@ -140,6 +148,76 @@ private fun DraftTextField(
 }
 
 /**
+ * Teams (SPEC §2 D1). Two tabs: **Builder** (author fleets) + **Resolved routing** — the latter
+ * is the retired top-level Routing page, rendered VERBATIM (read-only `resolve()` view) so no
+ * function is lost when Routing leaves the nav rail.
+ *
+ * U9 (SPEC §6): the "Resolved routing" debug table is **Pro-only**. In Simple the tab strip is
+ * hidden entirely (routing-tab visibility + Teams wording sweep) and the plain team builder is shown
+ * on its own; Pro is byte-identical to pre-U9 (both tabs + the strip).
+ */
+@Composable
+fun TeamsScreen(
+    restClient: RestClient?,
+    modifier: Modifier = Modifier,
+    experienceLevel: String = "simple",
+    // MS9-W6 (Ask-Bob-on-Teams): the D11/D12 guardrail wiring so an APPLY (create/replace) of a
+    // composed team routes through the same reversible confirm-once path the Ask-Bob bubble uses —
+    // never a silent write. Defaulted so the screen still renders standalone (tests / previews).
+    capabilities: Capabilities? = null,
+    confirmedActions: Set<String> = emptySet(),
+    onConfirmAction: (String) -> Unit = {},
+    onOpenApprovals: () -> Unit = {},
+) {
+    val showRoutingTab = showResolvedRoutingTab(experienceLevel)
+    var tab by remember { mutableStateOf(0) }
+    // Guard: if the level flips to Simple while the routing tab is selected, fall back to Builder.
+    if (!showRoutingTab && tab != 0) tab = 0
+    val colors = LocalBoBClawColors
+    Column(modifier.fillMaxSize().background(colors.canvas)) {
+        if (showRoutingTab) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TeamsTab(stringResource(Res.string.teams_tab_builder), tab == 0) { tab = 0 }
+                TeamsTab(stringResource(Res.string.teams_tab_resolved_routing), tab == 1) { tab = 1 }
+            }
+            Spacer(Modifier.fillMaxWidth().height(1.dp).background(colors.borderSection))
+        }
+        when (tab) {
+            0 -> TeamsBuilderTab(
+                restClient,
+                modifier = Modifier.weight(1f),
+                capabilities = capabilities,
+                confirmedActions = confirmedActions,
+                onConfirmAction = onConfirmAction,
+                onOpenApprovals = onOpenApprovals,
+            )
+            else -> RoutingScreen(restClient, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun TeamsTab(label: String, active: Boolean, onClick: () -> Unit) {
+    val colors = LocalBoBClawColors
+    Box(
+        modifier = Modifier
+            .clip(BoBClawShapes.full)
+            .background(if (active) colors.accent else colors.surfaceAccent, BoBClawShapes.full)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = label,
+            style = BoBClawType.body,
+            color = if (active) colors.onAccent else colors.textSecondary,
+        )
+    }
+}
+
+/**
  * Profile builder (DESIGN §6.4 rail "Teams"). One working [TeamDraft] both the
  * assistant chat and the form edit: each role is a roster of backend slots, each slot
  * carries an optional **role prompt** (how that spot acts), and a **shape** + bounds
@@ -147,9 +225,13 @@ private fun DraftTextField(
  * are read-only.
  */
 @Composable
-fun TeamsScreen(
+private fun TeamsBuilderTab(
     restClient: RestClient?,
     modifier: Modifier = Modifier,
+    capabilities: Capabilities? = null,
+    confirmedActions: Set<String> = emptySet(),
+    onConfirmAction: (String) -> Unit = {},
+    onOpenApprovals: () -> Unit = {},
 ) {
     var palette by remember { mutableStateOf<BackendPalette?>(null) }
     var profiles by remember { mutableStateOf<List<Team>?>(null) }
@@ -160,6 +242,8 @@ fun TeamsScreen(
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saveOk by remember { mutableStateOf<String?>(null) }
+    // MS9-W6: the D12 confirm-once dialog before an APPLY (create/replace). Non-null ⇒ dialog shown.
+    var pendingApply by remember { mutableStateOf<PendingApply?>(null) }
 
     var message by remember { mutableStateOf("") }
     var refining by remember { mutableStateOf(false) }
@@ -237,10 +321,10 @@ fun TeamsScreen(
                                     val seed = draft.takeIf { it.roles.isNotEmpty() || it.name.isNotBlank() }
                                     val res = restClient!!.refineTeam(msg, history, seed)
                                     draft = res.draft
-                                    chat.add(false to (res.error?.let { "⚠ $it" }
+                                    chat.add(false to (res.error?.let { "! $it" }
                                         ?: res.reply.ifBlank { "Updated the draft." }))
                                 } catch (e: Exception) {
-                                    chat.add(false to "⚠ ${e.message ?: "refine failed"}")
+                                    chat.add(false to "! ${e.message ?: "refine failed"}")
                                 } finally {
                                     refining = false
                                 }
@@ -264,7 +348,12 @@ fun TeamsScreen(
 
                 pal.roles.forEach { role ->
                     Spacer(Modifier.height(10.dp))
-                    Text(roleLabel(role), style = BoBClawType.monoCaption, color = colors.textMuted)
+                    // MS9-W6: surface the manager (apex) as a first-class, labeled spot + who holds it.
+                    if (role == MANAGER_ROLE) {
+                        ManagerRoleHeader(managerBackend(draft.roles))
+                    } else {
+                        Text(roleLabel(role), style = BoBClawType.monoCaption, color = colors.textMuted)
+                    }
                     (draft.roles[role] ?: emptyList()).forEachIndexed { idx, slot ->
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -283,10 +372,10 @@ fun TeamsScreen(
                                     style = BoBClawType.monoCaption, color = colors.textMuted)
                             }
                             Spacer(Modifier.weight(1f))
-                            Text(
-                                "✕",
-                                style = BoBClawType.monoCaption,
-                                color = ErrorRed,
+                            IconGlyph(
+                                name = "x",
+                                tint = ErrorRed,
+                                size = 12.dp,
                                 modifier = Modifier.clip(BoBClawShapes.cell)
                                     .clickable { draft = draft.removeSlot(role, idx) }
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -354,41 +443,90 @@ fun TeamsScreen(
                         modifier = Modifier.padding(top = 2.dp))
                 }
 
+                // MS9-W6: saving under an existing CUSTOM name REPLACES it (overwrite) — that IS how you
+                // edit a team (no in-place update endpoint). Built-ins are never overwritten (core rejects).
+                val existingCustomNames = remember(profiles) {
+                    (profiles ?: emptyList()).filterNot { it.builtin }.map { it.name.lowercase() }.toSet()
+                }
+                // The actual write — reused by the Save button (already-confirmed / read tier) AND by the
+                // D12 confirm-once dialog. Never called directly on a first, unconfirmed apply.
+                val runApply: (TeamDraft, Boolean) -> Unit = { toSave, overwrite ->
+                    saving = true; saveError = null; saveOk = null
+                    scope.launch {
+                        try {
+                            val created = restClient!!.createProfile(toSave, overwrite = overwrite)
+                            saveOk = if (overwrite) "Updated '${created.name}'" else "Saved '${created.name}'"
+                            draft = TeamDraft(); chat.clear(); reloadKey++
+                        } catch (e: Exception) {
+                            saveError = e.message ?: "Save failed"
+                        } finally {
+                            saving = false
+                        }
+                    }
+                }
+                // Validate, then route the APPLY through the same D11/D12 disposition the Ask-Bob bubble
+                // uses (create_team is `reversible` → confirm-once, never a silent write).
+                val performApply: () -> Unit = perform@{
+                    val cleaned = cleanedRoles(draft)
+                    val name = draft.name.trim()
+                    if (name.isBlank()) { saveError = "name is required"; return@perform }
+                    if (cleaned.isEmpty()) { saveError = "add at least one role + backend"; return@perform }
+                    val overwrite = name.lowercase() in existingCustomNames
+                    val toSave = draft.copy(name = name, roles = cleaned)
+                    when (applyTeamDisposition(capabilities, confirmedActions)) {
+                        ActionDisposition.EXECUTE -> runApply(toSave, overwrite)
+                        ActionDisposition.CONFIRM_FIRST -> pendingApply = PendingApply(toSave, overwrite)
+                        ActionDisposition.ROUTE_TO_APPROVALS -> {
+                            saveError = "This change needs your OK — sent to Approvals."
+                            onOpenApprovals()
+                        }
+                        ActionDisposition.RATE_CAPPED -> saveError = "Too many changes at once — try again."
+                    }
+                }
+
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        enabled = !saving,
-                        onClick = {
-                            val cleaned = draft.roles
-                                .mapValues { (_, slots) -> slots.filter { it.backend.isNotBlank() } }
-                                .filterValues { it.isNotEmpty() }
-                            when {
-                                draft.name.isBlank() -> saveError = "name is required"
-                                cleaned.isEmpty() -> saveError = "add at least one role + backend"
-                                else -> {
-                                    saving = true; saveError = null; saveOk = null
-                                    scope.launch {
-                                        try {
-                                            val created = restClient!!.createProfile(
-                                                draft.copy(name = draft.name.trim(), roles = cleaned)
-                                            )
-                                            saveOk = "Saved '${created.name}'"
-                                            draft = TeamDraft(); chat.clear(); reloadKey++
-                                        } catch (e: Exception) {
-                                            saveError = e.message ?: "Save failed"
-                                        } finally {
-                                            saving = false
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                    ) { Text(if (saving) stringResource(Res.string.teams_save_button_saving) else stringResource(Res.string.teams_save_button_save)) }
+                    Button(enabled = !saving, onClick = performApply) {
+                        Text(if (saving) stringResource(Res.string.teams_save_button_saving) else stringResource(Res.string.teams_save_button_save))
+                    }
                     Spacer(Modifier.width(12.dp))
                     val err = saveError
                     val ok = saveOk
                     if (err != null) Text(err, style = BoBClawType.monoCaption, color = ErrorRed)
                     else if (ok != null) Text(ok, style = BoBClawType.monoCaption, color = OkGreen)
+                }
+
+                // ── D12 confirm-once dialog: first APPLY of a team write confirms, then persists the
+                // confirm (shared with the Ask-Bob bubble's create_team). Yes → write; Cancel → no-op. ──
+                pendingApply?.let { pending ->
+                    AlertDialog(
+                        onDismissRequest = { pendingApply = null },
+                        title = { Text(stringResource(Res.string.teams_apply_confirm_title)) },
+                        text = {
+                            Column {
+                                Text(stringResource(
+                                    if (pending.overwrite) Res.string.teams_apply_confirm_replace
+                                    else Res.string.teams_apply_confirm_create,
+                                    pending.draft.name,
+                                ))
+                                Spacer(Modifier.height(8.dp))
+                                Text(stringResource(Res.string.teams_apply_confirm_once), style = BoBClawType.monoCaption)
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                onConfirmAction(APPLY_TEAM_ACTION_ID) // persist confirm-once (D12)
+                                val p = pending
+                                pendingApply = null
+                                runApply(p.draft, p.overwrite)
+                            }) { Text(stringResource(Res.string.teams_apply_confirm_yes)) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { pendingApply = null }) {
+                                Text(stringResource(Res.string.teams_apply_confirm_cancel))
+                            }
+                        },
+                    )
                 }
 
                 // ── All profiles ────────────────────────────────────────────
@@ -401,20 +539,58 @@ fun TeamsScreen(
                     Text(stringResource(Res.string.teams_loading), style = BoBClawType.body, color = colors.textSecondary)
                 } else {
                     list.forEach { team ->
-                        TeamRow(team, onDelete = {
-                            scope.launch {
-                                try {
-                                    restClient!!.deleteProfile(team.name)
-                                    reloadKey++
-                                } catch (_: Exception) {
+                        TeamRow(
+                            team,
+                            // MS9-W6: "Edit" loads the existing team into the draft (Team→Draft) so the
+                            // Ask-Bob / refine flow can change it (incl. the manager); Save then REPLACES it.
+                            onEdit = {
+                                draft = team.toDraft()
+                                chat.clear(); message = ""
+                                saveError = null; saveOk = null
+                            },
+                            onDelete = {
+                                scope.launch {
+                                    try {
+                                        restClient!!.deleteProfile(team.name)
+                                        reloadKey++
+                                    } catch (_: Exception) {
+                                    }
                                 }
-                            }
-                        })
+                            },
+                        )
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * MS9-W6 — the manager (apex) role header in the draft builder: labels the spot "Manager" (first-class,
+ * bold) and shows who holds it live as the draft changes, so the "no manager spot" gap is visibly closed.
+ */
+@Composable
+private fun ManagerRoleHeader(holder: String?) {
+    val colors = LocalBoBClawColors
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            stringResource(Res.string.teams_manager_label),
+            style = BoBClawType.body,
+            color = colors.textPrimary,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            holder ?: stringResource(Res.string.teams_manager_unassigned),
+            style = BoBClawType.monoCaption,
+            color = if (holder != null) colors.accent else colors.textMuted,
+        )
+    }
+    Text(
+        stringResource(Res.string.teams_manager_caption),
+        style = BoBClawType.monoCaption,
+        color = colors.textMuted,
+    )
 }
 
 @Composable
@@ -470,7 +646,7 @@ private fun Dropdown(
 }
 
 @Composable
-private fun TeamRow(team: Team, onDelete: () -> Unit) {
+private fun TeamRow(team: Team, onEdit: () -> Unit, onDelete: () -> Unit) {
     val colors = LocalBoBClawColors
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -487,7 +663,19 @@ private fun TeamRow(team: Team, onDelete: () -> Unit) {
                 Text(team.shape, style = BoBClawType.monoCaption, color = colors.success)
             }
             Spacer(Modifier.weight(1f))
+            // MS9-W6: custom teams are editable (there's now a way to CHANGE a team) — Edit loads it
+            // into the draft for the Ask-Bob / refine flow; built-ins stay read-only.
             if (!team.builtin) {
+                Text(
+                    stringResource(Res.string.teams_edit_label),
+                    style = BoBClawType.monoCaption,
+                    color = colors.accent,
+                    modifier = Modifier
+                        .clip(BoBClawShapes.cell)
+                        .clickable(onClick = onEdit)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                Spacer(Modifier.width(4.dp))
                 Text(
                     stringResource(Res.string.teams_delete_label),
                     style = BoBClawType.monoCaption,
@@ -499,6 +687,16 @@ private fun TeamRow(team: Team, onDelete: () -> Unit) {
                 )
             }
         }
+        // MS9-W6: every team shows who holds the manager (apex) spot — the "no manager spot" gap closed.
+        Text(
+            stringResource(
+                Res.string.teams_manager_current,
+                team.managerBackend() ?: stringResource(Res.string.teams_manager_unassigned),
+            ),
+            style = BoBClawType.monoCaption,
+            color = colors.accent,
+            modifier = Modifier.padding(start = 8.dp),
+        )
         team.roles.forEach { (role, slots) ->
             val txt = slots.joinToString(", ") { s ->
                 s.backend + if (s.rolePrompt.isBlank()) "" else " (\"${s.rolePrompt.take(28)}\")"

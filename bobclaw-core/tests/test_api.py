@@ -560,6 +560,69 @@ async def test_forget_when_disabled_returns_503(client):
     assert (await resp.json())["code"] == "memory_unavailable"
 
 
+# ─── /api/memory/graph (U4a) ──────────────────────────────────────────────────
+
+
+async def test_memory_graph_empty_when_disabled(client):
+    # MEMORY_ENABLED defaults to False in the test env → empty graph, no 500.
+    resp = await client.get("/api/memory/graph")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body == {"nodes": [], "edges": [], "meta": {"node_count": 0, "edge_count": 0}}
+
+
+class _GraphFakeEventLog:
+    async def replay(self, *a, **k):
+        for eid in ("e1",):
+            body = {"user_message": "hi", "assistant_response": "yo",
+                    "face_id": "assistant", "turn_id": "t1"}
+            yield type("E", (), {"event_id": eid, "kind": "agent_turn",
+                                 "body": body, "ts": "2026-07-08T00:00:00+00:00"})()
+
+
+class _GraphFakeProvider:
+    _client = None  # no qdrant in this unit test → facts+conversations only
+    collection_prefix = "bobclaw_"
+
+
+class _GraphFakeMem:
+    def __init__(self, facts):
+        self.fact_store = _FakeFactStore(facts, [])
+        self.event_log = _GraphFakeEventLog()
+        self.retriever = type("R", (), {"_provider": _GraphFakeProvider()})()
+
+
+async def test_memory_graph_returns_assembled_shape(client, monkeypatch):
+    mem = _GraphFakeMem([_l1_fact("f1", "user likes tea")])
+    # _l1_fact stamps source_event_id="evt-f1"; point the conversation at it so a
+    # provenance edge forms only if ids line up. Use e1 for the conversation and a
+    # fact whose source_event_id is e1.
+    from core.memory.models import ConfidenceStub, Fact
+    mem.fact_store._facts = {
+        "f1": Fact(fact_id="f1", generation_method="extract_facts_from_event",
+                   body={"text": "user likes tea", "subject": "user", "predicate": "likes"},
+                   source_event_id="e1", input_hash="blake3:" + "a" * 64,
+                   confidence=ConfidenceStub(), ts="2026-07-08T00:00:00+00:00")
+    }
+    _enable_memory(monkeypatch, mem)
+
+    resp = await client.get("/api/memory/graph?nodes=100&k=5")
+    assert resp.status == 200
+    body = await resp.json()
+    types = {n["type"] for n in body["nodes"]}
+    assert types == {"fact", "conversation"}
+    prov = [e for e in body["edges"] if e["type"] == "provenance"]
+    assert prov == [{"source": "fact:f1", "target": "conversation:e1", "type": "provenance"}]
+    assert body["meta"]["node_cap"] == 100
+
+
+async def test_memory_graph_rejects_bad_params(client, monkeypatch):
+    _enable_memory(monkeypatch, _GraphFakeMem([]))
+    resp = await client.get("/api/memory/graph?nodes=notanint")
+    assert resp.status == 400
+    assert (await resp.json())["code"] == "invalid_request"
+
+
 # ─── /api/chat (B1b) ──────────────────────────────────────────────────────────
 
 async def test_chat_returns_503_when_graph_missing(client):
@@ -1090,3 +1153,4 @@ async def test_history_injection_still_produces_message_complete(
     completes = [e for e in events if e.get("type") == "message_complete"]
     assert len(completes) == 1
     assert completes[0]["tokens_out"] >= 1
+

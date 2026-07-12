@@ -462,4 +462,20 @@ class AntigravityClient:
             except (asyncio.TimeoutError, ProcessLookupError):
                 pass
             raise AgyError(f"agy CLI timed out after {self.timeout}s")
+        except asyncio.CancelledError:
+            # MS9-W5 (finding B, agy guard): the OUTER per-seat timeout — panel_worker's
+            # asyncio.wait_for(WORKER_TIMEOUT_SECONDS), which is SHORTER than this
+            # client's AGY_TIMEOUT_SECONDS — cancelled this spawn when agy (a vendor CLI
+            # prone to hanging) stopped responding. KILL the subprocess so a hung agy is
+            # torn down instead of orphaned as a zombie holding a slot/handle, then
+            # re-raise so cancellation semantics are preserved (the seat degrades via its
+            # fallback chain and finalization proceeds — agy is never the synthesizer, and
+            # the synth step is itself timeout-bounded, so agy can't block the council).
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            except Exception:  # noqa: BLE001 — teardown is best-effort, never fatal
+                logger.debug("agy proc.kill() raised during cancel teardown", exc_info=True)
+            raise
         return stdout, stderr, proc.returncode

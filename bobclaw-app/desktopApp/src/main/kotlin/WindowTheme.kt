@@ -10,8 +10,7 @@ import java.awt.Window
 
 /**
  * Tints the native Windows 11 title-bar (caption) to the command-center dark theme so the OS
- * caption reads as one continuous surface with the app, instead of the default lighter grey
- * (GUI lane 4b follow-up — the operator chose "match app dark").
+ * caption reads as one continuous surface with the app, instead of the default lighter grey.
  *
  * Uses the DWM `DWMWA_CAPTION_COLOR` / `DWMWA_TEXT_COLOR` window attributes (Windows 11 build
  * 22000+). Fully **fail-safe**: any failure — non-Windows OS, pre-Win11, dwmapi/JNA unavailable,
