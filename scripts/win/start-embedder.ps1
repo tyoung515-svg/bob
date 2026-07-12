@@ -1,7 +1,10 @@
 <#
-  BoBClaw — durable granite-311m embedder launcher (:8081, CPU, llama.cpp).
+  BoBClaw — durable local embedder launcher (:8081, llama.cpp).
   Serves the OpenAI /v1/embeddings endpoint the memory module's embed_text slot
-  points at.
+  points at. Default slot model since v0.98: qwen3-embedding-4b (2560-dim,
+  last-token pooling). The CPU-light alternative granite-embedding-311m works
+  with BOBCLAW_EMBED_POOLING=mean — keep the GGUF, the pooling mode, and the
+  memory_slots.toml embed_text block in agreement.
 
   WHY THIS EXISTS: during bring-up the embedder kept dying because it was
   launched from a transient shell (a Tee'd background job, or Start-Process from
@@ -30,16 +33,22 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Binary + model locations. Override via environment (recommended) or edit here:
-#   LLAMA_SERVER_EXE   — path to llama.cpp's llama-server.exe (defaults to one on PATH)
-#   BOBCLAW_EMBED_GGUF — path to your granite-embedding-311m GGUF (required)
+#   LLAMA_SERVER_EXE       — path to llama.cpp's llama-server.exe (defaults to one on PATH)
+#   BOBCLAW_EMBED_GGUF     — path to your embedding GGUF (required; the default
+#                            embed_text slot expects qwen3-embedding-4b)
+#   BOBCLAW_EMBED_POOLING  — llama.cpp pooling mode; default 'last' (qwen3
+#                            embedding models). granite-311m needs 'mean'.
+#   BOBCLAW_EMBED_NGL      — GPU layers to offload; default 0 (CPU-only)
 $server   = if ($env:LLAMA_SERVER_EXE) { $env:LLAMA_SERVER_EXE } else { 'llama-server.exe' }
 $gguf     = $env:BOBCLAW_EMBED_GGUF
+$pooling  = if ($env:BOBCLAW_EMBED_POOLING) { $env:BOBCLAW_EMBED_POOLING } else { 'last' }
+$ngl      = if ($env:BOBCLAW_EMBED_NGL) { $env:BOBCLAW_EMBED_NGL } else { '0' }
 if (-not $gguf) {
     # Soft-optional: memory/recall is OFF by default and the chat path does not need
     # the embedder, so a fresh box without a local GGUF must SKIP (not abort the stack).
     Write-Host "BOBCLAW_EMBED_GGUF not set — skipping the embedder (:8081)." -ForegroundColor Yellow
     Write-Host "  Memory recall is OFF by default; set BOBCLAW_EMBED_GGUF to your" -ForegroundColor DarkGray
-    Write-Host "  granite-embedding-311m GGUF to enable it (see README / AGENTS-SETUP.md)." -ForegroundColor DarkGray
+    Write-Host "  qwen3-embedding-4b GGUF to enable it (see README / AGENTS-SETUP.md)." -ForegroundColor DarkGray
     return
 }
 $repo     = (Resolve-Path "$PSScriptRoot\..\..").Path
@@ -47,11 +56,11 @@ $logDir   = Join-Path $repo '.logs'
 $logFile  = Join-Path $logDir 'embedder.log'
 $health   = 'http://127.0.0.1:8081/v1/models'
 $taskName = 'BobClaw-Embedder'
-$baseArgs = @('-m', $gguf, '--embeddings', '--pooling', 'mean',
-              '-ngl', '0', '-c', '2048', '--host', '127.0.0.1', '--port', '8081')
+$baseArgs = @('-m', $gguf, '--embeddings', '--pooling', $pooling,
+              '-ngl', $ngl, '-c', '2048', '--host', '127.0.0.1', '--port', '8081')
 
 if (-not (Get-Command $server -ErrorAction SilentlyContinue) -and -not (Test-Path $server)) { throw "llama-server not found: $server (set LLAMA_SERVER_EXE)" }
-if (-not (Test-Path $gguf))   { throw "granite GGUF not found: $gguf (set BOBCLAW_EMBED_GGUF)" }
+if (-not (Test-Path $gguf))   { throw "embedding GGUF not found: $gguf (set BOBCLAW_EMBED_GGUF)" }
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 function Test-EmbedderUp {
@@ -100,7 +109,7 @@ switch ($Mode) {
                 -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew `
                 -ExecutionTimeLimit ([TimeSpan]::Zero)
             Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal `
-                -Settings $settings -Description 'BobClaw granite-311m embedder (:8081)' | Out-Null
+                -Settings $settings -Description 'BobClaw local embedder (:8081, llama.cpp)' | Out-Null
             Write-Host "Registered scheduled task '$taskName' (direct-exec)." -ForegroundColor Cyan
         }
         Start-ScheduledTask -TaskName $taskName

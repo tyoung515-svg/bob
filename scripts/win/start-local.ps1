@@ -46,7 +46,7 @@ $composeArgs = @('compose', '-f', (Join-Path $repo 'docker-compose.yml'))
 if (Test-Path $envFile) { $composeArgs += @('--env-file', $envFile) }
 docker @composeArgs up -d postgres redis qdrant | Out-Host
 Write-Host "  waiting for Postgres ..." -ForegroundColor DarkGray
-for ($i = 0; $i -lt 30; $i++) { docker exec bobclaw-postgres pg_isready -U bobclaw *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 2 }
+for ($i = 0; $i -lt 30; $i++) { docker @composeArgs exec -T postgres pg_isready -U bobclaw *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 2 }
 
 # ── LiteLLM proxy (optional; only if a Codex config is present) ────────────────
 $litellmCfg  = Join-Path $repo 'litellm\config.yaml'

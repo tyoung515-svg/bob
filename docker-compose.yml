@@ -4,10 +4,18 @@
 # compose file. POSTGRES_PASSWORD is read from the environment (the setup flow
 # generates a strong value into .secrets/bobclaw.env) and falls back to a weak
 # dev default only when unset. See SECURITY.md.
+#
+# The project name is pinned (not derived from the checkout directory) so a
+# re-cloned or renamed checkout keeps its containers and volumes. Running TWO
+# installs on one host (e.g. a dev tree and a pinned prod tree) requires a
+# distinct COMPOSE_PROJECT_NAME per install — see UPGRADE.md. Container names
+# derive from the project (bobclaw-postgres-1 etc.); scripts address services
+# through `docker compose exec`, never fixed names.
+name: ${COMPOSE_PROJECT_NAME:-bobclaw}
+
 services:
   postgres:
     image: postgres:16
-    container_name: bobclaw-postgres
     restart: unless-stopped
     ports:
       - "127.0.0.1:5432:5432"
@@ -26,7 +34,6 @@ services:
 
   playwright:
     image: mcr.microsoft.com/playwright:v1.52.0-noble
-    container_name: bobclaw-playwright
     ports:
       - "127.0.0.1:3100:3100"
     environment:
@@ -38,7 +45,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: bobclaw-redis
     restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
@@ -51,7 +57,6 @@ services:
 
   qdrant:
     image: qdrant/qdrant:v1.18.0
-    container_name: bobclaw-qdrant
     restart: unless-stopped
     # Host ports 6353/6354 (not the Qdrant default 6333/6334) so this instance
     # doesn't collide with any other Qdrant you may already run on 6333. Set
@@ -62,7 +67,9 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "wget", "--spider", "http://localhost:6333/healthz"]
+      # The qdrant image ships no wget/curl/nc, but DOES ship bash. Probe /healthz
+      # over bash's /dev/tcp (dash lacks it, so invoke bash explicitly, not CMD-SHELL).
+      test: ["CMD", "bash", "-c", 'exec 3<>/dev/tcp/localhost/6333 && printf "GET /healthz HTTP/1.0\r\n\r\n" >&3 && cat <&3 | grep -q "200 OK"']
       interval: 5s
       timeout: 5s
       retries: 6

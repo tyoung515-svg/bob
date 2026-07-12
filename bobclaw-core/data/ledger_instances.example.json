@@ -4,12 +4,12 @@
     "bobclaw-memory": {
       "repo": ".",
       "ledger_dir": "ledger",
-      "collection": "bobclaw__768",
-      "dim": 768,
+      "collection": "bobclaw__2560",
+      "dim": 2560,
       "meta": {
-        "note": "BoB's own agent-memory L1 store — the single BoB-OWNED (writer) collection. Reads are universal; writes are single-owner (single-writer fence). collection = provider _collection_name(768) from collection_prefix 'bobclaw_'.",
+        "note": "BoB's own agent-memory L1 store — the single BoB-OWNED (writer) collection. Reads are universal; writes are single-owner (single-writer fence). collection = provider _collection_name(2560) from collection_prefix 'bobclaw_'. Dim follows the embed_text slot (qwen3-embedding-4b default since v0.98).",
         "acl": {"writer": "bobclaw", "readers": ["bobclaw"], "mode": "rw"},
-        "embed": {"model_id": "granite-embedding-311m", "dim": 768, "normalize": true, "distance": "cosine"}
+        "embed": {"model_id": "qwen3-embedding-4b", "dim": 2560, "normalize": true, "distance": "cosine"}
       }
     },
     "my-notes": {

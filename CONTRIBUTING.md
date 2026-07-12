@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking at BoB. This is a **v0.97** release — headless-first, desktop-GUI
+Thanks for looking at BoB. This is a **v0.98** release — headless-first, desktop-GUI
 (no browser UI) — so expect rough edges and a moving target.
 
 ## Project layout
@@ -50,6 +50,11 @@ cd bobclaw-claude-pipeline; & $py -m pytest -q ; cd ..
 **Tests must not hit the network.** `pytest-socket` is enabled; mock
 `aiohttp.ClientSession` (see `test_kimi_backend.py`) or use the injection seams
 (`_send_to_backend`, `_router`) instead of real calls.
+
+`./run_baseline_tests.ps1` runs the whole release surface (all three pytest suites,
+the KMM shared JVM tests + desktop compile, and `pip check`) and exits non-zero if
+any suite fails. The optional zvec provider surface skips unless `zvec` is installed
+(`pip install zvec==0.5.1`).
 
 ## Conventions
 

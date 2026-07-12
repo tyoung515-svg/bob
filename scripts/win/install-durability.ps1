@@ -87,9 +87,20 @@ if ($IncludeScheduler) {
 
 # Docker: make the bobclaw containers auto-restart ----------------------------
 Say "== Setting docker restart policy (unless-stopped) =="
-foreach ($c in 'bobclaw-postgres', 'bobclaw-redis', 'bobclaw-qdrant') {
-    docker update --restart unless-stopped $c *> $null
-    if ($LASTEXITCODE -eq 0) { Say "  $c -> unless-stopped" } else { Say "  $c not running (compose file updated; applies on next 'up')" 'Yellow' }
+# Resolve containers through compose (project-aware), never fixed names — two
+# installs with distinct COMPOSE_PROJECT_NAME must not touch each other.
+$durRepo = (Resolve-Path "$PSScriptRoot\..\..").Path
+$durComposeArgs = @('compose', '-f', (Join-Path $durRepo 'docker-compose.yml'))
+$durEnvFile = Join-Path $durRepo '.secrets\bobclaw.env'
+if (Test-Path $durEnvFile) { $durComposeArgs += @('--env-file', $durEnvFile) }
+foreach ($svc in 'postgres', 'redis', 'qdrant') {
+    $cid = (docker @durComposeArgs ps -q $svc 2>$null | Select-Object -First 1)
+    if ($cid) {
+        docker update --restart unless-stopped $cid *> $null
+        if ($LASTEXITCODE -eq 0) { Say "  $svc -> unless-stopped" } else { Say "  $svc update failed" 'Yellow' }
+    } else {
+        Say "  $svc not running (compose file sets restart: unless-stopped; applies on next 'up')" 'Yellow'
+    }
 }
 
 Say ""

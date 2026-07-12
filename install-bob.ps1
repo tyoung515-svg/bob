@@ -86,7 +86,9 @@ docker compose -f (Join-Path $repo 'docker-compose.yml') --env-file $envFile up 
 Write-Host "  waiting for Postgres to accept connections ..." -ForegroundColor DarkGray
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
-    docker exec bobclaw-postgres pg_isready -U bobclaw *> $null
+    # compose-resolved (project-aware) — never a fixed container name, so two
+    # installs with distinct COMPOSE_PROJECT_NAME never cross-probe.
+    docker compose -f (Join-Path $repo 'docker-compose.yml') --env-file $envFile exec -T postgres pg_isready -U bobclaw *> $null
     if ($LASTEXITCODE -eq 0) { $ready = $true; break }
     Start-Sleep -Seconds 2
 }

@@ -14,7 +14,7 @@ routing work to the right model, fanning it out across many, deliberating in a
 council, and — the part most tools skip — **verifying** the result before it reaches
 you.
 
-> **v0.97 — headless-first.** The CLI / MCP / agent front door is usable today; the
+> **v0.98 — headless-first.** The CLI / MCP / agent front door is usable today; the
 > **desktop app** is the GUI (Android preview — there is no browser UI). Hardening and
 > GUI polish are tracked to v1.0. This is an honest early release: read `SECURITY.md`
 > before exposing the gateway.
@@ -59,15 +59,16 @@ git clone https://github.com/tyoung515-svg/bob.git
 cd bob
 ```
 
-For v0.97, set BoB up with the step-by-step guide in
+For v0.98, set BoB up with the step-by-step guide in
 **[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the Python environment from the pinned
 lockfiles, the Docker infrastructure, secrets, a model backend, and first login, with
 the known first-run gotchas on a fresh Windows box called out. It is also
-**agent-runnable**, if you'd rather drive setup from an AI agent.
+**agent-runnable**, if you'd rather drive setup from an AI agent. Upgrading an
+existing install is a separate, tag-to-tag runbook: **[`UPGRADE.md`](UPGRADE.md)**.
 
 > **One-command installer:** a single script that runs the whole flow end-to-end
 > (`install-bob.ps1`) is landing in **v1.0**. It ships in the tree now as a preview; for
-> v0.97 the step-by-step guide above is the supported path.
+> v0.98 the step-by-step guide above is the supported path.
 
 Once BoB is up, the front door is **headless** (CLI / MCP / the JSON+WebSocket API) or the
 **Kotlin Multiplatform desktop app** (`bobclaw-app`). Log in as `admin` with the generated
@@ -98,6 +99,27 @@ just placeholders. Core reads env at startup, so **restart core** after adding a
 > `./scripts/win/start-litellm.ps1` (sample: `litellm/config.yaml`); Codex 0.142+ needs a
 > per-file `~/.codex/<profile>.config.toml` with `wire_api = "responses"`. **GPT** under a
 > ChatGPT login runs **natively** (no proxy) via the `planner-gpt` face.
+
+### Memory & the local embedder (optional, default OFF)
+
+BoB's memory module (`MEMORY_ENABLED`) stores extracted facts as vectors and recalls
+them into future turns. When enabled:
+
+- **Embedder** — the default `embed_text` slot is **`qwen3-embedding-4b`** (2560-dim),
+  served by `./scripts/win/start-embedder.ps1` on `:8081` (set `BOBCLAW_EMBED_GGUF` to
+  your GGUF; qwen3 embedding models use last-token pooling, the launcher's default).
+  Chosen from the author-blind paraphrase eval in
+  `bobclaw-core/evals/retrieval/CEILING.md` — recall@10 **65%** vs 40% for the 0.6B
+  tier. The CPU-light previous default (`granite-embedding-311m`) remains a documented
+  alternative in `config/memory_slots.toml`.
+- **Vector store** — Docker Qdrant by default. An **experimental zero-Docker path**
+  (the `zvec` embedded store, run in a supervised child process) can be opted into via
+  `config/memory_stores.toml` + `pip install zvec==0.5.1`. Qdrant stays the shipping
+  default; the zvec path's known limitation is approximate-search recall a few points
+  below exact search (see `CHANGELOG.md`).
+- **Write safety** — every memory writer must hold a single-writer OS-level write
+  fence (default ON with memory; a second writer degrades to read-only with honest
+  health rather than corrupting the store).
 
 ### Bringing it back up
 
@@ -136,7 +158,7 @@ I'm running." This is on by default (`BOB_IDENTITY_ENABLED`; set it false for a 
 
 ## Status & scope
 
-v0.97 is headless-usable and single-operator, with a **desktop GUI** (Android preview). It
+v0.98 is headless-usable and single-operator, with a **desktop GUI** (Android preview). It
 is **loopback by default**; the gateway can be exposed for trusted remote access **behind a
 TLS-terminating reverse proxy** (see `SECURITY.md`), reached via the native client over an
 SSH tunnel. `core` and the datastores stay loopback, and it is not a hardened multi-tenant

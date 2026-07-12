@@ -1,6 +1,6 @@
 # Security
 
-BoB is **v0.97** and runs as a **single-operator** application on a machine you
+BoB is **v0.98** and runs as a **single-operator** application on a machine you
 control, **loopback by default**. The gateway can be exposed for remote access
 **behind a TLS-terminating reverse proxy** once you complete the checklist below;
 `core` and the infrastructure stay loopback-only. Read this first.
@@ -76,7 +76,7 @@ generated code, BoB is designed to fail closed rather than run it on the host.
 
 ## Before you expose BoB to a network
 
-v0.97 is single-operator and loopback by default. Before you place the gateway
+v0.98 is single-operator and loopback by default. Before you place the gateway
 behind a reverse proxy reachable from a broader network, complete these:
 
 - [ ] Restrict `.secrets/bobclaw.env` file permissions (it holds all your API keys).
@@ -98,7 +98,7 @@ behind a reverse proxy reachable from a broader network, complete these:
       the tracked replacement for shared abuse prevention.
 - [ ] Consider shortening the access-token lifetime and `REFRESH_TOKEN_ABSOLUTE_DAYS`.
 
-## Scope of v0.97
+## Scope of v0.98
 
 BoB is **single-operator** and loopback by default. Exposing the **gateway** for
 remote access is supported **behind a TLS-terminating reverse proxy** with the

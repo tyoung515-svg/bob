@@ -1,11 +1,12 @@
 # AGENTS-SETUP — install BoB (agent-runnable)
 
-This is the **supported setup path for v0.97** — the step-by-step flow, safe for a human
-to run by hand or for an AI agent to drive. The steps are **Windows-only** for v0.97 and
-idempotent — safe to re-run. Follow them in order.
+This is the **supported setup path for v0.98** — the step-by-step flow, safe for a human
+to run by hand or for an AI agent to drive. The steps are **Windows-only** for v0.98 and
+idempotent — safe to re-run. Follow them in order. (Upgrading an existing install
+instead? Use **[`UPGRADE.md`](UPGRADE.md)**.)
 
 > A one-command installer (`install-bob.ps1`) that runs this whole flow end-to-end is
-> landing in **v1.0**. It ships in the tree now as a preview; for v0.97 these steps are
+> landing in **v1.0**. It ships in the tree now as a preview; for v0.98 these steps are
 > the supported path.
 
 ## 0. Prerequisites (fail-closed)
@@ -44,7 +45,8 @@ the container and the app agree on the first try — no `docker compose down -v`
 
 ```powershell
 docker compose --env-file .secrets\bobclaw.env up -d postgres redis qdrant
-# wait until: docker exec bobclaw-postgres pg_isready -U bobclaw  → "accepting connections"
+# wait until: docker compose --env-file .secrets\bobclaw.env exec -T postgres pg_isready -U bobclaw
+#   → "accepting connections"
 ```
 
 `--env-file` makes compose interpolate the SAME `POSTGRES_PASSWORD` the app uses (it is read

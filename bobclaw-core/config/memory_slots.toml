@@ -15,19 +15,34 @@
 # environment, override individual fields via slot-file editing or
 # by pointing MEMORY_SLOTS_FILE at a different file.
 
-# Default text embedder. CPU-friendly, +0.033 mean F1 vs Qwen3-4B,
-# indexes 3x faster (per LKS eval 2026-05-09).
+# Default text embedder — Qwen3-Embedding-4B (2560-dim), v0.98 default.
+# Measured on the author-blind paraphrase eval (evals/retrieval/CEILING.md):
+# recall@10 65% vs 40% for the 0.6B tier. granite-embedding-311m (the previous
+# default) is UNMEASURED on that eval set — it won the older 2026-05-09 F1 suite
+# (+0.033 mean F1, 3x faster CPU indexing) and remains the documented CPU-light
+# alternative below. Changing this slot changes the embed fingerprint and vector
+# dim: existing stores must re-index (see UPGRADE.md).
+# NOTE: qwen3 embedding models need last-token pooling — the shipped launcher
+# (scripts/win/start-embedder.ps1) defaults to --pooling last.
 [slot.embed_text]
-model = "granite-embedding-311m"
+model = "qwen3-embedding-4b"
 backend = "lmstudio"           # protocol selector (OpenAI /v1/embeddings) — NOT literally LM Studio
-endpoint = "http://localhost:8081"   # llama.cpp llama-server (granite-311m, CPU). LM Studio dropped (flaky over remote-in).
-embedding_dimension = 768
+endpoint = "http://localhost:8081"   # llama.cpp llama-server (scripts/win/start-embedder.ps1)
+embedding_dimension = 2560
 # Optional asymmetric templates are per-slot configuration. `{text}` is substituted;
 # a template without it is prepended. Omit both to preserve legacy symmetric payloads.
 # embedding_batch_size defaults to 64 for the OpenAI-compatible /v1/embeddings backend.
 
-# Heavyweight embedder, on-demand only.
-# Different vector dim — needs its own Qdrant collection if used.
+# CPU-light alternative (previous default). 768-dim — different collection;
+# swapping requires a re-index (UPGRADE.md):
+# [slot.embed_text]
+# model = "granite-embedding-311m"
+# backend = "lmstudio"
+# endpoint = "http://localhost:8081"   # same launcher; set BOBCLAW_EMBED_POOLING=mean
+# embedding_dimension = 768
+
+# Heavyweight slot: same 4B model served via LM Studio on :1234 (typically GPU)
+# — useful when the CPU llama.cpp instance on :8081 is too slow for bulk indexing.
 [slot.embed_text_heavy]
 model = "qwen3-embedding-4b"
 backend = "lmstudio"

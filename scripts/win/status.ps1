@@ -21,6 +21,11 @@ Probe 'embedder' 'http://localhost:8081/v1/models'
 Probe 'extractor' 'http://localhost:8082/v1/models'
 Probe 'qdrant'   'http://localhost:6353/healthz'
 Write-Host "  redis     " -NoNewline
-$pong = docker exec bobclaw-redis redis-cli ping 2>$null
+# compose-resolved (project-aware), not a fixed container name.
+$repoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
+$statusComposeArgs = @('compose', '-f', (Join-Path $repoRoot 'docker-compose.yml'))
+$statusEnvFile = Join-Path $repoRoot '.secrets\bobclaw.env'
+if (Test-Path $statusEnvFile) { $statusComposeArgs += @('--env-file', $statusEnvFile) }
+$pong = docker @statusComposeArgs exec -T redis redis-cli ping 2>$null
 if ($LASTEXITCODE -eq 0 -and "$pong" -match 'PONG') { Write-Host "OK   tcp://localhost:6379" -ForegroundColor Green }
 else { Write-Host "DOWN tcp://localhost:6379" -ForegroundColor Red }

@@ -16,10 +16,10 @@ class TestSlotResolver:
     def test_loads_default_config(self):
         resolver = SlotResolver(_CONFIG)
         sr = resolver.get("embed_text")
-        assert sr.model == "granite-embedding-311m"
+        assert sr.model == "qwen3-embedding-4b"
         assert sr.backend == "lmstudio"
         assert sr.endpoint == "http://localhost:8081"
-        assert sr.embedding_dimension == 768
+        assert sr.embedding_dimension == 2560
 
     def test_deferred_slot_raises(self):
         resolver = SlotResolver(_CONFIG)
