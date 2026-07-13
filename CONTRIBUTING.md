@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking at BoB. This is a **v0.98** release — headless-first, desktop-GUI
+Thanks for looking at BoB. This is a **v0.98.1** release — headless-first, desktop-GUI
 (no browser UI) — so expect rough edges and a moving target.
 
 ## Project layout

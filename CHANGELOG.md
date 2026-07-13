@@ -3,6 +3,90 @@
 All notable changes to BoB are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+## [0.98.1]
+
+The cockpit release: the desktop app graduates from a chat client to a live
+operations console — watch a council deliberate in real time, pick models in
+plain language, ask Bob about the screen you're on, and walk your memory as a
+3D graph. Upgrading from 0.98? Follow **[`UPGRADE.md`](UPGRADE.md)** — no
+datastore or embedder changes this time; the notes are short.
+
+### Added
+- **Live Council Theater.** A council-shaped chat turn can opt in to
+  `emit_events` on the start-turn frame; the gateway relays per-seat frames
+  (seat starts, positions, synthesis) to the app's Council screen as they
+  happen. Absent the opt-in, a council turn is byte-identical to 0.98.
+- **Chat model/backend picker.** Pick the face/backend for a conversation from
+  the chat header, with plain-language display names — every face now carries
+  `display_name` / `blurb` (and, where applicable, a Simple-mode
+  `simple_slot`) alongside its technical id.
+- **Ask-Bob helper bubble.** A screen-aware helper: it can attach a snapshot of
+  the screen you're viewing as an additive system card (`PAGE_CONTEXT_ENABLED`,
+  code default **off**; with the flag off the assembled prompt is byte-identical
+  no matter what a client sends). Surfaces memory and teams, and can propose
+  guardrailed team edits — applying a composition change stays an explicit,
+  reviewed action.
+- **3D memory graph.** A Memory screen renders facts, source conversations, and
+  knn/provenance edges as an interactive 3D graph (`GET /api/memory/graph` on
+  core, proxied by the gateway; bundled `three.js` + `3d-force-graph` with
+  their licenses under `desktopApp/.../resources/memory_graph/`).
+- **Actions registry + `GET /capabilities`.** One static registry of app
+  actions (id, params schema, risk, undo hint) served through a new gateway
+  `/capabilities` endpoint that composes faces + backends + models + actions
+  into a single capability payload for the client. Voice is a **seam only** —
+  the intent mapping exists, but no STT/TTS engine ships.
+- **Approvals in the app.** An Approvals screen with plain-language approval
+  literacy (what each kind is, what approving does). Proposal-only kinds are
+  modeled ahead of their engines — research-forest proposals appear in the
+  metadata but no forest engine ships in this release.
+- **Scheduled-fires surface.** The profile scheduler's upcoming fires render as
+  a dashboard tile (cron → next-fire computation client-side).
+- **Council synthesis robustness.** A synthesis-stage timeout now finalizes
+  with the seats it has and always emits a terminal frame — a council turn can
+  no longer end frameless on a slow synth.
+- **Internal telemetry substrate** (`core/telemetry`): flight ids + structured
+  event emission, used by the council theater relay. Default-off; no external
+  emission.
+- **Memory smoke-rail guard tests.** The write-capable memory-smoke isolation
+  helpers get their own regression tests (explicit-truthy `MEMORY_TEST_ALLOW_6333`
+  opt-in — `"0"` no longer permits the shared port; honest collection
+  snapshots that raise instead of false-passing empty; teardown residue
+  assertion).
+
+### Changed
+- **Desktop app overhauled.** New navigation, settings panels, experience
+  calibration, per-screen polish; the stale KPI dashboard tiles
+  (build-sessions / spend / tests / tokens / workers-in-flight) are removed.
+- **Fail-safe memory default:** `MEMORY_QDRANT_URL` (and the bootstrap default)
+  now defaults to `http://localhost:6353` — the port this repo's compose
+  actually publishes — instead of `:6333`. Enabling memory without an explicit
+  URL can no longer write to an unrelated Qdrant that happens to be on the
+  well-known port. If you run Qdrant on `:6333` deliberately, set
+  `MEMORY_QDRANT_URL` explicitly (see UPGRADE.md).
+- **Qdrant healthcheck** matches ` 200 ` on the HTTP status line only — a
+  response body can no longer false-pass the probe.
+- **`run_baseline_tests.ps1`** captures true exit codes (a suite that fails to
+  launch reports 127, never inherits the prior suite's success) and checks for
+  `gradlew.bat` before invoking it.
+
+### Fixed
+- **strings.xml literal-backslash rendering** — five UI strings rendered `\n`
+  literally instead of breaking lines.
+- **CI (carried forward from the 0.98.0 tag):** committed the `gradlew` exec
+  bit (Linux runners), normalized POSIX `TimeoutExpired` bytes in the harness
+  sandbox ("never raises" contract held str), and made the ubuntu python leg
+  advisory — Windows remains the supported platform.
+
+### Known limitations
+- The Council Theater needs a council-shaped turn (council face or profile)
+  plus the `emit_events` opt-in; plain chat turns stream as before.
+- Voice: intent seam only; no speech engine ships.
+- Research-forest approval kinds are modeled in the app and gateway metadata,
+  but the research-forest engine is not part of the public release.
+- The zvec ANN rescoring tier and the parser hard cap that 0.98's notes planned
+  for v0.99 are **not** in this patch-scoped release (zvec stays experimental;
+  Qdrant remains the recommended default). Both stay on the v0.99 track.
+
 ## [0.98.0]
 
 The memory-hardening release: a single-writer write fence around every memory

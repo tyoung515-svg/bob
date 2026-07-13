@@ -1,12 +1,12 @@
 # AGENTS-SETUP — install BoB (agent-runnable)
 
-This is the **supported setup path for v0.98** — the step-by-step flow, safe for a human
-to run by hand or for an AI agent to drive. The steps are **Windows-only** for v0.98 and
+This is the **supported setup path for v0.98.1** — the step-by-step flow, safe for a human
+to run by hand or for an AI agent to drive. The steps are **Windows-only** for v0.98.1 and
 idempotent — safe to re-run. Follow them in order. (Upgrading an existing install
 instead? Use **[`UPGRADE.md`](UPGRADE.md)**.)
 
 > A one-command installer (`install-bob.ps1`) that runs this whole flow end-to-end is
-> landing in **v1.0**. It ships in the tree now as a preview; for v0.98 these steps are
+> landing in **v1.0**. It ships in the tree now as a preview; for v0.98.1 these steps are
 > the supported path.
 
 ## 0. Prerequisites (fail-closed)

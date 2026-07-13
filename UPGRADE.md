@@ -27,6 +27,49 @@ The sequence is always the same; per-version migration notes are below.
 8. **Rollback** (if anything above fails): `git checkout <previous tag>` and re-run
    steps 4–7. Volumes/data are not touched by a checkout.
 
+## 0.98.0 → 0.98.1
+
+A short one: no datastore, schema, embedder, or dependency-lock changes. The release
+is app + council/capabilities surface work. Three things to check:
+
+### 1. `MEMORY_QDRANT_URL` default moved `:6333` → `:6353` (memory users only)
+
+The code default now matches the port this repo's compose actually publishes
+(`127.0.0.1:6353`). If your `.secrets\bobclaw.env` (or launcher env) sets
+`MEMORY_QDRANT_URL` explicitly — every install that followed the setup guide does —
+**nothing changes**. Only if you relied on the *implicit* `:6333` default against your
+own Qdrant do you now need to set it explicitly:
+
+```
+MEMORY_QDRANT_URL=http://127.0.0.1:6333   # only if you deliberately run Qdrant there
+```
+
+This is a fail-safe: enabling memory without an explicit URL can no longer write to an
+unrelated Qdrant that happens to live on the well-known port.
+
+### 2. Optional new flag: `PAGE_CONTEXT_ENABLED` (Ask-Bob helper)
+
+The app's Ask-Bob helper bubble can attach a snapshot of the screen you're viewing to
+its question. The CODE default is **off** (prompt bytes identical to 0.98). To turn it
+on, add to `.secrets\bobclaw.env`:
+
+```
+PAGE_CONTEXT_ENABLED=true
+```
+
+### 3. Rebuild the desktop app
+
+The app gained the Council Theater, model/backend picker, Ask-Bob, the 3D memory
+graph, and an Approvals screen — rebuild it once after checkout:
+
+```powershell
+cd bobclaw-app
+.\gradlew :desktopApp:run
+```
+
+No compose changes beyond a hardened Qdrant healthcheck (picked up automatically on
+the next `docker compose up -d`).
+
 ## 0.97.0 → 0.98.0
 
 ### 1. Compose project name (do this BEFORE any `docker compose up`)

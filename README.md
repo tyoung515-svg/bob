@@ -14,7 +14,7 @@ routing work to the right model, fanning it out across many, deliberating in a
 council, and — the part most tools skip — **verifying** the result before it reaches
 you.
 
-> **v0.98 — headless-first.** The CLI / MCP / agent front door is usable today; the
+> **v0.98.1 — headless-first.** The CLI / MCP / agent front door is usable today; the
 > **desktop app** is the GUI (Android preview — there is no browser UI). Hardening and
 > GUI polish are tracked to v1.0. This is an honest early release: read `SECURITY.md`
 > before exposing the gateway.
@@ -59,7 +59,7 @@ git clone https://github.com/tyoung515-svg/bob.git
 cd bob
 ```
 
-For v0.98, set BoB up with the step-by-step guide in
+For v0.98.1, set BoB up with the step-by-step guide in
 **[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the Python environment from the pinned
 lockfiles, the Docker infrastructure, secrets, a model backend, and first login, with
 the known first-run gotchas on a fresh Windows box called out. It is also
@@ -68,7 +68,7 @@ existing install is a separate, tag-to-tag runbook: **[`UPGRADE.md`](UPGRADE.md)
 
 > **One-command installer:** a single script that runs the whole flow end-to-end
 > (`install-bob.ps1`) is landing in **v1.0**. It ships in the tree now as a preview; for
-> v0.98 the step-by-step guide above is the supported path.
+> v0.98.1 the step-by-step guide above is the supported path.
 
 Once BoB is up, the front door is **headless** (CLI / MCP / the JSON+WebSocket API) or the
 **Kotlin Multiplatform desktop app** (`bobclaw-app`). Log in as `admin` with the generated
@@ -77,6 +77,12 @@ Once BoB is up, the front door is **headless** (CLI / MCP / the JSON+WebSocket A
 (same file) in an authenticator app:
 `otpauth://totp/BoB:admin?secret=<TOTP_SECRET>&issuer=BoB`. The app is available in
 **English, Simplified Chinese (简), and Traditional Chinese (繁)** via the header toggle.
+
+v0.98.1 makes the desktop app a first-class cockpit: a **live Council Theater** (watch a
+council deliberate seat-by-seat as it streams), a **chat model/backend picker** with
+plain-language names, the **Ask-Bob helper bubble** (screen-aware Q&A over memory and
+teams, with guardrailed team edits), a **3D memory graph**, and an in-app **Approvals**
+screen.
 
 - **Stop:** `./scripts/win/stop-all.ps1`
 
@@ -158,7 +164,7 @@ I'm running." This is on by default (`BOB_IDENTITY_ENABLED`; set it false for a 
 
 ## Status & scope
 
-v0.98 is headless-usable and single-operator, with a **desktop GUI** (Android preview). It
+v0.98.1 is headless-usable and single-operator, with a **desktop GUI** (Android preview). It
 is **loopback by default**; the gateway can be exposed for trusted remote access **behind a
 TLS-terminating reverse proxy** (see `SECURITY.md`), reached via the native client over an
 SSH tunnel. `core` and the datastores stay loopback, and it is not a hardened multi-tenant
