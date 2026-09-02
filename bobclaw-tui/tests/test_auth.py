@@ -9,6 +9,7 @@ import stat
 import pytest
 
 from bobclaw_tui import auth
+from tests.conftest import assert_private_mode
 
 _ENV = "BOBCLAW_PASSWORD=hunter2\nTOTP_SECRET=JBSWY3DPEHPK3PXP\n"
 
@@ -78,8 +79,7 @@ def test_login_obtains_token_pair_and_cache_file_is_0600(tmp_path, env_file):
     assert token == "acc-1"
     assert s.calls == [("POST", "/auth/login")]
     assert json.loads(cache.read_text()) == {"access_token": "acc-1", "refresh_token": "ref-1"}
-    mode = stat.S_IMODE(cache.stat().st_mode)
-    assert mode == 0o600, oct(mode)
+    assert_private_mode(cache)
 
 
 def test_valid_cached_token_reused_without_login(tmp_path, env_file):
@@ -109,7 +109,7 @@ def test_expired_access_token_refreshes_before_login(tmp_path, env_file):
     assert token == "acc-2"
     assert s.calls == [("GET", "/conversations"), ("POST", "/auth/refresh")]
     assert json.loads(cache.read_text()) == {"access_token": "acc-2", "refresh_token": "ref-2"}
-    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    assert_private_mode(cache)
 
 
 def test_failed_refresh_falls_back_to_full_login(tmp_path, env_file):

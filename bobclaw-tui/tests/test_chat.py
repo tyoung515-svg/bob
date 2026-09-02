@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 import stat
+
+from tests.conftest import assert_private_mode
 from types import SimpleNamespace
 
 from bobclaw_tui.chat import ChatClient
@@ -66,7 +68,7 @@ def test_first_launch_creates_and_persists_0600(tmp_path):
     assert cid == "c1"
     # persisted for the next launch, with the token-cache 0600 discipline
     assert json.loads(state.read_text()) == {"conversation_id": "c1", "title": "cockpit agent"}
-    assert stat.S_IMODE(state.stat().st_mode) == 0o600
+    assert_private_mode(state)
 
 
 def test_second_launch_resumes_same_conversation(tmp_path):
@@ -226,7 +228,7 @@ def test_bot_last_seen_roundtrip_and_0600(tmp_path):
                                     "review": "2026-08-18T09:00:00"}
     # a fresh client over the same file sees the watermarks (persisted, 0600 discipline)
     assert _chat(_FakeSession([]), state).bot_last_seen()["helper"] == "2026-08-18T10:00:00"
-    assert stat.S_IMODE(state.stat().st_mode) == 0o600
+    assert_private_mode(state)
     # a garbled watermark key degrades to empty instead of raising
     state.write_text(json.dumps({"bot_last_seen": "nonsense"}))
     assert chat.bot_last_seen() == {}
