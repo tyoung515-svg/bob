@@ -3,6 +3,24 @@
 All notable changes to BoB are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+## [0.99.0]
+
+The memory + bridge release. Curated public cut from the development line.
+
+- **Memory writer (W3)**: T0 verbatim projection (zero-LLM by default), completion
+  ledger keyed on content/task/prompt hash, derived→source pointers, single-writer
+  OS-level write fence with federation registration. T1/T2/T3 stay OFF pending eval.
+- **OpenAI-compatible bridge**: loopback-only front (`tools/bob_bridge.py`) exposing
+  `bob` / `bob-<face>` models over `/v1/chat/completions` and `/v1/responses`, so
+  external CLIs (Hermes, Codex, Kimi) can drive BoB's engine with memory intact.
+- **bobclaw-tui**: terminal cockpit (chat, health, conversations, monitoring).
+- **bobclaw-telegram**: Telegram bot front door, phase 3A pilot (allowlist-gated).
+- **Research forest**: seed programs, observers, epochs, fork proposals; watch
+  digest; scout stack-audit. See `bobclaw-core/core/forest/`.
+- **Retired**: the `zvec` embedded vector store and `core/lks` (superseded by the
+  read-down `lks_adapter`); per-service `requirements.lock` files (requirements.txt
+  is the dependency source of truth).
+
 ## [0.98.1]
 
 The cockpit release: the desktop app graduates from a chat client to a live
