@@ -1,14 +1,7 @@
-# Normalize line endings: store text as LF in the repo, check out native.
-* text=auto
+# Convergence board §3 rule 3 (2026-07-18): LF everywhere on the CachyOS trees.
+# Auto-detected binaries are untouched by text=auto.
+* text=auto eol=lf
 
-# Keep shell scripts LF even on Windows checkouts.
-*.sh text eol=lf
-
-# Treat these as binary (no EOL/normalization, no diff).
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.gif binary
-*.ico binary
-*.gguf binary
-*.jar binary
+# cmd.exe requires CRLF in batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf

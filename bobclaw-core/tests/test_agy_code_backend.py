@@ -34,7 +34,7 @@ from core.backends import agy_code as _agy_mod
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """Keep _work_dir() off the real /repos/scratch/agy and skip retry sleeps."""
+    """Keep _work_dir() off the real C:/dev/scratch/agy and skip retry sleeps."""
     monkeypatch.setattr(
         "core.backends.agy_code.config.AGY_SCRATCH_ROOT", str(tmp_path / "scratch")
     )
@@ -322,6 +322,32 @@ async def test_spawn_injects_userprofile_when_home_seeded(tmp_path):
     ):
         await c.chat(prompt="x")
     assert cap.get("env") is not None and cap["env"].get("USERPROFILE") == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_spawn_injects_home_when_home_seeded(tmp_path):
+    """POSIX CLIs resolve the home from $HOME, not USERPROFILE — the segregated
+    home must set BOTH or the hardening silently no-ops on Linux (intake bug 1)."""
+    c = _make_client(conversation_id="conv-1")
+    cap: dict = {}
+    with patch("core.backends.agy_code.config.AGY_HOME", str(tmp_path)), _patch_exec(
+        _fake_proc(b"", b"", 0), capture=cap
+    ), patch.object(AntigravityClient, "_capture_uuid", return_value="u"), patch.object(
+        AntigravityClient, "_read_reply", return_value="ok"
+    ):
+        await c.chat(prompt="x")
+    assert cap.get("env") is not None
+    assert cap["env"].get("HOME") == str(tmp_path)
+    assert cap["env"].get("USERPROFILE") == str(tmp_path)
+
+
+def test_subprocess_env_none_when_home_unseeded(tmp_path):
+    """AGY_HOME pointing at a MISSING dir ⇒ inherit the parent env untouched."""
+    c = _make_client()
+    with patch(
+        "core.backends.agy_code.config.AGY_HOME", str(tmp_path / "not-seeded")
+    ):
+        assert c._subprocess_env() is None
 
 
 # ─── stream_chat ──────────────────────────────────────────────────────────────

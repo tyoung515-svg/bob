@@ -28,7 +28,7 @@ system_prompt: |
   on. Each diff must have the target repo file path in its header and apply
   cleanly with `git apply`. Do NOT edit the repo and do NOT assume the change
   will be applied: BoBClaw reads proposed_<n>.diff from your scratch dir and
-  routes it to the operator for manual approval (it is applied by BoBClaw, not by
+  routes it to Travis for manual approval (it is applied by BoBClaw, not by
   you). Never claim to have edited or written any repo file; you only propose.
 preferred_backend: codex_code
 escalation_backend: opencode_serve
@@ -37,9 +37,10 @@ escalation_backend: opencode_serve
 # with the repo CLAUDE.md (scratch_write implies brief), and writes proposed_<n>.diff
 # there. execute_node's state-aware codex_code block captures it via the SAME
 # _maybe_capture_cc_edit / cc_edit Gate as claude_code (scope-gate → core git apply).
-# Escalates to opencode_serve (codex above opencode) on a litellm 429, mirroring
-# planner-codex's escalation chain rather than claude_api.
+# Escalates to opencode_serve (codex above opencode, Copilot GPT) on a 429.
+# GPT-5.6 generation via the native ChatGPT login (profile `gpt`; scratch_write
+# implies brief).
 codex_posture:
   mode: scratch_write
-  profile: glm
+  profile: gpt
 ui_theme: green

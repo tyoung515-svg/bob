@@ -1,23 +1,20 @@
-# Linux/macOS developer convenience (docker-compose, systemctl, ollama). The
-# SUPPORTED install path is Windows via install-bob.ps1 — see README / AGENTS-SETUP.
-# Installs from the pinned requirements.lock files for reproducibility.
 .PHONY: setup start stop test logs clean ollama-setup
 
 # ── Setup ─────────────────────────────────────────────
 setup:
-	docker-compose up -d postgres
+	docker-compose --env-file .secrets/bobclaw.env -f docker-compose.yml up -d postgres
 	@echo "Waiting for Postgres..."
 	@sleep 3
-	cd bobclaw-core && pip install -r requirements.lock
-	cd bobclaw-gateway && pip install -r requirements.lock
-	cd bobclaw-claude-pipeline && pip install -r requirements.lock
+	cd bobclaw-core && pip install -r requirements.txt
+	cd bobclaw-gateway && pip install -r requirements.txt
+	cd bobclaw-claude-pipeline && pip install -r requirements.txt
 	@echo "✅ Setup complete"
 
 setup-full:
-	docker-compose --profile full up -d
-	cd bobclaw-core && pip install -r requirements.lock
-	cd bobclaw-gateway && pip install -r requirements.lock
-	cd bobclaw-claude-pipeline && pip install -r requirements.lock
+	docker-compose --env-file .secrets/bobclaw.env -f docker-compose.yml --profile full up -d
+	cd bobclaw-core && pip install -r requirements.txt
+	cd bobclaw-gateway && pip install -r requirements.txt
+	cd bobclaw-claude-pipeline && pip install -r requirements.txt
 
 # ── Start/Stop ────────────────────────────────────────
 start:
@@ -55,12 +52,12 @@ test-pipeline:
 # ── Logging ───────────────────────────────────────────
 logs:
 	@echo "=== Docker Logs ==="
-	docker-compose logs --tail=50
+	docker-compose --env-file .secrets/bobclaw.env -f docker-compose.yml logs --tail=50
 	@echo ""
 
 # ── Cleanup ───────────────────────────────────────────
 clean:
-	docker-compose down -v
+	docker-compose --env-file .secrets/bobclaw.env -f docker-compose.yml down -v
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
 	find . -name "bobclaw_cache.db" -delete 2>/dev/null || true
@@ -77,7 +74,7 @@ ollama-setup:
 # ── Status ────────────────────────────────────────────
 status:
 	@echo "=== Docker ==="
-	@docker-compose ps
+	@docker-compose --env-file .secrets/bobclaw.env -f docker-compose.yml ps
 	@echo ""
 	@echo "=== Ollama ==="
 	@curl -s http://localhost:11434/v1/models 2>/dev/null | python3 -m json.tool || echo "Ollama: not running"

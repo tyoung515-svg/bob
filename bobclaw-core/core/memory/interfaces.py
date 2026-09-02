@@ -11,6 +11,7 @@ from core.memory.models import (
     HealthStatus,
     IndexReceipt,
     IndexStats,
+    Query,
     RankedResults,
     RetrievedChunk,
     Section,
@@ -70,13 +71,6 @@ class Embedder(Protocol):
     embedding_dimension: int
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Deprecated symmetric alias; delegates to embed_doc for one release."""
-        ...
-
-    async def embed_query(self, texts: list[str]) -> list[list[float]]:
-        ...
-
-    async def embed_doc(self, texts: list[str]) -> list[list[float]]:
         ...
 
 
@@ -89,18 +83,9 @@ class RetrievalProvider(Protocol):
     def index(self, store_id: str, items: list[ChunkRecord]) -> IndexReceipt:
         ...
 
-    def query_vector(
-        self,
-        store_id: str,
-        vector: list[float],
-        k: int,
-        filters: FilterExpr | None,
-        *,
-        offset: int = 0,
+    def query(
+        self, store_id: str, q: Query, k: int, filters: FilterExpr | None
     ) -> RankedResults:
-        # `offset` pages deeper into the ranking for the retriever's bounded
-        # dangling-hit backfill; providers without native paging may emulate it
-        # (over-fetch + slice). offset=0 must equal the unpaged call.
         ...
 
     def delete(self, store_id: str, item_ids: list[str]) -> None:

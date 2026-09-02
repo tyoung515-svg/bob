@@ -176,8 +176,67 @@ async def _select_face(state: "AgentState") -> tuple[str | None, str | None]:
     return None, None
 
 
+# ── T1 flight-aware fast path (Lane 1b) ──────────────────────────────────────
+# Process-wide shared profile cache (SPEC D-5): a Redis hash all cores read, with an
+# in-process fail-open mirror. Lazily built so a route import never spins a Redis client
+# (and so the default-OFF path never touches Redis).
+_t1_cache = None
+
+
+def _get_t1_cache():
+    global _t1_cache
+    if _t1_cache is None:
+        import redis.asyncio as aioredis
+
+        from core.config import config as _cfg
+        from core.mcp_tools.reliability import RedisProfileCache
+
+        _client: dict = {}
+
+        def _getter():
+            if "c" not in _client:
+                _client["c"] = aioredis.from_url(_cfg.REDIS_URL, decode_responses=True)
+            return _client["c"]
+
+        _t1_cache = RedisProfileCache(redis_getter=_getter)
+    return _t1_cache
+
+
+async def _t1_fastpath_face(state: "AgentState", cache=None) -> "str | None":
+    """Resolve a face via the T1 flight-aware fast path, or None to keep the heuristic.
+
+    Returns None (⇒ byte-identical routing) whenever: the master switch is OFF; no servable
+    profile exists for this (project, job-shape); the ε valve explores; or the class doesn't
+    resolve to a distinct face. Fail-safe — any error falls back to the heuristic.
+    """
+    from core.config import config
+
+    if not config.T1_FASTPATH_ENABLED:
+        return None
+    import random
+
+    from core.mcp_tools.profile_routing import resolve_fastpath_face
+
+    try:
+        return await resolve_fastpath_face(
+            state, cache or _get_t1_cache(),
+            epsilon=config.T1_FASTPATH_EPSILON, roll=random.random,
+        )
+    except Exception:
+        logger.debug("T1 fast path errored; falling back to _select_face", exc_info=True)
+        return None
+
+
 async def route_node(state: "AgentState") -> dict:
     """LangGraph node: choose the backend for the current conversation turn."""
+    # FU1 D2 pause-with-teeth: refuse a turn whose NAMED flight is auto-paused over budget
+    # BEFORE any routing/work. None ⇒ proceed (flag OFF / ambient / live-face / not paused) —
+    # byte-identical. The refusal carries flight_refused so _route_after_recall ENDs the turn.
+    from core.flight.enforcement import paused_flight_refusal
+
+    _refusal = await paused_flight_refusal(state)
+    if _refusal is not None:
+        return _refusal
     face_id = state.get("face_id", "assistant")
     model_override = state.get("model_override")
     # Honor an explicit face pin (skip the intent heuristic). Set by the gateway for an
@@ -326,7 +385,18 @@ async def route_node(state: "AgentState") -> dict:
     if pin_authoritative:
         new_face, old_face = None, None
     else:
-        new_face, old_face = await _select_face(state)
+        # ── T1 flight-aware fast path (Lane 1b) ──────────────────────────────
+        # A crystallized/probationary shortcut profile for this turn's
+        # (project, job-shape) resolves a face directly, skipping the heuristic.
+        # Gated OFF by default (config.T1_FASTPATH_ENABLED) AND inert when no
+        # servable profile exists — so this is byte-identical to today unless
+        # explicitly enabled AND a profile genuinely wins. Pin authority stays
+        # strictly ABOVE this (an agent-token turn never reaches the else branch).
+        fast_face = await _t1_fastpath_face(state)
+        if fast_face:
+            new_face, old_face = fast_face, state.get("face_id", "assistant")
+        else:
+            new_face, old_face = await _select_face(state)
     swap_messages: list[dict] = []
     if new_face:
         face_id = new_face

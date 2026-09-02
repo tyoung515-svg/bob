@@ -267,7 +267,7 @@ async def route_approval(action_type: str, details: dict) -> str:
       audit-log, no human prompt.
     * ``"gate"``  — novel/ambiguous and no critic configured; surface for human.
     * ``"human"`` — out-of-scope/destructive/floor-match/critic-rejected →
-      the operator decides.
+      Travis decides.
 
     When no scope is provided, preserve current behaviour: return ``"human"``
     (the existing T4 inbox).

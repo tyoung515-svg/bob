@@ -1,0 +1,15 @@
+# Previously-seen watch items (a prior sweep). Dedupe reference corpus for W1 tests.
+# Fingerprint identity is (title, url) — the `id` field is a per-sweep item handle and
+# is deliberately NOT part of the content fingerprint.
+- id: seen-1
+  title: "Claude Opus 4.5 released"
+  url: "https://www.anthropic.com/news/opus-4-5"
+  source: anthropic-news
+- id: seen-2
+  title: "GPT-5 pricing update"
+  url: "https://openai.com/api/pricing"
+  source: openai-pricing
+- id: seen-3
+  title: "llama.cpp b9600 release"
+  url: "https://github.com/ggml-org/llama.cpp/releases/tag/b9600"
+  source: llamacpp-releases

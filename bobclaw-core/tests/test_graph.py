@@ -50,6 +50,23 @@ def test_graph_has_expected_nodes():
     assert {"decompose", "route", "execute", "approval"}.issubset(node_names)
 
 
+def test_head_order_route_precedes_decompose():
+    """A-10 / G2 regression: the head is START -> route -> decompose -> recall.
+
+    route runs FIRST so it makes the council decision (sets council_spec) in ONE
+    place; decompose then reads that authoritative signal instead of mirroring
+    route's trigger predicates. Guards against a silent reorder that would
+    resurrect the LOCAL-1 predicate mirror / gemma VRAM churn.
+    """
+    edges = {(e.source, e.target) for e in build_graph().get_graph().edges}
+    assert ("__start__", "route") in edges
+    assert ("route", "decompose") in edges
+    assert ("decompose", "recall") in edges
+    # The OLD (pre-A-10) head order must be gone.
+    assert ("__start__", "decompose") not in edges
+    assert ("decompose", "route") not in edges
+
+
 def test_route_from_execute_to_approval_when_flagged():
     state = make_state(approval_required=True, approval_response=None)
     assert _route_from_execute(state) == "approval"

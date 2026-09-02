@@ -29,6 +29,34 @@ def _iter_py_files() -> list[Path]:
     return list(ROOT.rglob("*.py"))
 
 
+CORE_DIR = Path(__file__).parent.parent.parent / "core"
+STOCK_SLOTS = Path(__file__).parent.parent.parent / "config" / "memory_slots.toml"
+
+
+def test_no_gemma_anywhere_in_core_or_stock_config():
+    """gemma is retired from ALL of bob's pipelines (2026-07-20 directive,
+    embedding-only posture). The hardwired local-routing preference and the
+    stock slot defaults were purged 2026-07-24 after the name kept riding
+    back in. It must not reappear in any core/ Python file (code, comments,
+    or docstrings) or in config/memory_slots.toml.
+    """
+    targets = list(CORE_DIR.rglob("*.py")) if CORE_DIR.is_dir() else []
+    if STOCK_SLOTS.is_file():
+        targets.append(STOCK_SLOTS)
+    violations: list[str] = []
+    for path in targets:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for lineno, line in enumerate(lines, start=1):
+            if "gemma" in line.lower():
+                violations.append(f"  {path}:{lineno}: {line.strip()}")
+    if violations:
+        pytest.fail(
+            "gemma reference(s) found — gemma is retired from all pipelines "
+            "(embedding-only posture, 2026-07-20 directive):\n"
+            + "\n".join(violations)
+        )
+
+
 def test_no_model_names_in_core_code():
     """No model-name string appears in core/memory/ outside of slots.py and tests.
 

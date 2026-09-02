@@ -7,6 +7,7 @@ Usage:
 import argparse
 import logging
 import os
+import pathlib
 import ssl
 import sys
 from typing import Any
@@ -24,15 +25,18 @@ from config import config
 from db import close_postgres_pool, get_postgres_pool, init_db
 from redis_client import close_redis
 from routers.auth_routes import router as auth_router
+from routers.agents import router as agents_router
 from routers.capabilities import router as capabilities_router
 from routers.chat import router as chat_router
 from routers.approvals import router as approvals_router
 from routers.conversations import router as conversations_router
 from routers.faces import router as faces_router
+from routers.flights import router as flights_router
 from routers.ideas import router as ideas_router
 from routers.memory import router as memory_router
 from routers.memory_graph import router as memory_graph_router
 from routers.models import router as models_router
+from routers.monitor import router as monitor_router
 from routers.projects import router as projects_router
 from routers.routing_view import router as routing_view_router
 from routers.system_routes import router as system_router
@@ -82,6 +86,9 @@ def build_app(state_overrides: dict[web.AppKey, Any] | None = None) -> web.Appli
     """Create and configure the aiohttp Application."""
     app = web.Application(
         middlewares=[
+            # Outermost: stamp security headers on EVERY response, including the auth
+            # 401s / rate-limit 429s raised by inner middleware (port from release
+            # repo v0.98.1 — convergence debt H).
             make_security_headers_middleware(),
             make_audit_log_middleware(enabled=config.AUDIT_LOG_ENABLED),
             auth_middleware,
@@ -101,13 +108,16 @@ def build_app(state_overrides: dict[web.AppKey, Any] | None = None) -> web.Appli
 
     # Register route tables
     app.router.add_routes(auth_router)
+    app.router.add_routes(agents_router)
+    app.router.add_routes(capabilities_router)
     app.router.add_routes(chat_router)
     app.router.add_routes(conversations_router)
     app.router.add_routes(projects_router)
     app.router.add_routes(faces_router)
+    app.router.add_routes(flights_router)
     app.router.add_routes(ideas_router)
     app.router.add_routes(approvals_router)
-    app.router.add_routes(capabilities_router)
+    app.router.add_routes(monitor_router)
     app.router.add_routes(models_router)
     app.router.add_routes(memory_router)
     app.router.add_routes(memory_graph_router)

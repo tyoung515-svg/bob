@@ -186,6 +186,17 @@ async def synthesize_node(state: "dict") -> dict:
     synthesis = ""
     used_synth = synth_backend
     _last_exc = None
+    # Spawn-context (intake 2026-07-18): the synth stage is a council position
+    # too — a CLI backend on the synth chain (e.g. claude_code fallback) must
+    # spawn with synth framing, not the ambient repo charter.
+    from core.spawn_context import spawn_descriptor as _spawn_descriptor
+
+    _synth_desc = {
+        "position": "council_seat",
+        "role": "synth",
+        "template": "council_seat",
+        "task": topic,
+    }
     for _cand in synth_candidates:
         try:
             # MS9-W5 (finding B): BOUND the synth call like the per-seat worker call
@@ -195,10 +206,11 @@ async def synthesize_node(state: "dict") -> dict:
             # the app banner stuck on "Deliberating…". A trip raises asyncio.TimeoutError
             # (an Exception) → the except below walks to the next candidate. Happy path
             # (a prompt backend) is byte-identical — wait_for returns the same value.
-            synthesis = await asyncio.wait_for(
-                _send_to_backend(synth_messages, _cand),
-                timeout=COUNCIL_SYNTH_TIMEOUT_SECONDS,
-            )
+            with _spawn_descriptor(_synth_desc):
+                synthesis = await asyncio.wait_for(
+                    _send_to_backend(synth_messages, _cand),
+                    timeout=COUNCIL_SYNTH_TIMEOUT_SECONDS,
+                )
             used_synth = _cand
             _last_exc = None
             if synthesis:

@@ -28,11 +28,29 @@ from core.nodes.execute import _send_to_backend
 from core.nodes.gate import WORKER_SCOPE_REVIEW_PROMPT
 from core.permissions import Scope
 from core.research.subagent import run_iterresearch
+from core.telemetry.emit import KIND_WORKER_STATE, emit_event
+from core.telemetry.flight import resolve_flight_id
 
 if TYPE_CHECKING:
     pass
 
 _fanout_logger = logging.getLogger("bobclaw.core.fanout")
+
+
+async def _emit_worker_state(
+    sub_state: dict, *, idx: int, backend: str, status: str, **extra,
+) -> None:
+    """Flight substrate L0.2 — emit one ``worker_state`` monitor frame (per-worker
+    STATE-CHANGE, §7.2). Fail-safe (``emit_event`` never raises). The flight resolves
+    two-tier from the Send sub-state (explicit ``flight_id`` when the turn threaded one,
+    else ambient). ``role`` is the worker face when present (chat fan-out threads
+    ``face_id``; the build/research fan-out does not)."""
+    await emit_event(
+        KIND_WORKER_STATE,
+        resolve_flight_id(sub_state),
+        {"idx": idx, "role": sub_state.get("face_id"), "backend": backend,
+         "status": status, **extra},
+    )
 
 
 def _looks_like_rate_limit(exc: Exception) -> bool:
@@ -80,13 +98,24 @@ async def _build_worker(sub_state: dict) -> dict:
     name = contract.get("name", "")
     start = time.monotonic()
     source: str | None = None
+    # agy_code / codex_code / pi_code need the provider/model threaded through as the
+    # model_override (the only posture knob the stateless build fan-out can apply);
+    # absent ⇒ the 2-arg call, byte-identical for HTTP backends (deepseek/glm/…).
+    worker_model = (
+        (sub_state.get("agy_posture") or {}).get("model")
+        or (sub_state.get("codex_posture") or {}).get("model")
+        or (sub_state.get("pi_posture") or {}).get("model")
+    )
+    prompt_msgs = [{"role": "user", "content": build_impl_prompt(contract)}]
+    # L0.2: emit "running" for this build branch before the backend call. Fail-safe.
+    await _emit_worker_state(sub_state, idx=idx, backend=backend, status="running", name=name)
     try:
-        response = await asyncio.wait_for(
-            _send_to_backend(
-                [{"role": "user", "content": build_impl_prompt(contract)}], backend
-            ),
-            timeout=WORKER_TIMEOUT_SECONDS,
+        send_coro = (
+            _send_to_backend(prompt_msgs, backend, worker_model)
+            if worker_model
+            else _send_to_backend(prompt_msgs, backend)
         )
+        response = await asyncio.wait_for(send_coro, timeout=WORKER_TIMEOUT_SECONDS)
         source = extract_func(str(response), name)
         if source:
             # P3 sandbox gate: reject an impl that breaks the pure/stdlib-only/no-I/O
@@ -108,6 +137,31 @@ async def _build_worker(sub_state: dict) -> dict:
         "idx": idx, "name": name, "source": source, "status": status,
         "backend_used": backend, "duration_ms": duration_ms,
     }
+    # ── Worker-audit tier (advisory) ──────────────────────────────────────────────
+    # Review a good impl for spec adherence / scope / quality via the team's critic
+    # chain (e.g. minimax → kimi_code → deepseek_v4). ADVISORY: the verdict is recorded
+    # for the conductor/human/repair loop; Docker verify stays the hard gate, so an LLM
+    # audit can never silently drop a build-green impl. No critic_backend ⇒ skipped
+    # (byte-identical for teams without a critic role).
+    critic_backend = sub_state.get("critic_backend")
+    if critic_backend and status == "ok" and source:
+        audit_task = (
+            f"Contract: {name}{contract.get('signature', '')}\n"
+            f"Spec: {contract.get('doc', '')}"
+        )
+        try:
+            verdict, reasons = await run_critic(
+                subtask_text=audit_task,
+                worker_output=source,
+                critic_backend=critic_backend,
+                fallback_chain=sub_state.get("critic_fallback_chain"),
+            )
+            entry["audit_backend"] = critic_backend
+            entry["audit_verdict"] = verdict          # approve | flag | reject | none
+            entry["audit_reasons"] = reasons
+        except Exception as exc:  # noqa: BLE001 — an audit must never sink a good build
+            entry["audit_verdict"] = "none"
+            entry["audit_reasons"] = [f"audit_unavailable: {type(exc).__name__}: {exc}"]
     # MS-4 BIND-02: meter this build branch's spend in-branch (guarded; no-op without budget).
     _meter_branch(
         sub_state, entry,
@@ -118,7 +172,24 @@ async def _build_worker(sub_state: dict) -> dict:
         "event": "build_worker", "worker_idx": idx, "name": name,
         "status": status, "filled": source is not None,
         "duration_ms": duration_ms, "backend": backend,
+        "audit_verdict": entry.get("audit_verdict"),
     }, separators=(",", ":")))
+    # L0.2: emit the terminal build-branch state with a token estimate. measure_spend is
+    # a post-hoc measurement of the REAL I/O (the build prompt + the extracted impl), honest
+    # even when the backend exposes no usage metadata — the SAME guarded pattern the
+    # chat/research worker uses (below), so EVERY terminal worker frame carries `tokens`.
+    # No per-backend USD table exists, so this token tick is the truthful per-flight
+    # resource signal (the monitor sums it). Fail-soft to 0 — never break a worker on a
+    # metering estimate. `running` frames stay token-less (no output yet).
+    _tokens = 0
+    try:
+        _tokens = measure_spend(prompt_msgs, str(source or ""), None)
+    except Exception:  # noqa: BLE001 — never break a worker on a metering estimate
+        _tokens = 0
+    await _emit_worker_state(
+        sub_state, idx=idx, backend=backend, status=status,
+        duration_ms=duration_ms, tokens=_tokens, name=name,
+    )
     return {"build_impls": [entry]}
 
 
@@ -207,15 +278,55 @@ async def _research_worker(sub_state: dict) -> dict:
     return {"worker_results": [entry]}
 
 
+def _prepare_research_spec(sub_state: dict) -> bool:
+    """Fill the runtime (non-serializable) pieces of a ``research_subagent`` spec IN PLACE.
+
+    The live seam's marker spec carries only ``question`` (Send args must stay
+    msgpack-serializable for the graph checkpointer); the retriever and the per-Send
+    ephemeral report store are built here at run time. A spec that already carries them
+    (DAG/forest callers, tests) — or a non-dict trusted-internal spec object — is used
+    as-is. Returns False when no retriever can be built (env off / availability degrade):
+    the caller falls OPEN to the plain chat worker, never a failed subtask.
+    """
+    spec = sub_state["research_subagent"]
+    if not isinstance(spec, dict):
+        return True
+    prepared = dict(spec)
+    if prepared.get("retriever") is None:
+        from core.research.wiring import build_research_retriever
+
+        question = str(prepared.get("question") or sub_state.get("task") or "")
+        retriever = build_research_retriever(question)
+        if retriever is None:
+            return False
+        prepared["retriever"] = retriever
+    if prepared.get("report_store") is None:
+        from core.research.subagent import InMemoryReportStore
+
+        prepared["report_store"] = InMemoryReportStore()
+    sub_state["research_subagent"] = prepared
+    return True
+
+
 async def worker_node(sub_state: dict) -> dict:
     """Single-worker call. Returns a state delta with one worker_results entry."""
+    # L0.4: bind this worker's flight (task-local; each Send runs in its own task) so a
+    # metered backend call attributes its USD to the right flight. Covers all branches.
+    from core.telemetry.spend import bind_flight_from_state
+    bind_flight_from_state(sub_state)
     # ── Build pipeline branch (Feature 2): a build Send carries a contract. ──
     if sub_state.get("build_contract") is not None:
         return await _build_worker(sub_state)
     # ── Research subagent branch (MS2-R3): a research Send carries a subagent spec.
-    # Guard-at-top: a non-research worker (no `research_subagent` key) is byte-identical. ──
+    # Guard-at-top: a non-research worker (no `research_subagent` key) is byte-identical.
+    # The LIVE chat seam (hermes wiring) sends a SERIALIZABLE marker spec ({"question": ...}
+    # only) — Send args ride through the graph checkpointer, and a retriever callable in
+    # them is not msgpack-serializable (live-smoke defect, 2026-07-20). The runtime pieces
+    # are built HERE; a spec that already carries retriever/report_store (DAG/forest/tests)
+    # is used as-is. Build failure ⇒ fail OPEN to the plain chat worker below. ──
     if sub_state.get("research_subagent") is not None:
-        return await _research_worker(sub_state)
+        if _prepare_research_spec(sub_state):
+            return await _research_worker(sub_state)
     task = sub_state.get("task", "")
     backend = sub_state.get("backend", "local")
     escalation_backend = sub_state.get("escalation_backend")
@@ -223,19 +334,31 @@ async def worker_node(sub_state: dict) -> dict:
 
     messages = [{"role": "user", "content": task}]
     recalled = sub_state.get("recalled_facts") or []
-    if recalled:
-        bullets = "\n".join(f"- {f.body.get('text', '')}" for f in recalled[:5])
+    recalled_chunks = (
+        sub_state.get("recalled_chunks") or []
+        if config.MEMORY_T0_RECALL_ENABLED
+        else []
+    )
+    memory_lines = [f.body.get("text", "") for f in recalled]
+    memory_lines.extend(chunk.content for chunk in recalled_chunks)
+    if memory_lines:
+        bullets = "\n".join(f"- {text}" for text in memory_lines[:5])
         messages.insert(0, {"role": "system", "content": f"Prior context:\n{bullets}"})
     start = time.monotonic()
 
+    # L0.2: emit the mid-run "running" state BEFORE the backend call so a monitor sees
+    # the worker light up immediately (not just at join). Fail-safe.
+    await _emit_worker_state(sub_state, idx=subtask_idx, backend=backend, status="running")
+
     try:
         effective_backend = backend
-        # agy_code / codex_code need the worker face's model threaded through (the
-        # only posture knob the stateless fan-out path can apply). Pass it only when
-        # set so the common 2-arg call shape is unchanged for other backends.
+        # agy_code / codex_code / pi_code need the worker face's model threaded through
+        # (the only posture knob the stateless fan-out path can apply). Pass it only
+        # when set so the common 2-arg call shape is unchanged for other backends.
         worker_model = (
             (sub_state.get("agy_posture") or {}).get("model")
             or (sub_state.get("codex_posture") or {}).get("model")
+            or (sub_state.get("pi_posture") or {}).get("model")
         )
         send_coro = (
             _send_to_backend(messages, effective_backend, worker_model)
@@ -350,4 +473,17 @@ async def worker_node(sub_state: dict) -> dict:
         log_data["critic_reasons_count"] = len(entry.get("critic_reasons", []))
     _fanout_logger.info(json.dumps(log_data, separators=(",", ":")))
 
+    # L0.2: emit the terminal state-change (ok/failed/timeout/rejected/flagged) with a
+    # token estimate (measure_spend = post-hoc measurement of the real I/O, honest even
+    # when the backend exposes no usage metadata). No per-backend USD table exists, so a
+    # token tick is the truthful per-flight resource signal (the monitor sums it).
+    _tokens = 0
+    try:
+        _tokens = measure_spend(messages, str(entry.get("content") or ""), entry.get("usage"))
+    except Exception:  # noqa: BLE001 — never break a worker on a metering estimate
+        _tokens = 0
+    await _emit_worker_state(
+        sub_state, idx=subtask_idx, backend=entry.get("backend_used", backend),
+        status=entry["status"], duration_ms=entry.get("duration_ms"), tokens=_tokens,
+    )
     return {"worker_results": [entry]}

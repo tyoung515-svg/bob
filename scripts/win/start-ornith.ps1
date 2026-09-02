@@ -1,8 +1,8 @@
 <#
   BoBClaw - Ornith test-model launcher (:8083, GPU, llama.cpp).
 
-  Serves an Ornith GGUF over the OpenAI /v1/chat/completions endpoint for a local
-  deep/frontier coding eval. Same durable Task Scheduler pattern as
+  Serves an Ornith GGUF over the OpenAI /v1/chat/completions endpoint for the
+  LMForge deep/frontier coding eval. Same durable Task Scheduler pattern as
   start-embedder.ps1 / start-extractor.ps1 - see those headers for the WHY.
 
   Variants (-Variant):
@@ -20,7 +20,7 @@
 
   USAGE - sequential A/B across the three variants:
     ./start-ornith.ps1 -Variant 9b                                  # load + serve
-    # (run your deep/frontier eval against http://localhost:8083)
+    # (run LMForge deep/frontier against http://localhost:8083)
     ./stop-ornith.ps1
     ./start-ornith.ps1 -Variant 9b-mtp
     ./stop-ornith.ps1
@@ -31,10 +31,11 @@
   metadata that may not be recognised by the b9509 build - a load failure shows
   in the console immediately rather than vanishing into a log file).
 
-  In any OpenAI-compatible chat UI: set the endpoint to http://localhost:8083,
-  connect, and run your Deep + Frontier eval tiers. Recommended sampling per the
-  Ornith model card: temp=0.6, top_p=0.95, top_k=20 (set these per-request in the
-  UI; they override the server defaults).
+  LMForge (D:\OLD windows files\CoCouncilHub\LMForge\lm-chat.html): set the
+  endpoint input to http://localhost:8083, connect, run Deep + Frontier tiers
+  (Code). Recommended sampling per Ornith model card: temp=0.6, top_p=0.95,
+  top_k=20 - set these in LMForge's Parameters sidebar (they override server
+  defaults per-request).
 #>
 [CmdletBinding()]
 param(
@@ -50,19 +51,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# Binary location. Override via LLAMA_SERVER_EXE (defaults to one on PATH).
-$server = if ($env:LLAMA_SERVER_EXE) { $env:LLAMA_SERVER_EXE } else { 'llama-server.exe' }
+$server = 'C:\dev\tools\llama.cpp-b9509\llama-server.exe'
 
-# Variant -> GGUF path, read from environment. Keys must match the ValidateSet above.
-# Set whichever variants you use to their local GGUF paths (see README / AGENTS-SETUP.md):
-#   BOBCLAW_ORNITH_9B_GGUF / BOBCLAW_ORNITH_9B_MTP_GGUF / BOBCLAW_ORNITH_35B_GGUF
+# Variant -> GGUF path. Keys must match the ValidateSet above.
 $ggufByVariant = @{
-    '9b'     = $env:BOBCLAW_ORNITH_9B_GGUF
-    '9b-mtp' = $env:BOBCLAW_ORNITH_9B_MTP_GGUF
-    '35b'    = $env:BOBCLAW_ORNITH_35B_GGUF
+    '9b'     = 'C:\dev\models\deepreinforce-ai\Ornith-1.0-9B-GGUF\ornith-1.0-9b-Q6_K.gguf'
+    '9b-mtp' = 'C:\dev\models\protoLabsAI\Ornith-1.0-9B-MTP-GGUF\ornith-9b-mtp-kl-Q6_K.gguf'
+    '35b'    = 'C:\dev\models\SC117\Ornith-1.0-35B-MTP-APEX-GGUF\Ornith-1.0-35B-MTP-APEX-I-Compact.gguf'
 }
 $gguf = $ggufByVariant[$Variant]
-if (-not $gguf) { throw "Set the GGUF path env var for variant '$Variant' (e.g. BOBCLAW_ORNITH_9B_GGUF); see README / AGENTS-SETUP.md." }
 
 $repo     = (Resolve-Path "$PSScriptRoot\..\..").Path
 $logDir   = Join-Path $repo '.logs'
@@ -102,7 +99,7 @@ $baseArgs = @(
     '--port', '8083'
 ) + $moeArgs
 
-if (-not (Get-Command $server -ErrorAction SilentlyContinue) -and -not (Test-Path $server)) { throw "llama-server not found: $server (set LLAMA_SERVER_EXE)" }
+if (-not (Test-Path $server)) { throw "llama-server not found: $server" }
 if (-not (Test-Path $gguf))   { throw "Ornith GGUF not found ($Variant): $gguf" }
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 

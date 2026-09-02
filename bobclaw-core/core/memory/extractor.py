@@ -76,14 +76,20 @@ class FactExtractor:
         fact_store: FactStore,
         slot_name: str = "extract_small",
     ) -> None:
-        resolution = slot_resolver.get(slot_name)
-        self._resolution = resolution
+        # Slot resolution is lazy (first extract() call): a deferred extract
+        # slot — the retired-extractor, embedding-only posture — must not fail
+        # memory bootstrap; extraction fails closed at use instead.
+        self._slot_resolver = slot_resolver
+        self._resolution = None
         self._fact_store = fact_store
         self._slot_name = slot_name
 
     async def extract(self, event: Event) -> list[Fact]:
         if event.kind != "agent_turn":
             return []
+
+        if self._resolution is None:
+            self._resolution = self._slot_resolver.get(self._slot_name)
 
         backend = self._resolution.backend
         if backend != "lmstudio":

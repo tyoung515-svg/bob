@@ -41,30 +41,6 @@ def _is_complex(task: str) -> bool:
     return len(task) > _COMPLEX_THRESHOLD or bool(_COMPLEX_KEYWORDS.search(task))
 
 
-def _is_council_turn(state: "AgentState") -> bool:
-    """Return True when this turn will divert to the council subgraph.
-
-    The council branch (graph._route_after_recall) never reads ``subtasks``,
-    so decomposing first would JIT-load a local model whose output is
-    discarded — pure VRAM churn on every council run.  Mirrors route_node's
-    two council triggers: the council-max face, and a profile with a council
-    ``shape``.
-    """
-    from core.nodes.route import _COUNCIL_FACE_ID
-
-    if state.get("face_id") == _COUNCIL_FACE_ID:
-        return True
-    profile_name = state.get("profile_name")
-    if profile_name:
-        try:
-            from core import teams
-            prof = teams.load_profile(profile_name)
-        except Exception:  # pragma: no cover - defensive
-            return False
-        return bool(prof and prof.get("shape"))
-    return False
-
-
 # ─── LLM call (injectable) ────────────────────────────────────────────────────
 
 async def _default_call_llm(task: str, backend: str) -> list[str]:
@@ -144,14 +120,28 @@ async def decompose_node(state: "AgentState") -> dict:
             ],
         }
 
-    if _is_council_turn(state):
-        # Council turns divert at recall and never consume subtasks — skip the
-        # decompose LLM call entirely instead of loading a model for nothing.
+    if state.get("council_spec") is not None:
+        # A-10: route already decided this is a council turn (it set council_spec —
+        # the SINGLE source of truth for both council triggers). The council branch
+        # (graph._route_after_recall) never reads ``subtasks``, so decomposing would
+        # JIT-load a local model whose output is discarded — pure VRAM churn. Skip
+        # the LLM call. This reads route's authoritative signal instead of mirroring
+        # its trigger predicates (the retired ``_is_council_turn``).
         return {
             "messages": [
                 {"role": "system", "content": f"Council turn (decomposition skipped): {task}"}
             ],
         }
+
+    if state.get("subtasks"):
+        # Idempotent on re-entry: decompose now runs AFTER route, and the approval
+        # loop-back (approval → route → decompose → recall) re-enters this node on a
+        # resumed turn. The first pass already produced ``subtasks`` and appended the
+        # decomposition message; re-calling the LLM would waste a spawn and the
+        # ``messages`` reducer would append a duplicate card. Under the old
+        # decompose→route order the resume re-entered at route and skipped decompose
+        # entirely — this guard preserves that (byte-identical resume behaviour).
+        return {}
 
     backend = state.get("backend", "local")
     subtasks = await _call_llm(task, backend)

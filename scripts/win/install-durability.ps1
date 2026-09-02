@@ -3,7 +3,7 @@
 
   Registers (or updates, idempotently) all four services as Task-Scheduler-owned
   tasks with:
-    - an At-Logon trigger      -> the stack comes back after a reboot (when the operator
+    - an At-Logon trigger      -> the stack comes back after a reboot (when Travis
                                   logs in) with no manual start-all.
     - restart-on-failure        -> a crashed service is relaunched (every 1 min).
     - infinite execution limit  -> long-running servers are never auto-killed.
@@ -27,11 +27,16 @@
                            scripts/profile_scheduler.py). Opt-in / default OFF: the task
                            is only created when this switch is passed, and its wrapper
                            (task-scheduler.ps1) enables PROFILE_SCHEDULE_ENABLED.
+  -IncludeBudgetEnforcer -> ALSO register BobClaw-BudgetEnforcer (the Flight-substrate FU1
+                           budget daemon, scripts/budget_enforcer.py). Opt-in / default OFF:
+                           its wrapper (task-budget-enforcer.ps1) enables FLIGHT_ENFORCE_ENABLED,
+                           which turns on the GLM serial mutex + over-budget auto-pause hot path.
 #>
 [CmdletBinding()]
 param(
     [bool]$IncludeModels = $true,
     [switch]$IncludeScheduler,
+    [switch]$IncludeBudgetEnforcer,
     [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
@@ -85,22 +90,20 @@ if ($IncludeScheduler) {
     Say "  (skipping BobClaw-Scheduler — pass -IncludeScheduler to register the Profiles cron daemon)" 'Yellow'
 }
 
+# Budget enforcer (opt-in): register the Flight-substrate FU1 budget daemon ----
+if ($IncludeBudgetEnforcer) {
+    Say "== Registering Flight budget-enforcer durable task =="
+    Register-Wrapper 'BobClaw-BudgetEnforcer' (Join-Path $PSScriptRoot 'task-budget-enforcer.ps1') `
+        'BoBClaw Flight budget enforcer (budget_enforcer.py) — durable, opt-in; ENABLES FLIGHT_ENFORCE'
+} else {
+    Say "  (skipping BobClaw-BudgetEnforcer — pass -IncludeBudgetEnforcer to enable flight budget enforcement)" 'Yellow'
+}
+
 # Docker: make the bobclaw containers auto-restart ----------------------------
 Say "== Setting docker restart policy (unless-stopped) =="
-# Resolve containers through compose (project-aware), never fixed names — two
-# installs with distinct COMPOSE_PROJECT_NAME must not touch each other.
-$durRepo = (Resolve-Path "$PSScriptRoot\..\..").Path
-$durComposeArgs = @('compose', '-f', (Join-Path $durRepo 'docker-compose.yml'))
-$durEnvFile = Join-Path $durRepo '.secrets\bobclaw.env'
-if (Test-Path $durEnvFile) { $durComposeArgs += @('--env-file', $durEnvFile) }
-foreach ($svc in 'postgres', 'redis', 'qdrant') {
-    $cid = (docker @durComposeArgs ps -q $svc 2>$null | Select-Object -First 1)
-    if ($cid) {
-        docker update --restart unless-stopped $cid *> $null
-        if ($LASTEXITCODE -eq 0) { Say "  $svc -> unless-stopped" } else { Say "  $svc update failed" 'Yellow' }
-    } else {
-        Say "  $svc not running (compose file sets restart: unless-stopped; applies on next 'up')" 'Yellow'
-    }
+foreach ($c in 'bobclaw-postgres', 'bobclaw-redis', 'bobclaw-qdrant') {
+    docker update --restart unless-stopped $c *> $null
+    if ($LASTEXITCODE -eq 0) { Say "  $c -> unless-stopped" } else { Say "  $c not running (compose file updated; applies on next 'up')" 'Yellow' }
 }
 
 Say ""

@@ -32,6 +32,7 @@ import shutil
 from typing import Any, AsyncIterator, Optional
 
 from core.config import config
+from core.spawn_context import SpawnContext, resolve_spawn_context
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +213,29 @@ class ClaudeCodeClient:
             return self._scratch_dir()
         return self.cwd
 
-    def _brief_prompt(self, prompt: str, posture: dict) -> str:
+    # ── spawn-context seam (intake 2026-07-18) ──────────────────────────────────
+
+    def _spawn_context(self, posture: dict) -> Optional[SpawnContext]:
+        """Build the SpawnContext when the posture carries a descriptor.
+
+        The scratch dir is the client's OWN per-conversation derivation so the
+        C4 edit-capture path (``_maybe_capture_cc_edit`` reads
+        ``proposed_<n>.diff`` via the same derivation) keeps working. A posture
+        without a descriptor returns None ⇒ legacy behavior byte-for-byte.
+        """
+        descriptor = posture.get("spawn_context")
+        if not isinstance(descriptor, dict) or not descriptor:
+            return None
+        return resolve_spawn_context(
+            "claude_code",
+            posture,
+            scratch_dir=self._scratch_dir(),
+            conversation_id=self.conversation_id,
+        )
+
+    def _brief_prompt(
+        self, prompt: str, posture: dict, spawn_ctx: Optional[SpawnContext] = None
+    ) -> str:
         """Prepend the repo ``CLAUDE.md`` briefing for scratch-write spawns.
 
         FALLBACK for C2.1 #4: a normal spawn auto-loads ``CLAUDE.md`` from its
@@ -223,8 +246,14 @@ class ClaudeCodeClient:
         regardless. (Manager confirms live whether the inline copy is redundant
         with auto-load; harmless if so.) Best-effort: silently skipped if the
         file is missing/unreadable.
+
+        A CLEAN spawn context (descriptor present, ``project_access`` False)
+        suppresses the briefing — inlining the host charter is exactly the leak
+        the spawn-context seam closes.
         """
         if not self._is_scratch_write(posture):
+            return prompt
+        if spawn_ctx is not None and not spawn_ctx.project_access:
             return prompt
         claude_md = os.path.join(self.cwd, "CLAUDE.md")
         try:
@@ -243,7 +272,9 @@ class ClaudeCodeClient:
 
     # ── argv construction ──────────────────────────────────────────────────────
 
-    def _posture_flags(self, posture: dict) -> list[str]:
+    def _posture_flags(
+        self, posture: dict, spawn_ctx: Optional[SpawnContext] = None
+    ) -> list[str]:
         """Translate a posture dict into CLI flags.
 
         Recognised keys (all optional — C2 owns the policy):
@@ -263,9 +294,13 @@ class ClaudeCodeClient:
         and ``--disallowedTools Write(<repo>/**) Edit(<repo>/**) Bash`` (repo
         write-denied + no shell). The spawn cwd is the scratch dir (see
         ``_effective_cwd``), which is OUTSIDE the repo so scratch writes survive
-        the deny.
+        the deny. A CLEAN spawn context (descriptor present, ``project_access``
+        False) demotes scratch-write to the generic translation — no repo
+        ``--add-dir``, no repo grants at all.
         """
-        if self._is_scratch_write(posture):
+        if self._is_scratch_write(posture) and (
+            spawn_ctx is None or spawn_ctx.project_access
+        ):
             return self._scratch_write_flags(posture)
 
         flags: list[str] = []
@@ -334,6 +369,7 @@ class ClaudeCodeClient:
         resume_session_id: Optional[str],
         posture: dict,
         stream: bool = False,
+        spawn_ctx: Optional[SpawnContext] = None,
     ) -> list[str]:
         # The prompt is fed on STDIN, NOT as an argv element. It inlines the
         # ~30 KB CLAUDE.md briefing (scratch-write posture) via _brief_prompt,
@@ -348,7 +384,7 @@ class ClaudeCodeClient:
         if resume_session_id:
             # Always --resume <id>, never --continue (multi-process race).
             argv += ["--resume", str(resume_session_id)]
-        argv += self._posture_flags(posture)
+        argv += self._posture_flags(posture, spawn_ctx)
         return argv
 
     # ── non-stream chat ────────────────────────────────────────────────────────
@@ -375,20 +411,25 @@ class ClaudeCodeClient:
             On any other CLI/parse failure or ``is_error`` result.
         """
         posture = self.posture if posture is None else posture
-        briefed = self._brief_prompt(prompt, posture)
+        spawn_ctx = self._spawn_context(posture)
+        briefed = self._brief_prompt(prompt, posture, spawn_ctx)
         argv = self._build_argv(
             output_format="json",
             resume_session_id=resume_session_id,
             posture=posture,
+            spawn_ctx=spawn_ctx,
         )
 
-        cwd = self._effective_cwd(posture)
+        cwd = spawn_ctx.cwd if spawn_ctx is not None else self._effective_cwd(posture)
+        env_overrides = spawn_ctx.env_overrides if spawn_ctx is not None else None
 
         # One retry reserved for a TRANSIENT overload (529/503) — a momentary
         # server blip should not abandon a (scratch-write planning) turn and
         # silently escalate. A genuine rate_limit escalates on the first hit.
         for attempt in range(_MAX_OVERLOAD_ATTEMPTS):
-            stdout, stderr = await self._spawn(argv, cwd=cwd, stdin_data=briefed)
+            stdout, stderr = await self._spawn(
+                argv, cwd=cwd, stdin_data=briefed, env_overrides=env_overrides
+            )
 
             text = stdout.decode("utf-8", errors="replace").strip()
             if not text:
@@ -454,21 +495,26 @@ class ClaudeCodeClient:
         ``ClaudeCodeError`` on an error ``result`` / CLI failure.
         """
         posture = self.posture if posture is None else posture
-        briefed = self._brief_prompt(prompt, posture)
+        spawn_ctx = self._spawn_context(posture)
+        briefed = self._brief_prompt(prompt, posture, spawn_ctx)
         argv = self._build_argv(
             output_format="stream-json",
             resume_session_id=resume_session_id,
             posture=posture,
             stream=True,
+            spawn_ctx=spawn_ctx,
         )
 
+        env = _subscription_env()  # never bill the metered API key (subscription only)
+        if spawn_ctx is not None:
+            env.update(spawn_ctx.env_overrides)
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=self._effective_cwd(posture),
-            env=_subscription_env(),  # never bill the metered API key (subscription only)
+            cwd=spawn_ctx.cwd if spawn_ctx is not None else self._effective_cwd(posture),
+            env=env,
         )
 
         # Feed the prompt on stdin, then half-close (send EOF) so the CLI
@@ -633,6 +679,7 @@ class ClaudeCodeClient:
         argv: list[str],
         cwd: Optional[str] = None,
         stdin_data: Optional[str] = None,
+        env_overrides: Optional[dict] = None,
     ) -> tuple[bytes, bytes]:
         """Spawn the CLI, feed the prompt on stdin, return (stdout, stderr) bytes.
 
@@ -653,6 +700,12 @@ class ClaudeCodeClient:
                 f"~{_ARGV_BYTE_LIMIT}-byte command-line limit (would WinError 206 / "
                 f"E2BIG); an arg (--add-dir / extra_args) is oversized"
             )
+        env = _subscription_env()  # never bill the metered API key (subscription only)
+        if env_overrides:
+            # Spawn-context deltas (e.g. a segregated CLAUDE_CONFIG_DIR) layer ON
+            # TOP of the subscription strip — the strip always wins on its keys
+            # because overrides never carry the metered-auth family.
+            env.update(env_overrides)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -660,7 +713,7 @@ class ClaudeCodeClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd or self.cwd,
-                env=_subscription_env(),  # never bill the metered API key (subscription only)
+                env=env,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise ClaudeCodeError(

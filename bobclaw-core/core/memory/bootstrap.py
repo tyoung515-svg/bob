@@ -19,7 +19,6 @@ from core.memory.exceptions import MemoryConfigError
 from core.memory.fact_store import SQLiteFactStore
 from core.memory.indexer import MemoryIndexer
 from core.memory.providers.qdrant_provider import QdrantRetrievalProvider
-from core.memory.providers.zvec_provider import ZvecRetrievalProvider
 from core.memory.query_log import QueryLog
 from core.memory.retriever import MemoryRetriever
 from core.memory.slots import SlotResolver
@@ -60,8 +59,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 @dataclass(frozen=True)
 class MemoryBootstrapConfig:
     enabled: bool = False
+    writer_enabled: bool = False
+    t0_recall_enabled: bool = False
     sqlite_path: Path = _PROJECT_ROOT / ".memory" / "bobclaw_memory.db"
-    qdrant_url: str = "http://localhost:6353"  # BoB's own Qdrant (compose host port), never a shared :6333
+    qdrant_url: str = "http://localhost:6353"  # BoB's own Qdrant, NOT the shared LKS :6333
     stores_config_path: Path = (
         _PROJECT_ROOT / "config" / "memory_stores.toml"
     )
@@ -77,6 +78,8 @@ class MemoryBootstrapConfig:
 
         return cls(
             enabled=config.MEMORY_ENABLED,
+            writer_enabled=config.MEMORY_WRITER_ENABLED,
+            t0_recall_enabled=config.MEMORY_T0_RECALL_ENABLED,
             sqlite_path=_resolve(config.MEMORY_SQLITE_PATH),
             qdrant_url=config.MEMORY_QDRANT_URL,
             stores_config_path=_resolve(config.MEMORY_STORES_CONFIG_PATH),
@@ -93,23 +96,32 @@ class MemorySingletons:
     acl_registry: ACLRegistry
     slot_resolver: SlotResolver
     extractor: "FactExtractor"
+    writer: Any | None = None
+    completion_ledger: Any | None = None
     pending_extraction_tasks: set[asyncio.Task] = field(default_factory=set)
     last_extraction_error: Exception | None = None
+    # L0 persistence is best-effort for chat availability; retain the most
+    # recent failure for health/diagnostic surfaces.
+    last_l0_append_error: Exception | None = None
     # Set by the recall path when it fails open (embedder/Qdrant unavailable);
     # cleared on the next healthy recall. Observable, mirrors last_extraction_error.
     last_recall_error: Exception | None = None
-    # The held write fence is retained for health visibility and lifecycle cleanup.
-    write_fence: Any = None
-
-    @property
-    def write_fence_degraded(self) -> bool:
-        return bool(self.write_fence is not None and self.write_fence.degraded)
+    # W3 mirrors the L1 diagnostics while keeping the zero-LLM task independent.
+    last_writer_error: Exception | None = None
+    pending_writer_tasks: set[asyncio.Task] = field(default_factory=set)
 
     async def drain_extraction_tasks(self) -> None:
         tasks = list(self.pending_extraction_tasks)
         if not tasks:
             return
         self.pending_extraction_tasks.clear()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def drain_writer_tasks(self) -> None:
+        tasks = list(self.pending_writer_tasks)
+        if not tasks:
+            return
+        self.pending_writer_tasks.clear()
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
@@ -119,17 +131,6 @@ def _parse_stores_toml(path: Path) -> dict[str, Any]:
         "stores": raw.get("stores", {}),
         "providers": raw.get("providers", {}),
     }
-
-
-def _validate_provider_blocks(parsed: dict[str, Any]) -> None:
-    providers_raw = parsed.get("providers", {})
-    if not isinstance(providers_raw, dict):
-        raise MemoryConfigError("provider block 'providers' must be a table")
-    for provider_id, provider_conf in providers_raw.items():
-        if not isinstance(provider_conf, dict):
-            raise MemoryConfigError(
-                f"provider block {provider_id!r} must be a table"
-            )
 
 
 def _build_store_acls(parsed: dict[str, Any]) -> dict[str, StoreACL]:
@@ -162,111 +163,6 @@ def _register_acls(
     object.__setattr__(acl_registry, "_stores", store_acls)
 
 
-def _acl_registry_from_parsed(store_acls: dict[str, StoreACL]) -> ACLRegistry:
-    """Build the runtime ACL registry without re-reading memory_stores.toml."""
-    acl_registry = ACLRegistry.__new__(ACLRegistry)
-    _register_acls(acl_registry, store_acls)
-    return acl_registry
-
-
-def _provider_kind(provider_conf: dict[str, Any]) -> str:
-    kind = provider_conf.get("kind", "qdrant")
-    if not isinstance(kind, str) or not kind.strip():
-        raise MemoryConfigError("provider kind must be a non-empty string")
-    normalized = kind.strip().lower()
-    if normalized not in {"qdrant", "zvec"}:
-        raise MemoryConfigError(f"unsupported memory provider kind {kind!r}")
-    return normalized
-
-
-def _select_provider(
-    parsed: dict[str, Any], default_store_id: str
-) -> tuple[str, dict[str, Any]]:
-    providers_raw = parsed.get("providers", {})
-    if not providers_raw:
-        raise MemoryConfigError("No providers defined in stores config")
-
-    # Existing configs have no zvec declaration. Preserve their historical first
-    # provider behavior exactly; selection by store ACL is activated only when the
-    # opt-in backend is actually configured.
-    zvec_declared = any(
-        isinstance(provider_conf, dict)
-        and _provider_kind(provider_conf) == "zvec"
-        for provider_conf in providers_raw.values()
-    )
-    if not zvec_declared:
-        return next(iter(providers_raw.items()))
-
-    store_conf = parsed.get("stores", {}).get(default_store_id)
-    if not isinstance(store_conf, dict):
-        raise MemoryConfigError(
-            f"zvec-aware provider selection requires stores.{default_store_id!r}"
-        )
-    selected_ids = store_conf.get("acl_allowed_providers")
-    if not isinstance(selected_ids, list) or len(selected_ids) != 1:
-        raise MemoryConfigError(
-            "zvec-aware provider selection requires exactly one "
-            f"acl_allowed_providers entry for store {default_store_id!r}"
-        )
-    provider_id = selected_ids[0]
-    provider_conf = providers_raw.get(provider_id)
-    if not isinstance(provider_id, str) or not isinstance(provider_conf, dict):
-        raise MemoryConfigError(
-            f"store {default_store_id!r} selects unknown provider {provider_id!r}"
-        )
-    return provider_id, provider_conf
-
-
-def _resolve_zvec_instance_root(provider_conf: dict[str, Any]) -> Path:
-    raw_root = provider_conf.get("instance_root")
-    if not isinstance(raw_root, str) or not raw_root.strip():
-        raise MemoryConfigError(
-            "zvec provider requires a non-empty instance_root configuration"
-        )
-    root = Path(raw_root).expanduser()
-    if not root.is_absolute():
-        root = _PROJECT_ROOT / root
-    return root.resolve()
-
-
-def _zvec_instance_dir(instance_root: Path, store_id: str) -> Path:
-    if not isinstance(store_id, str) or not store_id.strip():
-        raise MemoryConfigError("zvec default_store_id must be a non-empty string")
-    candidate = Path(store_id)
-    if candidate.name != store_id or candidate.is_absolute() or store_id in {".", ".."}:
-        raise MemoryConfigError(f"unsafe zvec default_store_id {store_id!r}")
-    return instance_root / "instances" / store_id
-
-
-def _initialize_zvec_instance(
-    write_fence: Any,
-    slot_resolver: SlotResolver,
-    instance_root: Path,
-    store_id: str,
-    collection_prefix: str,
-) -> None:
-    """Create the first-boot Zvec layout and stamp it while the fence is held."""
-    from core.memory.fingerprint import (
-        ensure_zvec_instance_fingerprint,
-        fingerprint_from_slot,
-    )
-
-    fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
-    collection = f"{collection_prefix}_{fingerprint.dim}"
-    # The helper's fence-constrained contract is satisfied before any directory or
-    # fingerprint mutation; degraded or unheld fences fail closed here.
-    write_fence.assert_writable(collection)
-    instance_dir = _zvec_instance_dir(instance_root, store_id)
-    manifest_dir = instance_dir / "manifest"
-    for directory in (manifest_dir, instance_dir / "collections", instance_dir / "l0"):
-        directory.mkdir(parents=True, exist_ok=True)
-    ensure_zvec_instance_fingerprint(
-        manifest_dir,
-        fingerprint,
-        assert_writable=lambda: write_fence.assert_writable(collection),
-    )
-
-
 def _consolidation_enabled() -> bool:
     # Parse strictly == "true" to MATCH `config.MEMORY_SINGLE_QDRANT` (and every other MEMORY_* flag in
     # config.py: MEMORY_ENABLED / MEMORY_L1_EXTRACTION_ENABLED / MEMORY_LKS_FIRST) — the config attribute and
@@ -276,56 +172,51 @@ def _consolidation_enabled() -> bool:
     return os.environ.get("MEMORY_SINGLE_QDRANT", "false").strip().lower() == "true"
 
 
-def _maybe_build_write_fence(
-    slot_resolver: SlotResolver,
-    collection_prefix: str,
-    qdrant_url: str = "http://localhost:6353",
-    *,
-    zvec_instance_root: Path | None = None,
-):
-    """Build the mandatory family-scoped ``WriteFence`` for a memory bootstrap.
+def _maybe_build_write_fence(slot_resolver: SlotResolver, collection_prefix: str):
+    """Build a default-OFF single-writer ``WriteFence`` (MS2-C4); ``None`` unless ``MEMORY_WRITE_FENCE_ENABLED``.
 
-    ``MEMORY_ENABLED=true`` reaches this seam unconditionally. The fence flag is
-    default-on-with-memory; setting it to any explicit non-``true`` value is a
-    configuration conflict, never an unfenced writer opt-out.
+    Default (flag unset/false) returns ``None`` immediately so the legacy bootstrap + every existing test is
+    byte-identical (no registry load, no behaviour change). When enabled, load the federation registry (default
+    path / ``BOBCLAW_LEDGER_INSTANCES``), ensure the ``bobclaw-memory`` instance is registered for the SAME
+    collection the provider writes — ``f"{collection_prefix}_{dim}"`` (matching ``_collection_name``) so a
+    non-default ``collection_prefix`` can never cause a false-positive write denial — with an embed fingerprint
+    derived from the live ``embed_text`` slot (no model-name literal here), and return a ``WriteFence`` owned by
+    ``bobclaw`` so BoB's index/upsert/delete path writes ONLY its own collection.
     """
     import os
 
-    fence_flag = os.environ.get("MEMORY_WRITE_FENCE_ENABLED", "").strip().lower()
-    if fence_flag and fence_flag != "true":
-        raise MemoryConfigError(
-            "MEMORY_ENABLED=true requires MEMORY_WRITE_FENCE_ENABLED=true; "
-            "MEMORY_WRITE_FENCE_ENABLED=false cannot start an unfenced writer"
+    if not (
+        _consolidation_enabled()
+        or os.environ.get("MEMORY_WRITE_FENCE_ENABLED", "false").strip().lower() in (
+            "1", "true", "yes", "on",
         )
+    ):
+        return None
 
     from core.ledger.federation import FederationRegistry, default_registry_path
     from core.memory.fingerprint import fingerprint_from_slot
     from core.memory.write_fence import (
         WriteFence,
-        assert_registry_family_available,
         register_bobclaw_memory,
+        BOBCLAW_MEMORY_INSTANCE,
     )
 
     registry = FederationRegistry(default_registry_path()).load()
-    # Validate the loaded namespace before overwrite=True can mutate a spoofed
-    # reserved-name record or hide an external family owner.
-    assert_registry_family_available(registry, collection_prefix)
     fingerprint = fingerprint_from_slot(slot_resolver.get("embed_text"))
+    # derive the collection from the SAME prefix the provider uses (QdrantRetrievalProvider
+    # `_collection_name(dim)` == f"{collection_prefix}_{dim}") so the fence allows BoB's real write.
     collection = f"{collection_prefix}_{fingerprint.dim}"
+    # ALWAYS (re-)register the CANONICAL bobclaw-memory record (live collection, writer=bobclaw, mode=rw,
+    # fresh fingerprint). Reconciling unconditionally means a stale/corrupted entry — a prior dim, a changed
+    # prefix, a wrong writer, or a hand-edit — can NEVER false-positive-deny the provider's real writes; a
+    # genuine collection conflict (another instance owns this name) still surfaces loudly via register().
     register_bobclaw_memory(registry, fingerprint, collection=collection, overwrite=True)
-    if zvec_instance_root is None:
-        return WriteFence(
-            registry,
-            qdrant_url=qdrant_url,
-            collection_prefix=collection_prefix,
-            owner="bobclaw",
-        )
-    return WriteFence(
-        registry,
-        zvec_instance_root=zvec_instance_root,
-        collection_prefix=collection_prefix,
-        owner="bobclaw",
-    )
+    # D24 item 3: the registration must be VISIBLE to the federation ledger, not merely
+    # enforced in-process. Persist the reconciled registry so the on-disk JSON (and any
+    # DAG-ledger consumer of it) sees bobclaw-memory as an owned, writable instance.
+    registry.save()
+    return WriteFence(registry, owner="bobclaw")
+
 
 def _maybe_build_lks_adapter(slot_resolver: SlotResolver, qdrant_client):
     """Build a default-OFF LKS-first read seam (MS2-C5); ``(None, None, False)`` unless ``MEMORY_LKS_FIRST``.
@@ -335,10 +226,35 @@ def _maybe_build_lks_adapter(slot_resolver: SlotResolver, qdrant_client):
     change). When enabled AND ``MEMORY_LKS_INSTANCE`` is set, load the federation registry (default path /
     ``BOBCLAW_LEDGER_INSTANCES``) and build a C3 ``LKSReadAdapter`` over the live LKS read client
     (``MEMORY_LKS_QDRANT_URL`` if set, else the provider's own ``qdrant_client`` — C5 does NOT repoint the
-    write-side ``MEMORY_QDRANT_URL``), the C1 ``embed_text`` embedder, and the SOFT-STAMP posture
-    (``require_stamp=False`` — corpus instances carry ``meta.acl`` (C4) but not ``meta.embed``, so an absent
-    fingerprint is allowed while a present-but-mismatched one still fail-closes — paired with
-    ``require_acl=True`` so the C4-backfilled ACL is enforced). Returns ``(adapter, instance_name, True)``.
+    write-side ``MEMORY_QDRANT_URL``), the C1 ``embed_text`` embedder, and the HARD-STAMP posture
+    (``require_stamp=True`` + ``require_acl=True``). Returns ``(adapter, instance_name, True)``.
+
+    P4/D7 closed the stamp gate (was ``require_stamp=False``): the soft path existed because corpus
+    instances carried ``meta.acl`` but no ``meta.embed``. With the gate hard, a same-dim model swap — the
+    one corruption the dim-suffix cannot catch — fail-closes instead of silently returning garbage.
+
+    **Missing stamp vs mismatched stamp are different failures and are handled differently.** P4 stamped
+    ``meta.embed`` on the ``wiki`` instance, but NOT on every registerable instance (3 of 5 records in the
+    shipped ``ledger_instances.example.json`` are still ``acl``-without-``embed``), so the soft path's
+    rationale is retired for ``wiki`` only — NOT for the registry at large. That matters, because
+    ``FingerprintMissing`` does **not** degrade: ``retriever._search_lks_first`` re-raises it and
+    ``graph._recall_node_wrapper`` doesn't catch it, so an unstamped instance would kill **every chat
+    turn**. So this seam PRE-FLIGHTS the configured instance once, here:
+
+    * **unknown instance / missing registry** (the registry is gitignored, and ``load()`` returns an EMPTY
+      registry for a missing file rather than raising) ⇒ degrade to OFF, loudly, once — instead of a
+      per-query ``FederationError`` that falls back quietly and looks like it works;
+    * **known but unstamped** ⇒ degrade to OFF, loudly, once. A missing stamp is a PROVISIONING problem;
+      recall must keep working via BoB (*"the cut-over may fall back, but it must never BREAK recall"*);
+    * **stamped but MISMATCHED** ⇒ still fail-closed at query time. That is drift, it is D7's actual
+      target, and it must be loud.
+
+    ``live_slot`` is REQUIRED, not optional: ``LKSReadAdapter.search`` refuses to read a stamped instance
+    it cannot verify, and that refusal (``ReadAdapterError``) is on the retriever's FALLBACK list — so
+    omitting ``live_slot`` would silently route every read back to BoB's store with no error surfaced.
+
+    Construction + pre-flight are shared with the research lane via ``build_lks_read_adapter`` (one
+    hard-posture builder, two seams); only the MEMORY_LKS_* env gating lives here.
     """
     import os
 
@@ -354,14 +270,50 @@ def _maybe_build_lks_adapter(slot_resolver: SlotResolver, qdrant_client):
         log.warning("MEMORY_LKS_FIRST is on but MEMORY_LKS_INSTANCE is unset; LKS-first stays OFF")
         return (None, None, False)
 
+    adapter, ok = build_lks_read_adapter(
+        slot_resolver, qdrant_client, (instance,), seam="MEMORY_LKS_FIRST (recall seam)"
+    )
+    if adapter is None or instance not in ok:
+        return (None, None, False)
+    return (adapter, instance, True)
+
+
+def build_lks_read_adapter(
+    slot_resolver: SlotResolver, qdrant_client, instances, *, seam: str
+):
+    """Shared hard-posture ``LKSReadAdapter`` construction + per-instance pre-flight.
+
+    ONE builder for both federated read seams — the C5 recall seam (``_maybe_build_lks_adapter``)
+    and the research lane (``core.research.wiring``) — so the read posture can never drift between
+    them: live LKS read client (``MEMORY_LKS_QDRANT_URL`` if set, else the provider's own
+    ``qdrant_client``), the C1 ``embed_text`` embedder, ``live_slot`` REQUIRED, ``reader_id="bobclaw"``,
+    ``require_stamp=True`` + ``require_acl=True``.
+
+    Returns ``(adapter, ok_instances)`` — ``ok_instances`` is the subset of *instances* that resolved
+    in the federation registry AND carry a ``meta.embed`` stamp, in input order; ``(None, ())`` when
+    nothing survives. Degrade rules (the strangler's safety posture — an opt-in read seam may fall
+    back, but must never BREAK its host):
+
+    * ANY construction failure (missing/malformed registry, embedder slot, client) ⇒ ``(None, ())``
+      with a logged warning, never a raise;
+    * an UNKNOWN or UNSTAMPED instance is dropped loudly here, once — ``FingerprintMissing`` does NOT
+      degrade at query time (it propagates and would kill every consuming turn), so pre-flight is the
+      only safe place to catch a provisioning problem;
+    * a stamped-but-MISMATCHED instance is deliberately NOT filtered — that is drift (D7's actual
+      target) and must stay loud, fail-closed, at query time.
+
+    ``seam`` labels the log lines so a degrade is attributable to the seam that configured it.
+    """
+    import os
+
     from core.ledger.federation import FederationRegistry, default_registry_path
+    from core.memory.fingerprint import read_meta_fingerprint
     from core.memory.lks_adapter import LKSReadAdapter
 
-    # Graceful degrade (audit r2): a missing/malformed registry — or any adapter-construction failure — when
-    # the opt-in flag is ON must NOT sink the whole memory bootstrap. Degrade to (None, None, False) with a
-    # logged warning so recall keeps working via BoB's own store (the strangler's safety posture: the
-    # cut-over may fall back, but it must never BREAK recall). A clean miss / availability error at read time
-    # is handled separately by _search_lks_first; this guards the bootstrap-time wiring only.
+    wanted = tuple(instances)
+    if not wanted:
+        return (None, ())
+
     try:
         registry = FederationRegistry(default_registry_path()).load()
         lks_url = os.environ.get("MEMORY_LKS_QDRANT_URL", "").strip()
@@ -371,18 +323,47 @@ def _maybe_build_lks_adapter(slot_resolver: SlotResolver, qdrant_client):
             registry,
             client=client,
             embedder=embedder,
+            live_slot=slot_resolver.get("embed_text"),  # REQUIRED — without it a stamped instance
+                                                        # fails to ReadAdapterError -> silent fallback
             reader_id="bobclaw",
-            require_stamp=False,   # soft path: corpus instances have meta.acl (C4) but no meta.embed
+            require_stamp=True,    # P4/D7: meta.embed is stamped; the C2 gate binds (fail-closed)
             require_acl=True,      # enforce the C4-backfilled read-only ACL
         )
-    except Exception as exc:  # noqa: BLE001 — bootstrap-time wiring must degrade, never crash the subsystem
+    except Exception as exc:  # noqa: BLE001 — wiring must degrade, never crash the host subsystem
         log.warning(
-            "MEMORY_LKS_FIRST is on but the LKS-first adapter could not be built (%s: %s); "
-            "LKS-first stays OFF (recall falls back to BoB's own store)",
-            type(exc).__name__, exc,
+            "%s: LKS read adapter could not be built for instances %r (%s: %s); "
+            "federated LKS reads stay OFF for this seam",
+            seam, wanted, type(exc).__name__, exc,
         )
-        return (None, None, False)
-    return (adapter, instance, True)
+        return (None, ())
+
+    ok: list[str] = []
+    for inst in wanted:
+        # resolve() raises FederationError for an unknown instance — including every instance when the
+        # gitignored registry file is simply absent, since load() yields an EMPTY registry rather than raising.
+        try:
+            stamped = read_meta_fingerprint(registry.resolve(inst).meta) is not None
+        except Exception as exc:  # noqa: BLE001 — an unknown instance is dropped, never a crash
+            log.warning(
+                "%s: LKS instance %r is unknown/unresolvable (%s: %s); instance dropped",
+                seam, inst, type(exc).__name__, exc,
+            )
+            continue
+        if not stamped:
+            # Loud ONCE here, rather than FingerprintMissing on every read — which propagates out of the
+            # consuming turn. Drift (a MISMATCHED stamp) still fail-closes at query time.
+            log.warning(
+                "%s: LKS instance %r carries no meta.embed stamp; under the hard stamp gate that would "
+                "raise FingerprintMissing on EVERY read (it propagates — it does NOT fall back), so the "
+                "instance is dropped. Stamp the instance's meta.embed to enable it.",
+                seam, inst,
+            )
+            continue
+        ok.append(inst)
+
+    if not ok:
+        return (None, ())
+    return (adapter, tuple(ok))
 
 
 def _assert_single_qdrant_endpoint(qdrant_url: str) -> None:
@@ -409,6 +390,8 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
                 or config.qdrant_url != _bootstrap_config_snapshot.qdrant_url
                 or config.default_store_id
                 != _bootstrap_config_snapshot.default_store_id
+                or config.writer_enabled != _bootstrap_config_snapshot.writer_enabled
+                or config.t0_recall_enabled != _bootstrap_config_snapshot.t0_recall_enabled
             ):
                 raise MemoryConfigError(
                     "bootstrap already called with different config"
@@ -416,50 +399,7 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             return _bootstrap_singleton
 
         log.info("Bootstrapping memory module")
-
-        # Parse exactly once. Missing/malformed legacy configs retain cd142fb
-        # failure precedence by deferring this captured error until after the
-        # legacy SQLite/Qdrant setup seam.
-        parsed = None
-        parse_error = None
-        try:
-            parsed = _parse_stores_toml(config.stores_config_path)
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            parse_error = exc
-
-        selection_error = None
-        provider_id = None
-        provider_conf = None
-        provider_kind = "qdrant"
-        collection_prefix = None
-        zvec_instance_root = None
-        if parsed is not None:
-            try:
-                _validate_provider_blocks(parsed)
-                provider_id, provider_conf = _select_provider(
-                    parsed, config.default_store_id
-                )
-                provider_kind = _provider_kind(provider_conf)
-                collection_prefix = provider_conf.get(
-                    "collection_prefix", "bobclaw_"
-                )
-                if (
-                    not isinstance(collection_prefix, str)
-                    or not collection_prefix.strip()
-                ):
-                    raise MemoryConfigError(
-                        "memory provider collection_prefix must be a non-empty string"
-                    )
-                collection_prefix = collection_prefix.strip()
-                if provider_kind == "zvec":
-                    zvec_instance_root = _resolve_zvec_instance_root(provider_conf)
-            except MemoryConfigError as exc:
-                selection_error = exc
-                provider_kind = "qdrant"
-
-        zvec_selected = provider_kind == "zvec" and selection_error is None
-        if not zvec_selected:
-            _assert_single_qdrant_endpoint(config.qdrant_url)
+        _assert_single_qdrant_endpoint(config.qdrant_url)
 
         log.info("Ensuring SQLite directory exists: %s", config.sqlite_path.parent)
         config.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
@@ -472,108 +412,57 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
                 f"SQLite schema init failed at {config.sqlite_path}: {exc}"
             ) from exc
 
-        qdrant_client = None
-        if not zvec_selected:
-            log.info("Connecting to Qdrant at %s", config.qdrant_url)
-            try:
-                qdrant_client = QdrantClient(url=config.qdrant_url, timeout=10)
-                qdrant_client.get_collections()
-            except Exception as exc:
-                raise MemoryConfigError(
-                    f"Qdrant unreachable at {config.qdrant_url} after 10s"
-                ) from exc
+        log.info("Connecting to Qdrant at %s", config.qdrant_url)
+        try:
+            qdrant_client = QdrantClient(url=config.qdrant_url, timeout=10)
+            qdrant_client.get_collections()
+        except Exception as exc:
+            raise MemoryConfigError(
+                f"Qdrant unreachable at {config.qdrant_url} after 10s"
+            ) from exc
 
         log.info("Reading stores config: %s", config.stores_config_path)
-        # MEMORY_SLOTS_FILE overrides the shipped slot config (same resolution
-        # rule as core.memory.config: relative paths resolve against the project
-        # root). Without honoring it here, the documented knob silently did
-        # nothing — a second install could not point its embedder/extractor
-        # slots away from the dev tree's ports.
-        slots_override = os.getenv("MEMORY_SLOTS_FILE", "").strip()
-        if slots_override:
-            slots_path = Path(slots_override)
-            if not slots_path.is_absolute():
-                slots_path = _PROJECT_ROOT / slots_path
-        else:
-            slots_path = _PROJECT_ROOT / "config" / "memory_slots.toml"
-        log.info("Reading slot config: %s", slots_path)
+        # MEMORY_SLOTS_FILE overrides the in-tree default — the per-environment
+        # overlay mechanism the ops setup assumes (it was silently ignored
+        # here until 2026-07-24, leaving the tracked toml as the real config).
+        slots_env = os.getenv("MEMORY_SLOTS_FILE", "").strip()
+        slots_path = (
+            Path(slots_env).expanduser()
+            if slots_env
+            else _PROJECT_ROOT / "config" / "memory_slots.toml"
+        )
+        log.info("Reading memory slots config: %s", slots_path)
         slot_resolver = SlotResolver(slots_path)
-        if parse_error is not None:
-            raise parse_error
-        if selection_error is not None:
-            raise selection_error
-        assert parsed is not None
-        assert provider_id is not None
-        assert provider_conf is not None
-        assert collection_prefix is not None
 
+        parsed = _parse_stores_toml(config.stores_config_path)
         store_acls = _build_store_acls(parsed)
-        acl_registry = _acl_registry_from_parsed(store_acls)
 
-        if provider_kind == "zvec":
-            assert zvec_instance_root is not None
-            log.info(
-                "Selecting experimental Zvec memory provider at %s",
-                zvec_instance_root,
+        acl_registry = ACLRegistry(config.stores_config_path)
+        _register_acls(acl_registry, store_acls)
+
+        providers_raw = parsed.get("providers", {})
+        if not providers_raw:
+            raise MemoryConfigError(
+                f"No providers defined in {config.stores_config_path}"
             )
 
-        # MS2-C4/R3: memory-on bootstrap MUST arm a family fence or refuse to start.
-        write_fence = None
-        try:
-            if zvec_instance_root is None:
-                write_fence = _maybe_build_write_fence(
-                    slot_resolver, collection_prefix, config.qdrant_url
-                )
-            else:
-                write_fence = _maybe_build_write_fence(
-                    slot_resolver,
-                    collection_prefix,
-                    config.qdrant_url,
-                    zvec_instance_root=zvec_instance_root,
-                )
-        except MemoryConfigError:
-            raise
-        except Exception as exc:
+        first_pid, first_pconf = next(iter(providers_raw.items()))
+        # MS2-C4: build the single-writer write fence (default-OFF; None ⇒ legacy bootstrap byte-identical).
+        _collection_prefix = first_pconf.get("collection_prefix", "bobclaw_")
+        write_fence = _maybe_build_write_fence(slot_resolver, _collection_prefix)
+        if config.writer_enabled and write_fence is None:
             raise MemoryConfigError(
-                f"memory write fence could not be armed: {type(exc).__name__}: {exc}"
-            ) from exc
-        if write_fence is None:
-            raise MemoryConfigError("memory write fence could not be armed")
-
-        try:
-            if provider_kind == "qdrant":
-                provider = QdrantRetrievalProvider(
-                    provider_id=provider_id,
-                    locality=provider_conf.get("locality", "local"),
-                    collection_prefix=collection_prefix,
-                    acl_registry=acl_registry,
-                    client=qdrant_client,
-                    write_fence=write_fence,
-                )
-            else:
-                assert zvec_instance_root is not None
-                _initialize_zvec_instance(
-                    write_fence,
-                    slot_resolver,
-                    zvec_instance_root,
-                    config.default_store_id,
-                    collection_prefix,
-                )
-                provider = ZvecRetrievalProvider(
-                    provider_id=provider_id,
-                    locality=provider_conf.get("locality", "local"),
-                    collection_prefix=collection_prefix,
-                    acl_registry=acl_registry,
-                    store_root=zvec_instance_root,
-                    write_fence=write_fence,
-                )
-        except Exception as exc:
-            write_fence.close()
-            if isinstance(exc, MemoryConfigError):
-                raise
-            raise MemoryConfigError(
-                f"memory provider initialization failed: {type(exc).__name__}: {exc}"
-            ) from exc
+                "MEMORY_WRITER_ENABLED requires MEMORY_WRITE_FENCE_ENABLED=1; "
+                "refusing to build an unfenced writer"
+            )
+        provider = QdrantRetrievalProvider(
+            provider_id=first_pid,
+            locality=first_pconf.get("locality", "local"),
+            collection_prefix=_collection_prefix,
+            acl_registry=acl_registry,
+            client=qdrant_client,
+            write_fence=write_fence,
+        )
 
         log.info("Building MemoryRetriever and MemoryIndexer")
         event_log = SQLiteEventLog(config.sqlite_path)
@@ -590,9 +479,7 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
 
         # MS2-C5: build the LKS-first read seam (default-OFF; (None, None, False) ⇒ retriever construction
         # byte-identical to today).
-        lks_adapter, lks_instance, lks_first = _maybe_build_lks_adapter(
-            slot_resolver, qdrant_client
-        )
+        lks_adapter, lks_instance, lks_first = _maybe_build_lks_adapter(slot_resolver, qdrant_client)
         retriever = MemoryRetriever(
             embedder=embedder,
             provider=provider,
@@ -603,6 +490,7 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             lks_adapter=lks_adapter,
             lks_instance=lks_instance,
             lks_first=lks_first,
+            t0_recall_enabled=config.t0_recall_enabled,
         )
 
         indexer = MemoryIndexer(
@@ -613,6 +501,21 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             slot_resolver=slot_resolver,
         )
 
+        completion_ledger = None
+        writer = None
+        if config.writer_enabled:
+            from core.memory.writer.ledger import CompletionLedger
+            from core.memory.writer.tasks import ProjectVerbatimTask
+
+            completion_ledger = CompletionLedger(config.sqlite_path)
+            _run_coro_blocking(completion_ledger.initialize())
+            writer = ProjectVerbatimTask(
+                completion_ledger,
+                embedder,
+                provider,
+                config.default_store_id,
+            )
+
         singletons = MemorySingletons(
             event_log=event_log,
             fact_store=fact_store,
@@ -621,7 +524,8 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
             acl_registry=acl_registry,
             slot_resolver=slot_resolver,
             extractor=extractor,
-            write_fence=write_fence,
+            writer=writer,
+            completion_ledger=completion_ledger,
         )
 
         _bootstrap_singleton = singletons
@@ -629,15 +533,6 @@ def bootstrap_memory(config: MemoryBootstrapConfig) -> MemorySingletons:
 
         log.info("Memory bootstrap complete")
         return singletons
-
-
-def reset_memory() -> None:
-    """Clear process-local memory bootstrap state after lifecycle shutdown."""
-    global _bootstrap_singleton, _bootstrap_config_snapshot
-
-    with _BOOTSTRAP_LOCK:
-        _bootstrap_singleton = None
-        _bootstrap_config_snapshot = None
 
 
 def get_memory() -> MemorySingletons:

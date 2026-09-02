@@ -28,10 +28,10 @@ system_prompt: |
   on. Each diff must have the target repo file path in its header and apply
   cleanly with `git apply`. Do NOT edit the repo and do NOT assume the change
   will be applied: BoBClaw reads proposed_<n>.diff from your scratch dir and
-  routes it to the operator for manual approval (it is applied by BoBClaw, not by
+  routes it to Travis for manual approval (it is applied by BoBClaw, not by
   you). Never claim to have edited or written any repo file; you only propose.
 preferred_backend: claude_code
-escalation_backend: claude_api
+escalation_backend: agy_code
 # Edit-toggle face (C2.1): scratch-write posture — reads the repo + web, writes
 # proposed_<n>.diff (and any ideation tools) to a per-conversation scratch dir
 # OUTSIDE the repo. The repo is read-only + write-denied and Bash is denied
@@ -48,3 +48,11 @@ cc_posture:
   permission_mode: acceptEdits
   scratch_dir: scratch
 ui_theme: indigo
+# Spawn-context (intake 2026-07-18): the explicit project-aware opt-in — this
+# face genuinely needs the repo (scratch-write planning over real code). The
+# planner template frames the spawn so repo charters stay reference material,
+# not adopted roles.
+spawn_context:
+  template: planner
+  position: planner
+  project_access: true

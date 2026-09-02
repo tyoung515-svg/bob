@@ -88,7 +88,7 @@ def test_route_after_manager_dispatch_sends_per_section():
     # roles resolved from hier-fleet
     assert sends[0].arg["worker_backend"] == "deepseek_v4_flash"
     assert sends[0].arg["apex_backend"] == "kimi_cli"  # hier-fleet apex (CX-4 swap)
-    assert sends[0].arg["critic_backend"] == "glm_5_2"
+    assert sends[0].arg["critic_backend"] == "minimax"  # GLM pulled — single-lane-only
     assert sends[1].arg["section_subtasks"] == ["b", "c"]
 
 
@@ -190,7 +190,7 @@ async def test_manager_join_reduces_sorts_and_audits():
     assert "## Section 2\nS1" in msg
     assert msg.index("## Section 1") < msg.index("## Section 2")
     assert "2 of 2 sections completed" in msg
-    assert "**Final audit (glm_5_2):** AUDIT_OK" in msg
+    assert "**Final audit (minimax):** AUDIT_OK" in msg
     assert out["error"] is None
 
 
@@ -232,12 +232,12 @@ async def test_manager_join_no_team_skips_audit():
 
 @pytest.mark.asyncio
 async def test_manager_join_audit_stands_in_when_primary_fails():
-    """When the primary critic (glm_5_2 — the HTTP path is balance-dead) hard-fails, the
-    final audit falls back to the stand-in (deepseek) so it is not silently lost, tagged
-    as a stand-in. Mirrors run_critic's stand-in."""
+    """When the primary critic (minimax — GLM pulled, single-lane-only) hard-fails, the final
+    audit falls back to the stand-in (CRITIC_FALLBACK_BACKEND = deepseek_v4_flash) so it is not
+    silently lost, tagged as a stand-in. Mirrors run_critic's stand-in."""
     async def by_backend(messages, backend, *a):
-        if backend == "glm_5_2":
-            raise RuntimeError("Z.AI GLM balance/resource exhausted (1113)")
+        if backend == "minimax":
+            raise RuntimeError("primary critic hard-failed")
         return "STANDIN_AUDIT_OK"
 
     state = {"team": "hier-fleet",

@@ -1,0 +1,61 @@
+# SC3 fixture — BoB routing/cost telemetry rollup (READ-ONLY input the stack auditor reads).
+# Shape mirrors core.telemetry.spend.flight_spend()'s per-backend USD, rolled up over a window
+# with call/active-day/token dimensions. Offline fixture (inv. 11) — not the live Redis path.
+schema_version: 0
+window_start: "2026-06-08"
+window_end: "2026-07-07"
+source: core.telemetry.spend
+backends:
+  # covered by the Claude Max subscription -> heavy usage -> KEEP
+  - backend: claude_code
+    calls: 420
+    active_days: 24
+    input_tokens: 3200000
+    output_tokens: 850000
+    cached_tokens: 1100000
+    metered_usd: 0.0            # subscription CLI — not metered per-call (window-time cost)
+  # covered by the Kimi membership -> light usage + a known cheaper tier -> DOWNGRADE
+  - backend: kimi_cli
+    calls: 3
+    active_days: 2
+    input_tokens: 41000
+    output_tokens: 12000
+    cached_tokens: 0
+    metered_usd: 0.0
+  - backend: kimi_code
+    calls: 2
+    active_days: 1
+    input_tokens: 28000
+    output_tokens: 9000
+    cached_tokens: 0
+    metered_usd: 0.0
+  # PAYG backends BoB routes but NO subscription covers -> unmapped (metered spend surfaced)
+  - backend: claude_api
+    calls: 12
+    active_days: 5
+    input_tokens: 190000
+    output_tokens: 61000
+    cached_tokens: 0
+    metered_usd: 4.80
+  - backend: deepseek_v4_flash
+    calls: 180
+    active_days: 20
+    input_tokens: 2600000
+    output_tokens: 540000
+    cached_tokens: 120000
+    metered_usd: 2.35
+  - backend: minimax
+    calls: 24
+    active_days: 6
+    input_tokens: 300000
+    output_tokens: 88000
+    cached_tokens: 0
+    metered_usd: 1.10
+  # local — no metered cost; unmapped (no subscription, no spend)
+  - backend: local
+    calls: 300
+    active_days: 22
+    input_tokens: 4100000
+    output_tokens: 1300000
+    cached_tokens: 0
+    metered_usd: 0.0

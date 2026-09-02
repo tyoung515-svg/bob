@@ -2,23 +2,20 @@
 BoBClaw Core — Codex CLI subprocess backend (``codex_code``)
 
 Drives the genuine ``codex`` CLI (``codex exec``) as a headless one-shot
-subprocess. Two provider paths:
+subprocess. **GPT-ONLY** (Travis 2026-07-03): codex runs GPT under the native
+ChatGPT-login ``openai`` provider (the ``gpt`` / ``gpt-mini`` profiles) — NO
+LiteLLM proxy. GLM / DeepSeek / MiniMax agentic work moved to the ``pi_code``
+backend; codex's old multi-vendor proxy path is retired. NOT an HTTP/OpenAI-compat
+client here — transport is ``asyncio.create_subprocess_exec`` (the ``claude_code``
+/ ``agy_code`` shape).
 
-* **GPT, native** — a ``gpt`` profile under a ChatGPT-subscription login (OAuth,
-  no API key) runs GPT (e.g. gpt-5.5) directly, with NO proxy (see the
-  ``planner-gpt`` face).
-* **Non-OpenAI (glm / deepseek / qwen)** — per-provider profiles that route through
-  a LOCAL LiteLLM proxy (``LITELLM_BASE_URL``, default ``http://127.0.0.1:4000``)
-  translating Codex's Responses API to each provider's Chat Completions (the proxy
-  also strips tool defs the provider rejects ⇒ answer-only).
+``_build_argv`` enforces GPT-only: an explicit ``profile`` → ``-p <profile>``; a
+GPT model id → ``-p gpt -m <model>`` (native); an UNSET posture defaults to the
+``gpt`` profile (never the shared ~/.codex litellm base default). A non-GPT model
+id still emits the legacy ``-c model_provider=litellm`` route, but no face uses it.
 
-NOT an HTTP/OpenAI-compat client here — transport is
-``asyncio.create_subprocess_exec`` (the ``claude_code`` / ``agy_code`` shape).
-
-Codex 0.142+ config: profiles live in per-file ``~/.codex/<profile>.config.toml``
-(an inline ``[profiles.x]`` block is rejected as legacy) and custom providers
-support only ``wire_api = "responses"``. Kimi is deliberately NOT exposed here — it
-has its own ``kimi_cli`` backend (the operator: "Kimi stays in its own CLI").
+Kimi is deliberately NOT exposed here — it has its own ``kimi_cli`` backend
+(Travis: "Kimi stays in its own CLI").
 
 Contract — EMPIRICALLY DERIVED against codex-cli 0.142.3 (2026-06-29; the locked
 facts the code depends on, like the agy contract):
@@ -34,16 +31,12 @@ facts the code depends on, like the agy contract):
   ``turn.completed{usage}``; on failure ``{type:"error",message}`` +
   ``turn.failed{error:{message}}`` (message embeds the provider error JSON with a
   ``code`` like 400/429).
-* **Provider via ``-p <profile>``** — ``gpt`` (native ChatGPT login, no proxy) or a
-  non-OpenAI profile (``glm`` | ``deepseek`` | ``qwen``) layered on the litellm base
-  config; or ``-m <model> -c model_provider=litellm``.
+* **Provider via ``-p <profile>``** (``gpt`` = GPT-5.6 generation | ``gpt-mini`` = the mini variant),
+  native ChatGPT login; or ``-p gpt -m <gpt-model>`` to pin a specific GPT model.
 * **Errors / throttle** = non-zero exit + the ``error`` / ``turn.failed`` message;
   a 429 / rate marker raises ``CodexThrottled`` (→ escalation), else ``CodexError``.
-* **LiteLLM proxy** at ``LITELLM_BASE_URL`` is required for the non-OpenAI profiles
-  (a native ``gpt`` profile does not need it). ``health_check`` is the codex-CLI
-  liveness ONLY — it does not probe the proxy, so a native ``gpt`` face is never
-  wrongly gated on :4000 under a health-walk; a litellm-routed profile that hits a
-  down proxy escalates at runtime instead.
+* **No proxy dependency** — ``health_check`` is just ``codex --version`` (the old
+  LiteLLM ``:4000`` liveness gate was retired with the GPT-only cut).
 
 Streaming is message-level (one block) — codex exec buffers the whole reply.
 """
@@ -56,6 +49,7 @@ import os
 from typing import Any, AsyncIterator, Optional
 
 from core.config import config
+from core.spawn_context import SpawnContext, resolve_spawn_context
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +75,15 @@ _THROTTLE_MARKERS = ("429", "rate limit", "rate_limit", "ratelimit", "too many r
 def _looks_throttled(*parts: Any) -> bool:
     blob = " ".join(str(p) for p in parts if p).lower()
     return any(marker in blob for marker in _THROTTLE_MARKERS)
+
+
+def _is_gpt_model(model: Any) -> bool:
+    """True for a native OpenAI/ChatGPT model id (``gpt-5.6-sol`` / ``gpt-5.6-terra`` …).
+
+    These run under the ChatGPT-login ``openai`` provider (the ``gpt`` profile), NOT
+    the LiteLLM proxy. GLM / DeepSeek / Qwen / MiniMax ids return False (proxy path,
+    now retired in favour of the ``pi_code`` backend)."""
+    return str(model or "").lower().startswith("gpt")
 
 
 def _sanitize_conv_id(conv: str) -> str:
@@ -165,6 +168,25 @@ class CodexCodeClient:
             posture.get("read_repo")
         )
 
+    # ── spawn-context seam (intake 2026-07-18) ──────────────────────────────────
+
+    def _spawn_context(self, posture: dict) -> Optional[SpawnContext]:
+        """Build the SpawnContext when the posture carries a descriptor.
+
+        The scratch dir is the client's OWN ``_work_dir()`` (the ``-C`` working
+        root and where the ``-o`` reply file lands); the builder renders
+        AGENTS.md into it and hands back the env overrides.
+        """
+        descriptor = posture.get("spawn_context")
+        if not isinstance(descriptor, dict) or not descriptor:
+            return None
+        return resolve_spawn_context(
+            "codex_code",
+            posture,
+            scratch_dir=self._work_dir(),
+            conversation_id=self.conversation_id,
+        )
+
     # F9: host secrets the codex CLI never needs — the gateway<->core vouch key and the
     # metered Anthropic auth (codex talks to the LOCAL LiteLLM proxy, not Anthropic). The
     # previous code inherited the FULL os.environ, leaking these into the codex subprocess.
@@ -187,13 +209,18 @@ class CodexCodeClient:
 
     # ── prompt briefing ─────────────────────────────────────────────────────────
 
-    def _brief_prompt(self, prompt: str, posture: dict) -> str:
+    def _brief_prompt(
+        self, prompt: str, posture: dict, spawn_ctx: Optional[SpawnContext] = None
+    ) -> str:
         """Inline the repo ``CLAUDE.md`` for a briefed/repo-read posture (planner
         tier), and by default steer to a no-tool answer so an unattended spawn
         can't stall. Workers run unbriefed (small prompts). Prompt rides stdin, so
-        the ~30 KB briefing is safe (no argv overflow)."""
+        the ~30 KB briefing is safe (no argv overflow). A CLEAN spawn context
+        (descriptor present, ``project_access`` False) suppresses the charter
+        inline — that briefing is the leak the spawn-context seam closes."""
         parts: list[str] = []
-        if posture.get("brief") or self._is_scratch_write(posture):
+        clean_spawn = spawn_ctx is not None and not spawn_ctx.project_access
+        if not clean_spawn and (posture.get("brief") or self._is_scratch_write(posture)):
             claude_md = os.path.join(self.repo, "CLAUDE.md")
             try:
                 with open(claude_md, "r", encoding="utf-8", errors="replace") as fh:
@@ -212,6 +239,7 @@ class CodexCodeClient:
     def _build_argv(
         self, *, posture: dict, outfile: str, work_dir: str,
         resume_thread: Optional[str],
+        spawn_ctx: Optional[SpawnContext] = None,
     ) -> list[str]:
         # Common flags accepted by BOTH `exec` and `exec resume`.
         common = ["--json", "-o", outfile, "--skip-git-repo-check"]
@@ -224,26 +252,37 @@ class CodexCodeClient:
 
         argv = [self.cli_path, "exec", *common]
 
+        # BoBClaw codex is GPT-ONLY by construction (Travis 2026-07-03): GLM/DeepSeek/
+        # MiniMax agentic work moved to the ``pi_code`` backend. So:
+        #   • an explicit profile (gpt | gpt-mini) → ``-p <profile>`` (native openai);
+        #   • a GPT model id → ``-p gpt -m <model>`` (native; e.g. gpt-5.6-terra worker);
+        #   • a non-GPT model id → legacy ``-m <model> -c model_provider=litellm`` (the
+        #     retired proxy path — kept so an explicit legacy call still resolves, but no
+        #     face uses it now);
+        #   • NEITHER set → default to the native ``gpt`` profile, NEVER the shared
+        #     ~/.codex litellm base default (that default is why a bare spawn used to hit
+        #     the dead proxy).
         profile = posture.get("profile")
         model = posture.get("model")
         if profile:
             argv += ["-p", str(profile)]
-            # A profile already selects the provider (e.g. `gpt` = native OpenAI /
-            # ChatGPT login, NOT the LiteLLM proxy). Honour an explicit model pick
-            # WITHIN that profile's provider — do NOT force model_provider=litellm
-            # here (that would break gpt-native and re-route it through the proxy).
-            # This is what lets a `gpt`-profile face run a *chosen* gpt model
-            # (e.g. gpt-5.5) instead of only the profile's default.
             if model:
                 argv += ["-m", str(model)]
         elif model:
-            # Bare model, no profile = the LiteLLM-routed worker path
-            # (glm / deepseek / qwen); force the litellm provider.
-            argv += ["-m", str(model), "-c", "model_provider=litellm"]
+            if _is_gpt_model(model):
+                argv += ["-p", "gpt", "-m", str(model)]
+            else:
+                argv += ["-m", str(model), "-c", "model_provider=litellm"]
+        else:
+            argv += ["-p", "gpt"]
 
         # Sandbox + working root. Scratch-write reads the repo but writes only the
         # scratch cwd, network OFF (codex defaults network ON under workspace-write).
-        if self._is_scratch_write(posture):
+        # A CLEAN spawn context (project_access False) withholds the repo grant
+        # and pins the read-only sandbox (spawn-context seam).
+        if self._is_scratch_write(posture) and (
+            spawn_ctx is None or spawn_ctx.project_access
+        ):
             argv += [
                 "-s", "workspace-write", "-C", work_dir,
                 "--add-dir", str(self.repo),
@@ -289,15 +328,20 @@ class CodexCodeClient:
         """
         posture = self.posture if posture is None else posture
         work_dir = self._work_dir()
+        spawn_ctx = self._spawn_context(posture)
         outfile = os.path.join(work_dir, f"codex_out_{os.urandom(6).hex()}.txt")
         argv = self._build_argv(
             posture=posture, outfile=outfile, work_dir=work_dir,
             resume_thread=resume_session_id,
+            spawn_ctx=spawn_ctx,
         )
-        briefed = self._brief_prompt(prompt, posture)
+        briefed = self._brief_prompt(prompt, posture, spawn_ctx)
 
         try:
-            stdout, stderr, rc = await self._spawn(argv, cwd=work_dir, stdin_data=briefed)
+            stdout, stderr, rc = await self._spawn(
+                argv, cwd=work_dir, stdin_data=briefed,
+                env_overrides=spawn_ctx.env_overrides if spawn_ctx is not None else None,
+            )
             events = _parse_events(stdout.decode("utf-8", errors="replace"))
             reply = self._read_outfile(outfile) or events.get("reply") or ""
         finally:
@@ -347,15 +391,13 @@ class CodexCodeClient:
     # ── health check ─────────────────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
-        """True iff the codex CLI is present and runnable (``codex --version``).
+        """True if ``codex --version`` succeeds.
 
-        The backend's liveness is the CLI, NOT the optional LiteLLM proxy: the native
-        ``gpt`` profile (ChatGPT login) needs no proxy, so gating the whole backend on the
-        proxy wrongly marked native faces unhealthy under a team health-walk (a false
-        negative that stranded planner-gpt whenever :4000 was down). A litellm-routed
-        profile (glm/deepseek/qwen) that hits a down proxy fails and escalates at RUNTIME
-        via the existing 429/transient chain — the proxy is a per-profile runtime
-        dependency, not a backend-liveness signal.
+        codex_code is now GPT-ONLY (native ChatGPT-login ``openai`` provider), so it
+        no longer depends on the local LiteLLM proxy — the old ``:4000`` liveness gate
+        was retired 2026-07-03 (it was marking codex unhealthy whenever the proxy was
+        down, forcing false failover to opencode). A turn-time 429 still raises
+        ``CodexThrottled`` → the face's escalation backend.
         """
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -376,20 +418,28 @@ class CodexCodeClient:
             except ProcessLookupError:
                 pass
             return False
-        return proc.returncode == 0 and bool(stdout.decode("utf-8", errors="replace").strip())
+        if proc.returncode != 0 or not stdout.decode("utf-8", errors="replace").strip():
+            return False
+        return True
 
     # ── internals ──────────────────────────────────────────────────────────────
 
     async def _spawn(
         self, argv: list[str], cwd: str, stdin_data: Optional[str] = None,
+        env_overrides: Optional[dict] = None,
     ) -> tuple[bytes, bytes, Optional[int]]:
         """Spawn ``codex exec``, feed the prompt on stdin, return (stdout, stderr, rc).
 
         The prompt rides stdin (``communicate(input=...)``), never argv — so a
-        large briefing can't overflow the command line. Raises ``CodexError`` on a
-        missing binary or timeout (the child is killed first).
+        large briefing can't overflow the command line. Spawn-context
+        ``env_overrides`` layer on top of the F9-stripped env (idempotent for
+        CODEX_HOME — the builder derives it from the same config). Raises
+        ``CodexError`` on a missing binary or timeout (the child is killed first).
         """
         input_bytes = stdin_data.encode("utf-8") if stdin_data is not None else None
+        env = self._subprocess_env()
+        if env_overrides:
+            env.update(env_overrides)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -397,7 +447,7 @@ class CodexCodeClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                env=self._subprocess_env(),
+                env=env,
             )
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             raise CodexError(f"codex CLI not found at {self.cli_path!r}: {exc}") from exc

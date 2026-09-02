@@ -26,7 +26,7 @@ for ($i = 0; $i -lt 180; $i++) { docker info *> $null; if ($LASTEXITCODE -eq 0) 
 
 # 2) Ensure bobclaw containers are up (with restart:unless-stopped they usually
 #    already are; this is a belt-and-suspenders no-op then).
-docker compose -f "$repo\docker-compose.yml" up -d postgres redis qdrant *>> $log
+docker compose --env-file "$repo\.secrets\bobclaw.env" -f "$repo\docker-compose.yml" up -d postgres redis qdrant *>> $log
 
 # 3) Wait for Postgres TCP + Qdrant health on the bobclaw ports.
 Log "waiting for postgres :5432 + qdrant :6353..."
@@ -38,9 +38,14 @@ for ($i = 0; $i -lt 120; $i++) {
 # Same memory-module env as start-core.ps1 (set here, NOT in .secrets — config.py
 # load_dotenv(override=True) would leak these into pytest and break the baseline).
 $env:MEMORY_ENABLED = 'true'
-$env:MEMORY_WRITE_FENCE_ENABLED = 'true'
 $env:MEMORY_L1_EXTRACTION_ENABLED = 'true'
 $env:MEMORY_QDRANT_URL = 'http://localhost:6353'
+# FU1 flight-substrate live hot-path enforcement (GLM serial mutex + over-budget pause).
+# Enabled 2026-07-04 after the live GLM E2E passed (gate_a_enforcement_e2e.py 6/6). Set here
+# (launcher env, not .secrets) so it never leaks into pytest. Pair with the BobClaw-BudgetEnforcer
+# task (install-durability.ps1 -IncludeBudgetEnforcer) whose wrapper sets the same flag for the
+# pause daemon — enforcement needs BOTH the workers (here) and the daemon.
+$env:FLIGHT_ENFORCE_ENABLED = 'true'
 
 Set-Location "$repo\bobclaw-core"
 Log "starting core -> http://localhost:7825"

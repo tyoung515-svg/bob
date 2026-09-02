@@ -105,6 +105,7 @@ def test_build_argv_profile(tmp_path, monkeypatch):
 
 
 def test_build_argv_model_routes_litellm(tmp_path, monkeypatch):
+    # Legacy: a NON-GPT model id still emits the (retired) litellm route.
     c = _client(tmp_path, monkeypatch)
     argv = c._build_argv(posture={"model": "glm-5.2"}, outfile="/o.txt",
                          work_dir="/w", resume_thread=None)
@@ -112,15 +113,24 @@ def test_build_argv_model_routes_litellm(tmp_path, monkeypatch):
     assert "model_provider=litellm" in argv
 
 
-def test_build_argv_profile_plus_model_stays_native(tmp_path, monkeypatch):
-    """A profile + an explicit model = pick that model within the profile's
-    provider (gpt-native), WITHOUT forcing the litellm proxy — the fix that lets
-    a `gpt`-profile face run a chosen gpt model instead of only the default."""
+def test_build_argv_gpt_model_routes_native(tmp_path, monkeypatch):
+    # GPT-only cut: a GPT model id routes NATIVELY (`-p gpt -m <model>`), never litellm.
+    # This older-generation gpt-5.4-mini fixture intentionally covers the generic `startswith("gpt")`
+    # prefix; current GPT-5.6 fleet seats are covered by test_build_argv_gpt56_{sol,terra,luna}_native.
     c = _client(tmp_path, monkeypatch)
-    argv = c._build_argv(posture={"profile": "gpt", "model": "gpt-5.5"},
-                         outfile="/o.txt", work_dir="/w", resume_thread=None)
+    argv = c._build_argv(posture={"model": "gpt-5.4-mini"}, outfile="/o.txt",
+                         work_dir="/w", resume_thread=None)
     assert argv[argv.index("-p") + 1] == "gpt"
-    assert argv[argv.index("-m") + 1] == "gpt-5.5"
+    assert argv[argv.index("-m") + 1] == "gpt-5.4-mini"
+    assert "model_provider=litellm" not in argv
+
+
+def test_build_argv_empty_posture_defaults_gpt(tmp_path, monkeypatch):
+    # GPT-only by construction: an unset posture defaults to the native `gpt` profile,
+    # NEVER the shared ~/.codex litellm base default.
+    c = _client(tmp_path, monkeypatch)
+    argv = c._build_argv(posture={}, outfile="/o.txt", work_dir="/w", resume_thread=None)
+    assert argv[argv.index("-p") + 1] == "gpt"
     assert "model_provider=litellm" not in argv
 
 
@@ -227,16 +237,24 @@ async def test_chat_missing_binary_raises(tmp_path, monkeypatch):
 # ─── health_check ─────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_health_check_true_is_cli_only(tmp_path, monkeypatch):
-    """CLI reachable ⇒ healthy. NOTE: no ``_litellm_reachable`` patch — health_check is the
-    codex-CLI liveness ONLY (the LiteLLM proxy is a per-profile runtime dependency now, not a
-    backend-liveness signal). This doubles as the regression guard for the native-gpt fix: a
-    re-added proxy gate would call the real probe here (:4000) and flake, failing this test."""
+async def test_health_check_true(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     proc = _fake_proc(stdout=b"codex-cli 0.142.3\n", rc=0)
     with patch("core.backends.codex_code.asyncio.create_subprocess_exec",
                AsyncMock(return_value=proc)):
-        assert await c.health_check() is True  # proxy state is irrelevant to backend health
+        assert await c.health_check() is True
+
+
+@pytest.mark.asyncio
+async def test_health_check_ignores_litellm_proxy(tmp_path, monkeypatch):
+    # GPT-only codex no longer depends on the LiteLLM proxy: a good `codex --version`
+    # is healthy regardless of :4000 (the old proxy-liveness gate was retired).
+    c = _client(tmp_path, monkeypatch)
+    proc = _fake_proc(stdout=b"codex-cli 0.142.3\n", rc=0)
+    assert not hasattr(c, "_litellm_reachable")  # method removed with the GPT-only cut
+    with patch("core.backends.codex_code.asyncio.create_subprocess_exec",
+               AsyncMock(return_value=proc)):
+        assert await c.health_check() is True
 
 
 @pytest.mark.asyncio
@@ -262,7 +280,8 @@ def test_planner_codex_face():
     from core.faces.registry import FaceRegistry
     f = FaceRegistry().get_face("planner-codex")
     assert f.preferred_backend == "codex_code"
-    assert f.codex_posture.get("profile") == "glm"
+    # GPT-only cut: planner-codex is now the GPT-5.6 generation via the native `gpt` profile.
+    assert f.codex_posture.get("profile") == "gpt"
 
 
 def test_dispatch_threads_codex_posture_into_worker_send():
@@ -272,7 +291,8 @@ def test_dispatch_threads_codex_posture_into_worker_send():
         "face_id": "worker-codex",
         "backend": "codex_code",
     })
-    assert all(s.arg.get("codex_posture", {}).get("model") == "glm-5.2" for s in sends)
+    # worker-codex is the native GPT mid-tier worker (gpt-5.6-terra), threaded as a model.
+    assert all(s.arg.get("codex_posture", {}).get("model") == "gpt-5.6-terra" for s in sends)
 
 
 @pytest.mark.asyncio
@@ -334,27 +354,6 @@ async def test_execute_node_codex_code_success(mock_redis):
 
 
 @pytest.mark.asyncio
-async def test_execute_node_codex_code_model_override_binds(mock_redis):
-    """A UI-picked model (state.model_override) threads into the codex posture so
-    a gpt-mode (profile=gpt) turn runs the CHOSEN gpt model, not only the default."""
-    fake = MagicMock()
-    fake.chat = AsyncMock(return_value={"text": "gpt plan", "session_id": "th2"})
-    fake.last_session_id = "th2"
-    with patch("core.backends.codex_code.CodexCodeClient", return_value=fake), \
-         patch("core.codex_sessions._lookup_codex_session", AsyncMock(return_value=None)), \
-         patch("core.codex_sessions._record_codex_session", AsyncMock()):
-        await execute_module.execute_node({
-            "task": "plan y", "backend": "codex_code", "messages": [],
-            "codex_posture": {"profile": "gpt", "brief": True},
-            "model_override": "gpt-5.5",
-            "escalation_backend": "claude_api", "conversation_id": "conv-gpt",
-        })
-    _, kwargs = fake.chat.call_args
-    # profile preserved, picked model threaded in alongside it
-    assert kwargs["posture"] == {"profile": "gpt", "brief": True, "model": "gpt-5.5"}
-
-
-@pytest.mark.asyncio
 async def test_execute_node_codex_code_throttle_escalates(mock_redis):
     """CodexThrottled → fall through to escalation_backend (opencode_serve)."""
     fake = MagicMock()
@@ -390,3 +389,44 @@ def test_subprocess_env_strips_host_secrets(tmp_path, monkeypatch):
     assert "ANTHROPIC_API_KEY" not in env
     assert "PATH" in env
     assert os.environ.get("BOBCLAW_SECRET") == "hmac-vouch-key-should-not-leak"
+
+
+# ─── R0: GPT-5.6 exact-seat argv (Sol / Terra / Luna route natively) ──────────
+
+def test_build_argv_gpt56_sol_native(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    argv = c._build_argv(posture={"model": "gpt-5.6-sol"}, outfile="/o.txt",
+                         work_dir="/w", resume_thread=None)
+    assert argv[argv.index("-p") + 1] == "gpt"
+    assert argv[argv.index("-m") + 1] == "gpt-5.6-sol"
+    assert "model_provider=litellm" not in argv
+
+
+def test_build_argv_gpt56_terra_native(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    argv = c._build_argv(posture={"model": "gpt-5.6-terra"}, outfile="/o.txt",
+                         work_dir="/w", resume_thread=None)
+    assert argv[argv.index("-p") + 1] == "gpt"
+    assert argv[argv.index("-m") + 1] == "gpt-5.6-terra"
+    assert "model_provider=litellm" not in argv
+
+
+def test_build_argv_gpt56_luna_native(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    argv = c._build_argv(posture={"model": "gpt-5.6-luna"}, outfile="/o.txt",
+                         work_dir="/w", resume_thread=None)
+    assert argv[argv.index("-p") + 1] == "gpt"
+    assert argv[argv.index("-m") + 1] == "gpt-5.6-luna"
+    assert "model_provider=litellm" not in argv
+
+
+def test_dispatch_threads_named_terra_face_posture():
+    from core.nodes.dispatch import _route_after_dispatch
+
+    sends = _route_after_dispatch({
+        "fanout_subtasks": [{"idx": 0, "text": "a"}, {"idx": 1, "text": "b"}],
+        "face_id": "worker-gpt56-terra",
+        "backend": "codex_code",
+    })
+
+    assert all(s.arg.get("codex_posture", {}).get("model") == "gpt-5.6-terra" for s in sends)

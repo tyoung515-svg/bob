@@ -160,12 +160,32 @@ def _ndjson(*events) -> list[bytes]:
 
 # ─── Construction ─────────────────────────────────────────────────────────────
 
+@pytest.fixture
+def isolate_cc_cli_path(monkeypatch: pytest.MonkeyPatch):
+    """Host-env isolation for the CLI-path *resolution-logic* tests.
+
+    ``ClaudeCodeClient`` resolves the binary as
+    ``cli_path or config.CC_CLI_PATH or shutil.which("claude") or "claude"``.
+    ``config.CC_CLI_PATH`` is read from the environment ONCE, at import time
+    (class body of ``BoBClawConfig``), so a plain ``monkeypatch.delenv`` at test
+    time does NOT change it — the value is already frozen. On the release host
+    ``.secrets`` sets ``CC_CLI_PATH`` (the inline-comment-poison bug even set it
+    to a comment string), so the resolution returns that configured path and the
+    bare-``claude`` fallback assertion fails. Neutralize BOTH the frozen config
+    attribute and the env var so the test proves the resolution LOGIC, not the
+    host's configured path. (Tests that pass an explicit ``cli_path`` short-
+    circuit before ``config`` is ever consulted, so they don't need this.)
+    """
+    monkeypatch.setattr(_cc_mod.config, "CC_CLI_PATH", "")
+    monkeypatch.delenv("CC_CLI_PATH", raising=False)
+
+
 def test_resolves_explicit_cli_path():
     client = _make_client(cli_path="/usr/local/bin/claude")
     assert client.cli_path == "/usr/local/bin/claude"
 
 
-def test_default_cli_path_resolves_on_path_or_bare_claude():
+def test_default_cli_path_resolves_on_path_or_bare_claude(isolate_cc_cli_path):
     with patch("core.backends.claude_code.shutil.which", return_value=None):
         client = ClaudeCodeClient(cli_path=None, cwd="/x")
     assert client.cli_path == "claude"

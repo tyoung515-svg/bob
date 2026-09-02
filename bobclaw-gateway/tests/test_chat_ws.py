@@ -106,6 +106,8 @@ class TestChatWebSocket(unittest.TestCase):
             conv["face_id"] = None
             conv["backend_preference"] = None
             conv["model_preference"] = None
+            conv["profile"] = None
+            conv["locale"] = None
 
     def _run(self, coro):
         return self._loop.run_until_complete(coro)
@@ -330,6 +332,32 @@ class TestChatWebSocket(unittest.TestCase):
         self.assertEqual([f["type"] for f in frames], ["chunk", "chunk", "message_complete"])
         self.assertNotIn("emit_events", self.core_requests[-1])  # no key ⇒ byte-identical
 
+    def test_research_flag_forwarded_to_core_upstream(self):
+        """MS2-R2: a `message` frame that sets research (real JSON true) forwards it to
+        core; absent — or a truthy non-True — adds NO key (byte-identical upstream)."""
+        self.core_requests.clear()
+        ws = self._run(
+            self._client.ws_connect(
+                "/ws/chat", headers={"Authorization": f"Bearer {self._token()}"}
+            )
+        )
+        self._run(ws.send_json({
+            "type": "message", "conversation_id": "conv-ws",
+            "content": "investigate", "research": True,
+        }))
+        for _ in range(3):  # chunk, chunk, message_complete (no council frames)
+            self._run(ws.receive_json())
+        self.assertEqual(self.core_requests[-1].get("research"), True)
+
+        self._run(ws.send_json({
+            "type": "message", "conversation_id": "conv-ws",
+            "content": "plain", "research": "true",  # strict is-True: strings never flip it
+        }))
+        for _ in range(3):
+            self._run(ws.receive_json())
+        self._run(ws.close())
+        self.assertNotIn("research", self.core_requests[-1])
+
     def test_face_switching(self):
         ws = self._run(
             self._client.ws_connect(
@@ -422,6 +450,48 @@ class TestChatWebSocket(unittest.TestCase):
         self.assertEqual(response["code"], "invalid_conversation")
         self._run(ws.close())
 
+    def test_switch_profile_persists_to_conversation_row(self):
+        """switch_profile pins the profile on the conversations row (not just
+        the session) so it survives a restart; empty clears the pin."""
+        ws = self._run(
+            self._client.ws_connect(
+                "/ws/chat",
+                headers={"Authorization": f"Bearer {self._token()}"},
+            )
+        )
+        self._run(ws.send_json({"type": "switch_profile", "profile": "council-max", "conversation_id": "conv-ws"}))
+        response = self._run(ws.receive_json())
+        self.assertEqual(response["type"], "profile_switched")
+        self.assertEqual(response["profile"], "council-max")
+        self.assertEqual(self._pool.conversations["conv-ws"]["profile"], "council-max")
+        self._run(ws.send_json({"type": "switch_profile", "profile": "", "conversation_id": "conv-ws"}))
+        response = self._run(ws.receive_json())
+        self.assertEqual(response["type"], "profile_switched")
+        self.assertIsNone(response["profile"])
+        self.assertIsNone(self._pool.conversations["conv-ws"]["profile"])
+        self._run(ws.close())
+
+    def test_switch_locale_persists_to_conversation_row(self):
+        """switch_locale pins the locale on the conversations row (not just
+        the session) so it survives a restart; empty clears the pin."""
+        ws = self._run(
+            self._client.ws_connect(
+                "/ws/chat",
+                headers={"Authorization": f"Bearer {self._token()}"},
+            )
+        )
+        self._run(ws.send_json({"type": "switch_locale", "locale": "de", "conversation_id": "conv-ws"}))
+        response = self._run(ws.receive_json())
+        self.assertEqual(response["type"], "locale_switched")
+        self.assertEqual(response["locale"], "de")
+        self.assertEqual(self._pool.conversations["conv-ws"]["locale"], "de")
+        self._run(ws.send_json({"type": "switch_locale", "locale": "", "conversation_id": "conv-ws"}))
+        response = self._run(ws.receive_json())
+        self.assertEqual(response["type"], "locale_switched")
+        self.assertIsNone(response["locale"])
+        self.assertIsNone(self._pool.conversations["conv-ws"]["locale"])
+        self._run(ws.close())
+
     def test_stop_generation_when_idle(self):
         ws = self._run(
             self._client.ws_connect(
@@ -429,7 +499,7 @@ class TestChatWebSocket(unittest.TestCase):
                 headers={"Authorization": f"Bearer {self._token()}"},
             )
         )
-        self._run(ws.send_json({"type": "stop_generation"}))
+        self._run(ws.send_json({"type": "stop_generation", "conversation_id": "conv-ws"}))
         response = self._run(ws.receive_json())
         self.assertEqual(response["type"], "error")
         self.assertEqual(response["code"], "no_active_generation")
@@ -480,7 +550,7 @@ class TestChatWebSocket(unittest.TestCase):
             self.assertEqual(first["type"], "chunk")
 
             # Stop the generation
-            self._run(ws.send_json({"type": "stop_generation"}))
+            self._run(ws.send_json({"type": "stop_generation", "conversation_id": "conv-ws"}))
             stopped = self._run(ws.receive_json())
             self.assertEqual(stopped["type"], "generation_stopped")
 

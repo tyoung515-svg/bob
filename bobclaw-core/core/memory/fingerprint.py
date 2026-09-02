@@ -3,7 +3,7 @@
 Closes the one corruption the dim-suffix does NOT catch: a *same-dim model swap* (the operational
 768-dim embedder slot swapped for a different 768-dim model) writes healthy-looking but incompatible
 vectors into the same vector space and silently breaks retrieval. An ``EmbedFingerprint`` = ``{model_id, dim,
-normalize, distance, query_template_hash, doc_template_hash}`` is stamped in BOTH the federation record's ``meta.embed`` (source of truth)
+normalize, distance}`` is stamped in BOTH the federation record's ``meta.embed`` (source of truth)
 and a reserved Qdrant sentinel point (independent drift detector) — DECISIONS-MS2 OD#6 = BOTH — and a
 fail-closed assert refuses to read/write a mismatched space.
 
@@ -16,13 +16,9 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-import hashlib
-import json
-import os
-from pathlib import Path
 import unicodedata
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.memory.models import SlotResolution
 
@@ -70,21 +66,6 @@ class FingerprintMismatch(FingerprintError):
 # Frozen dataclass: EmbedFingerprint
 # ---------------------------------------------------------------------------
 
-TEMPLATE_ABSENT_SENTINEL = "template:absent:v1"
-LEGACY_TEMPLATE_SENTINEL = "template:legacy-unknown:v1"
-
-
-def _template_identity(template: str | None) -> str:
-    """Return a stable identity for an optional instruction template."""
-    if template is None:
-        return TEMPLATE_ABSENT_SENTINEL
-    if not isinstance(template, str):
-        raise FingerprintError(
-            f"instruction template must be str or None, got {type(template).__name__}"
-        )
-    return f"sha256:{hashlib.sha256(template.encode('utf-8')).hexdigest()}"
-
-
 @dataclasses.dataclass(frozen=True)
 class EmbedFingerprint:
     """Deterministic, hashable, comparable embed fingerprint (model_id, dim, normalize, distance).
@@ -96,8 +77,6 @@ class EmbedFingerprint:
     dim: int
     normalize: bool
     distance: str
-    query_template_hash: str = TEMPLATE_ABSENT_SENTINEL
-    doc_template_hash: str = TEMPLATE_ABSENT_SENTINEL
 
     def __post_init__(self) -> None:
         # model_id: must be a non-empty string after strip
@@ -120,12 +99,6 @@ class EmbedFingerprint:
             raise FingerprintError(
                 f"distance must be a non-empty string, got {self.distance!r}"
             )
-        for field in ("query_template_hash", "doc_template_hash"):
-            value = getattr(self, field)
-            if not isinstance(value, str) or not value:
-                raise FingerprintError(
-                    f"{field} must be a non-empty string, got {value!r}"
-                )
         object.__setattr__(self, "distance", self.distance.strip().lower())
         object.__setattr__(
             self, "model_id", unicodedata.normalize("NFC", self.model_id.strip())
@@ -138,13 +111,11 @@ class EmbedFingerprint:
             "dim": self.dim,
             "normalize": self.normalize,
             "distance": self.distance,
-            "query_template_hash": self.query_template_hash,
-            "doc_template_hash": self.doc_template_hash,
         }
 
     @classmethod
     def from_dict(cls, d: Any) -> "EmbedFingerprint":
-        """Construct from a template-aware dict; legacy four-field stamps become drift sentinels."""
+        """Strictly construct from a dict (the four keys, correct types); malformed -> FingerprintError."""
         if not isinstance(d, dict):
             raise FingerprintError(
                 f"EmbedFingerprint.from_dict expects a dict, got {type(d).__name__}"
@@ -166,22 +137,8 @@ class EmbedFingerprint:
         distance = d["distance"]
         if not isinstance(distance, str):
             raise FingerprintError(f"distance must be str, got {type(distance).__name__}")
-        template_keys = ("query_template_hash", "doc_template_hash")
-        present_template_keys = [key for key in template_keys if key in d]
-        if present_template_keys and len(present_template_keys) != len(template_keys):
-            missing = [key for key in template_keys if key not in d]
-            raise FingerprintError(f"Missing keys {missing!r} in fingerprint dict: {d}")
-        if present_template_keys:
-            query_template_hash = d["query_template_hash"]
-            doc_template_hash = d["doc_template_hash"]
-        else:
-            query_template_hash = LEGACY_TEMPLATE_SENTINEL
-            doc_template_hash = LEGACY_TEMPLATE_SENTINEL
         # Construct via cls(...) so __post_init__ re-validates + canonicalizes.
-        return cls(
-            model_id=model_id, dim=dim, normalize=normalize, distance=distance,
-            query_template_hash=query_template_hash, doc_template_hash=doc_template_hash,
-        )
+        return cls(model_id=model_id, dim=dim, normalize=normalize, distance=distance)
 
 
 # ---------------------------------------------------------------------------
@@ -207,12 +164,6 @@ def fingerprint_from_slot(
         model_id=resolution.model,
         dim=resolution.embedding_dimension,
         normalize=normalize,
-        query_template_hash=_template_identity(
-            getattr(resolution, "query_instruction_template", None)
-        ),
-        doc_template_hash=_template_identity(
-            getattr(resolution, "doc_instruction_template", None)
-        ),
         distance=distance,
     )
 
@@ -254,12 +205,9 @@ def assert_compatible(
     *,
     context: str = "",
 ) -> None:
-    """Raise FingerprintMismatch iff a vector-space-affecting field differs."""
+    """Raise FingerprintMismatch iff any of (model_id, dim, normalize, distance) differ."""
     fields: List[str] = []
-    for field in (
-        "model_id", "dim", "normalize", "distance",
-        "query_template_hash", "doc_template_hash",
-    ):
+    for field in ("model_id", "dim", "normalize", "distance"):
         if getattr(registered, field) != getattr(live, field):
             fields.append(field)
     if fields:
@@ -315,10 +263,7 @@ def sentinel_vector(dim: int) -> List[float]:
 
 
 def write_sentinel(client: Any, collection: str, fp: EmbedFingerprint) -> None:
-    """Upsert the reserved sentinel point (id, vector, and fingerprint payload).
-
-    Call only while the writer holds the collection family fence.
-    """
+    """Upsert the reserved sentinel point (id=SENTINEL_POINT_ID, vector + fingerprint payload)."""
     # Lazy import so the module imports without qdrant_client installed.
     from qdrant_client.http.models import PointStruct
 
@@ -383,95 +328,9 @@ def assert_sentinel_matches(
 
 
 def ensure_sentinel(client: Any, collection: str, fp: EmbedFingerprint) -> None:
-    """Write the sentinel if absent, otherwise assert it matches *fp*.
-
-    Call only while the writer holds the collection family fence.
-    """
+    """Idempotent stamp-on-first-write: write the sentinel if absent, else assert it matches *fp*."""
     stored = read_sentinel(client, collection)
     if stored is None:
         write_sentinel(client, collection, fp)
     else:
         assert_compatible(stored, fp, context=f"collection {collection!r}")
-
-
-# ---------------------------------------------------------------------------
-# Zvec manifest sentinel (local equivalent of the Qdrant reserved point)
-# ---------------------------------------------------------------------------
-
-ZVEC_MANIFEST_FINGERPRINT_FILE = "embed_fingerprint.json"
-
-
-def ensure_zvec_instance_fingerprint(
-    manifest_dir: str | Path,
-    fp: EmbedFingerprint,
-    *,
-    assert_writable: Callable[[], None],
-) -> Path:
-    """Write a Zvec fingerprint atomically while proving the fence stays held.
-
-    The manifest directory must already exist. The caller-supplied assertion is
-    invoked immediately before the mutation and immediately after ``os.replace``.
-    If the post-write assertion fails, rollback uses retained file identity and
-    exact bytes to remove this call's replacement even after fence loss. An
-    atomically replaced successor-owned stamp has different identity and is kept.
-    """
-    directory = Path(manifest_dir)
-    if not directory.is_dir():
-        raise FingerprintError(f"zvec fingerprint manifest directory is missing: {directory}")
-    stamp_path = directory / ZVEC_MANIFEST_FINGERPRINT_FILE
-    if stamp_path.exists():
-        try:
-            payload = json.loads(stamp_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise FingerprintError(
-                f"zvec fingerprint manifest is unreadable or malformed: {stamp_path}"
-            ) from exc
-        if not isinstance(payload, dict) or "embed" not in payload:
-            raise FingerprintError(
-                f"zvec fingerprint manifest is missing its embed stamp: {stamp_path}"
-            )
-        stored = EmbedFingerprint.from_dict(payload["embed"])
-        assert_compatible(stored, fp, context=f"zvec manifest {stamp_path}")
-        return stamp_path
-
-    encoded_payload = (
-        json.dumps({"embed": fp.to_dict()}, sort_keys=True, indent=2) + "\n"
-    ).encode("utf-8")
-    tmp_path = stamp_path.with_name(
-        f".{stamp_path.name}.{uuid.uuid4().hex}.tmp"
-    )
-    assert_writable()
-    try:
-        tmp_path.write_bytes(encoded_payload)
-        retained_stat = tmp_path.stat()
-        os.replace(tmp_path, stamp_path)
-        try:
-            assert_writable()
-        except Exception:
-            try:
-                current_stat = stamp_path.stat()
-                owns_current_file = os.path.samestat(
-                    retained_stat, current_stat
-                )
-                owns_current_bytes = stamp_path.read_bytes() == encoded_payload
-                if owns_current_file and owns_current_bytes:
-                    confirmed_stat = stamp_path.stat()
-                    if (
-                        os.path.samestat(retained_stat, confirmed_stat)
-                        and stamp_path.read_bytes() == encoded_payload
-                    ):
-                        stamp_path.unlink()
-            except Exception:
-                pass
-            raise
-    except OSError as exc:
-        raise FingerprintError(
-            f"could not write zvec fingerprint manifest {stamp_path}: {exc}"
-        ) from exc
-    finally:
-        try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except OSError:
-            pass
-    return stamp_path

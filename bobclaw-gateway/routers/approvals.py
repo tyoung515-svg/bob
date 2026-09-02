@@ -21,6 +21,7 @@ from uuid import UUID
 
 import aiohttp
 from aiohttp import WSMsgType, web
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app_state import POSTGRES_POOL_KEY
 from auth import authenticate_ws
@@ -183,7 +184,7 @@ async def list_approvals(request: web.Request) -> web.Response:
 async def approvals_digest(request: web.Request) -> web.Response:
     """Gate-activity digest for the authenticated user (GR-P3-finish).
 
-    Surfaces two slices so the operator can review what the scope Gate did unattended:
+    Surfaces two slices so Travis can review what the scope Gate did unattended:
       * ``gate_cleared``    — recent rows the Gate auto-cleared (``approved_by='gate'``).
       * ``flagged_pending`` — pending worker_scope_review rows that need a human
         decision (``status='pending'`` AND ``action_type='worker_scope_review'``).
@@ -268,7 +269,7 @@ async def decide_approval(request: web.Request) -> web.Response:
             text='{"error": "decision must be approve or reject"}',
             content_type="application/json",
         )
-    # Optional human-edited content (C4 cc_edit: the operator tweaks the diff before
+    # Optional human-edited content (C4 cc_edit: Travis tweaks the diff before
     # approving). Forwarded verbatim to core so the edited version is applied.
     edit_content = body_json.get("edit_content")
     pool = _get_pool(request)
@@ -278,12 +279,13 @@ async def decide_approval(request: web.Request) -> web.Response:
     row = await pool.fetchrow(
         """
         UPDATE approvals
-        SET status = $2, decided_at = NOW()
+        SET status = $2, decided_at = NOW(), approved_by = $4
         WHERE id = $1 AND user_id = $3 AND status = 'pending'
         RETURNING id, conversation_id, user_id, action_type, details, status, approved_by, decided_at, created_at
         """,
         approval_id,
         "approved" if decision == "approve" else "rejected",
+        user_id,
         user_id,
     )
     if row is None:
@@ -316,6 +318,7 @@ async def decide_approval(request: web.Request) -> web.Response:
                     # agent-side replay can be retried out-of-band if needed.
                     return web.json_response({
                         **_record_to_dict(row),
+                        "decision": "recorded",
                         "agent_resume": "failed",
                         "agent_resume_message": body,
                     })
@@ -323,12 +326,14 @@ async def decide_approval(request: web.Request) -> web.Response:
         logger.warning("Failed to proxy decision to core: %s", exc)
         return web.json_response({
             **_record_to_dict(row),
+            "decision": "recorded",
             "agent_resume": "failed",
             "agent_resume_message": str(exc),
         })
 
     return web.json_response({
         **_record_to_dict(row),
+        "decision": "recorded",
         "agent_resume": "ok",
     })
 
@@ -360,8 +365,20 @@ async def approvals_socket(request: web.Request) -> web.StreamResponse:
         return ws
 
     async def _forward_redis_to_ws() -> None:
+        # redis-py 8.x pubsub reads carry a ~5s socket read-timeout, so a blocking
+        # ``async for message in pubsub.listen()`` RAISES ``TimeoutError`` on the first
+        # idle gap and kills the forward loop — a watcher then never sees approvals
+        # published after it went idle. Poll with ``get_message`` (returns None on an
+        # idle tick; a raised read-timeout is swallowed) so the loop survives. Mirrors
+        # the /ws/monitor fix; see fix(flight) in this branch.
         try:
-            async for message in pubsub.listen():
+            while True:
+                try:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=1.0
+                    )
+                except (asyncio.TimeoutError, RedisTimeoutError):
+                    continue
                 if message is None:
                     continue
                 if message.get("type") != "message":

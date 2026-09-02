@@ -37,7 +37,7 @@ def _combine_destinations(*destinations: str) -> str:
 GATE_RECONCILE_PROMPT: str = """You are the Gate Router's reconciliation critic.
 
 A worker has proposed an action. You must decide whether it reconciles to the
-job's pre-approved scope (the blast radius the operator already signed off on).
+job's pre-approved scope (the blast radius Travis already signed off on).
 
 Job scope (the pre-approved blast radius):
 ```json

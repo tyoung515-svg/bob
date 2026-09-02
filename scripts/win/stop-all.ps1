@@ -1,5 +1,6 @@
-# BoBClaw — stop the Python services + embedder. Leaves docker containers running
-# (use `docker compose stop` to stop Postgres/Qdrant too).
+# BoBClaw — stop the Python services + embedder. Leaves docker containers running.
+# To stop Postgres/Qdrant too, from the repo root run:
+#   docker compose --env-file .secrets\bobclaw.env -f docker-compose.yml stop
 $ErrorActionPreference = 'Continue'
 
 Write-Host "Stopping core/gateway/pipeline..." -ForegroundColor Yellow
@@ -22,4 +23,5 @@ Get-ScheduledTask -TaskName 'BobClaw-Ornith-*' -ErrorAction SilentlyContinue | F
 Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Write-Host "Done. Docker containers left running. To stop them:" -ForegroundColor Cyan
-Write-Host "  docker compose stop"
+$repo = (Resolve-Path "$PSScriptRoot\..\..").Path
+Write-Host "  docker compose --env-file `"$repo\.secrets\bobclaw.env`" -f `"$repo\docker-compose.yml`" stop"

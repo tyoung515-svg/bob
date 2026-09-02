@@ -33,7 +33,7 @@ def test_sandbox_timeout():
     sandbox = SubprocessSandbox()
     start = time.monotonic()
     result = sandbox.run(
-        [sys.executable, "-c", "import time; time.sleep(60)"],
+        [sys.executable, "-c", "import time; time.sleep(5)"],
         timeout=0.5
     )
     elapsed = time.monotonic() - start
@@ -41,10 +41,9 @@ def test_sandbox_timeout():
     assert result.killed is True
     # The process was terminated before it could produce output.
     assert result.returncode is not None  # On Unix, -15; on Windows maybe 1? But not 0.
-    # Ensure we didn't wait anywhere near the full sleep. The bound must absorb
-    # interpreter spawn + kill + collect under AV scanning (measured >2s per
-    # spawn on some Windows boxes), so it is deliberately loose.
-    assert elapsed < 15.0
+    # Ensure we didn't wait the full 5s.
+    assert elapsed < 3.0  # generous bound, but should complete well under 1s.
+    # The command didn't raise an exception through sandbox.run.
 
 
 def test_sandbox_timeout_preserves_partial_stderr():

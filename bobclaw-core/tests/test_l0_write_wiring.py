@@ -199,16 +199,32 @@ async def test_event_body_shape_defaults_to_none():
 
 
 @pytest.mark.asyncio
-async def test_append_failure_propagates():
-    """event_log.append raises → _append_agent_turn_event propagates (not swallowed)."""
+async def test_live_agent_state_uses_task_as_current_user_message():
+    """API ingress keeps the current turn in task, not messages."""
+    mock_append = AsyncMock()
+    with _mock_memory(event_log_append=mock_append):
+        state = _state(
+            task="the live current turn",
+            messages=[{
+                "role": "system",
+                "content": "Prior conversation:\nuser: an older turn",
+            }],
+        )
+        await _append_agent_turn_event(state, assistant_response="current answer")
+        body = mock_append.call_args[0][0]
+        assert body["user_message"] == "the live current turn"
+
+
+@pytest.mark.asyncio
+async def test_append_failure_fails_open():
+    """L0 persistence failure must not abort an otherwise completed turn."""
     failing_append = AsyncMock(side_effect=L0AppendFailed("evt-1", "simulated failure"))
     with _mock_memory(event_log_append=failing_append):
-        with pytest.raises(L0AppendFailed) as exc:
-            await _append_agent_turn_event(
-                _state(messages=[{"role": "user", "content": "hi"}]),
-                assistant_response="hello",
-            )
-        assert "simulated failure" in str(exc.value) or "evt-1" in str(exc.value)
+        await _append_agent_turn_event(
+            _state(messages=[{"role": "user", "content": "hi"}]),
+            assistant_response="hello",
+        )
+    failing_append.assert_awaited_once()
 
 
 @pytest.mark.asyncio

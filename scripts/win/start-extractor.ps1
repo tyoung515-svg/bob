@@ -15,19 +15,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# Binary + model locations. Override via environment (recommended) or edit here:
-#   LLAMA_SERVER_EXE       — path to llama.cpp's llama-server.exe (defaults to one on PATH)
-#   BOBCLAW_EXTRACTOR_GGUF — path to your L1-extractor chat GGUF (e.g. a small gemma) (required)
-$server   = if ($env:LLAMA_SERVER_EXE) { $env:LLAMA_SERVER_EXE } else { 'llama-server.exe' }
-$gguf     = $env:BOBCLAW_EXTRACTOR_GGUF
-if (-not $gguf) {
-    # Soft-optional: L1 fact auto-extraction is OFF by default and the chat path does
-    # not need the extractor, so a fresh box without a local GGUF must SKIP (not abort).
-    Write-Host "BOBCLAW_EXTRACTOR_GGUF not set — skipping the extractor (:8082)." -ForegroundColor Yellow
-    Write-Host "  L1 auto-learn is OFF by default; set BOBCLAW_EXTRACTOR_GGUF to your" -ForegroundColor DarkGray
-    Write-Host "  extractor GGUF to enable it (see README / AGENTS-SETUP.md)." -ForegroundColor DarkGray
-    return
-}
+$server   = 'C:\dev\tools\llama.cpp-b9509\llama-server.exe'
+$gguf     = 'C:\dev\models\lmstudio-community\gemma-4-E4B-it-GGUF\gemma-4-E4B-it-Q4_K_M.gguf'
 $repo     = (Resolve-Path "$PSScriptRoot\..\..").Path
 $logDir   = Join-Path $repo '.logs'
 $logFile  = Join-Path $logDir 'extractor.log'
@@ -36,8 +25,8 @@ $taskName = 'BobClaw-Extractor'
 $baseArgs = @('-m', $gguf, '-ngl', '0', '-c', '4096',
               '--host', '127.0.0.1', '--port', '8082')
 
-if (-not (Get-Command $server -ErrorAction SilentlyContinue) -and -not (Test-Path $server)) { throw "llama-server not found: $server (set LLAMA_SERVER_EXE)" }
-if (-not (Test-Path $gguf))   { throw "extractor GGUF not found: $gguf (set BOBCLAW_EXTRACTOR_GGUF)" }
+if (-not (Test-Path $server)) { throw "llama-server not found: $server" }
+if (-not (Test-Path $gguf))   { throw "gemma-4-E4B GGUF not found: $gguf" }
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 function Test-ExtractorUp {

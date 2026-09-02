@@ -12,6 +12,7 @@ import pytest
 from aioresponses import aioresponses
 
 from core.backends.local_router import LocalBackendInfo, LocalModelRouter
+from core.config import config
 
 # ─── Fixture payloads ─────────────────────────────────────────────────────────
 
@@ -110,28 +111,39 @@ async def test_discover_bad_status_excluded():
 
 
 # ─── _pick_model() ────────────────────────────────────────────────────────────
+# No model name is baked into the router: preference comes from
+# config.PREFERRED_LOCAL_MODEL (default unset → first model wins). The old
+# hardwired gemma ranking was purged 2026-07-24 (embedding-only posture).
 
-def test_pick_model_selects_gemma_27b():
+def test_pick_model_no_preference_picks_first():
+    models = ["llama3:8b", "mistral:7b", "phi-4"]
+    assert LocalModelRouter._pick_model(models) == "llama3:8b"
+
+
+def test_pick_model_gemma_gets_no_special_treatment():
+    """Regression for the retired hardwired ranking: a gemma model in the
+    list must NOT be preferred over the first model."""
     models = ["llama3:8b", "mistral:7b", "gemma-4-27b", "phi-4"]
-    assert LocalModelRouter._pick_model(models) == "gemma-4-27b"
+    assert LocalModelRouter._pick_model(models) == "llama3:8b"
 
 
-def test_pick_model_selects_gemma_26b():
-    models = ["llama3:8b", "gemma-4-26b", "phi-4"]
-    assert LocalModelRouter._pick_model(models) == "gemma-4-26b"
+def test_pick_model_preferred_name_wins(monkeypatch):
+    monkeypatch.setattr(config, "PREFERRED_LOCAL_MODEL", "phi-4")
+    models = ["llama3:8b", "mistral:7b", "phi-4"]
+    assert LocalModelRouter._pick_model(models) == "phi-4"
 
 
-def test_pick_model_27b_beats_26b():
-    models = ["gemma-4-26b", "gemma-4-27b", "phi-4"]
-    assert LocalModelRouter._pick_model(models) == "gemma-4-26b"  # first hit wins (26b matches 2[76]b)
+def test_pick_model_preferred_is_case_insensitive_substring(monkeypatch):
+    monkeypatch.setattr(config, "PREFERRED_LOCAL_MODEL", "QWEN3.6")
+    models = ["llama3:8b", "lmstudio-community/Qwen3.6-32B-GGUF"]
+    assert (
+        LocalModelRouter._pick_model(models)
+        == "lmstudio-community/Qwen3.6-32B-GGUF"
+    )
 
 
-def test_pick_model_falls_back_to_any_gemma():
-    models = ["llama3:8b", "gemma:2b", "phi-4"]
-    assert LocalModelRouter._pick_model(models) == "gemma:2b"
-
-
-def test_pick_model_falls_back_to_first_model():
+def test_pick_model_preferred_absent_falls_back_to_first(monkeypatch):
+    monkeypatch.setattr(config, "PREFERRED_LOCAL_MODEL", "qwen3.6")
     models = ["llama3:8b", "phi-4"]
     assert LocalModelRouter._pick_model(models) == "llama3:8b"
 
@@ -140,56 +152,47 @@ def test_pick_model_empty_list_returns_none():
     assert LocalModelRouter._pick_model([]) is None
 
 
-def test_pick_model_case_insensitive_gemma_27b():
-    models = ["Gemma-4-27B", "llama3:8b"]
-    assert LocalModelRouter._pick_model(models) == "Gemma-4-27B"
-
-
-def test_pick_model_lmstudio_gguf_path():
-    models = ["lmstudio-community/gemma-4-26b-GGUF", "phi-4"]
-    result = LocalModelRouter._pick_model(models)
-    assert result == "lmstudio-community/gemma-4-26b-GGUF"
-
-
 # ─── _pick_model(): resident preference (Sprint 04 hardening) ────────────────
 
-def test_pick_model_resident_preferred_when_resident_provided():
-    """When residency info is available, gemma-26b in the *resident* set wins
-    over a higher-preference gemma that's installed but not resident."""
-    available = ["gemma-4-27b", "gemma-4-26b", "phi-4"]
-    resident = ["gemma-4-26b", "phi-4"]
-    # Static order on available would prefer gemma-4-27b, but it's not
-    # resident. The router should pick the resident gemma-4-26b instead.
-    assert LocalModelRouter._pick_model(available, resident=resident) == "gemma-4-26b"
+def test_pick_model_resident_preferred_when_resident_provided(monkeypatch):
+    """When residency info is available, a preferred-name match in the
+    *resident* set wins over an installed-but-unloaded match."""
+    monkeypatch.setattr(config, "PREFERRED_LOCAL_MODEL", "qwen3.6")
+    available = ["qwen3.6-32b", "qwen3.6-4b", "phi-4"]
+    resident = ["qwen3.6-4b", "phi-4"]
+    assert LocalModelRouter._pick_model(available, resident=resident) == "qwen3.6-4b"
 
 
-def test_pick_model_resident_first_even_when_no_gemma_resident():
-    """Resident list with no gemma → first resident, not the highest-pref
-    gemma from the installed list."""
-    available = ["gemma-4-27b", "llama3:8b", "phi-4"]
+def test_pick_model_resident_first_even_when_preferred_not_resident(monkeypatch):
+    """Resident list without the preferred model → first resident, not the
+    preferred model from the installed list."""
+    monkeypatch.setattr(config, "PREFERRED_LOCAL_MODEL", "qwen3.6")
+    available = ["qwen3.6-32b", "llama3:8b", "phi-4"]
     resident = ["llama3:8b"]
     assert LocalModelRouter._pick_model(available, resident=resident) == "llama3:8b"
 
 
-def test_pick_model_empty_resident_falls_back_to_legacy_order():
-    """An empty resident list is treated as 'no residency info' — legacy
-    static order on the installed list is preserved."""
-    available = ["llama3:8b", "gemma-4-27b", "phi-4"]
-    assert LocalModelRouter._pick_model(available, resident=[]) == "gemma-4-27b"
+def test_pick_model_empty_resident_falls_back_to_static_order(monkeypatch):
+    """An empty resident list is treated as 'no residency info' — static
+    order (preferred name first) on the installed list is preserved."""
+    monkeypatch.setattr(config, "PREFERRED_LOCAL_MODEL", "phi-4")
+    available = ["llama3:8b", "phi-4"]
+    assert LocalModelRouter._pick_model(available, resident=[]) == "phi-4"
 
 
-def test_pick_model_none_resident_falls_back_to_legacy_order():
-    """Explicit None resident → legacy order (the pre-hardening behavior)."""
-    available = ["llama3:8b", "gemma-4-27b", "phi-4"]
-    assert LocalModelRouter._pick_model(available, resident=None) == "gemma-4-27b"
+def test_pick_model_none_resident_falls_back_to_static_order():
+    """Explicit None resident, no preference set → first available model."""
+    available = ["llama3:8b", "phi-4"]
+    assert LocalModelRouter._pick_model(available, resident=None) == "llama3:8b"
 
 
-def test_pick_model_resident_gemma_27b_beats_resident_anything():
-    """Resident ranking still follows the static gemma-27b/26b preference
-    within the resident set."""
-    available = ["gemma-4-26b", "gemma-4-27b", "llama3:8b"]
-    resident = ["llama3:8b", "gemma-4-27b"]
-    assert LocalModelRouter._pick_model(available, resident=resident) == "gemma-4-27b"
+def test_pick_model_preferred_beats_first_within_resident_set(monkeypatch):
+    """Resident ranking still applies the name preference within the
+    resident set."""
+    monkeypatch.setattr(config, "PREFERRED_LOCAL_MODEL", "qwen3.6")
+    available = ["qwen3.6-4b", "qwen3.6-32b", "llama3:8b"]
+    resident = ["llama3:8b", "qwen3.6-32b"]
+    assert LocalModelRouter._pick_model(available, resident=resident) == "qwen3.6-32b"
 
 
 # ─── get_best_backend() ───────────────────────────────────────────────────────
@@ -558,9 +561,10 @@ async def test_chat_no_backend_available_raises_clean_error():
 
 
 @pytest.mark.asyncio
-async def test_chat_no_override_no_residency_falls_back_to_legacy_order():
+async def test_chat_no_override_no_residency_falls_back_to_static_order():
     """When the backend exposes no residency info (resident_models == [] or
-    matches models), the legacy static order is preserved — gemma-4-27b wins."""
+    matches models) and no preference is set, the first model wins — the
+    gemma in the list gets no special treatment (retired ranking)."""
     router = LocalModelRouter()
     backend = LocalBackendInfo(
         name="lmstudio", url=LMSTUDIO_URL,
@@ -590,7 +594,7 @@ async def test_chat_no_override_no_residency_falls_back_to_legacy_order():
         ):
             pass
 
-    assert captured["json"]["model"] == "gemma-4-27b"
+    assert captured["json"]["model"] == "llama3:8b"
 
 
 # ─── chat() — empty-stream detection (task 12) ─────────────────────────────

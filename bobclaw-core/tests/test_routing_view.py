@@ -50,7 +50,7 @@ async def test_routing_view_default_team_is_passthrough(client):
     view = await resp.json()
     assert view["active_team"] is None
     assert view["teams"] == ["cloud-heavy", "demo-fleet", "hier-fleet", "local-first"]
-    assert len(view["faces"]) == 24
+    assert len(view["faces"]) == 31
     rows = _by_id(view)
     # default team → resolved == preferred for every face
     for f in view["faces"]:
@@ -62,15 +62,15 @@ async def test_routing_view_default_team_is_passthrough(client):
 
 async def test_routing_view_team_query_remaps_backends(client):
     """?team=cloud-heavy previews the fleet without touching env — workers go to
-    glm_5_2, apex (planner-minimax) to claude_code."""
+    deepseek_v4_flash (GLM pulled — single-lane-only), apex (planner-minimax) to claude_code."""
     resp = await client.get("/api/routing-view", params={"team": "cloud-heavy"})
     assert resp.status == 200
     view = await resp.json()
     assert view["active_team"] == "cloud-heavy"
     rows = _by_id(view)
-    assert rows["worker-deepseek"]["resolved_backend"] == "glm_5_2"
-    assert rows["worker-deepseek"]["escalation_chain"] == ["deepseek_v4_flash", "kimi_code"]
-    assert rows["worker-deepseek"]["tool_capable"] is True   # glm_5_2 is tool-capable
+    assert rows["worker-deepseek"]["resolved_backend"] == "deepseek_v4_flash"
+    assert rows["worker-deepseek"]["escalation_chain"] == ["deepseek_v4", "kimi_code"]
+    assert rows["worker-deepseek"]["tool_capable"] is True   # deepseek_v4_flash is tool-capable
     assert rows["planner-minimax"]["resolved_backend"] == "claude_code"
     # builder-bob is roleless → still its own preferred even under a team
     assert rows["builder-bob"]["resolved_backend"] == "local"
@@ -78,7 +78,7 @@ async def test_routing_view_team_query_remaps_backends(client):
 
 async def test_routing_view_demo_fleet_renders_three_tiers(client):
     """The centerpiece view: apex faces→claude_api (Opus), worker faces→
-    deepseek_v4_flash, critic (reviewer)→glm_5_2. All three tiers visible."""
+    deepseek_v4_flash, critic (reviewer)→minimax (GLM pulled — single-lane-only). Three tiers."""
     resp = await client.get("/api/routing-view", params={"team": "demo-fleet"})
     assert resp.status == 200
     view = await resp.json()
@@ -86,11 +86,11 @@ async def test_routing_view_demo_fleet_renders_three_tiers(client):
     rows = _by_id(view)
     assert rows["planner-claude"]["resolved_backend"] == "claude_api"   # apex / Opus
     assert rows["worker-deepseek"]["resolved_backend"] == "deepseek_v4_flash"  # worker
-    assert rows["reviewer"]["resolved_backend"] == "glm_5_2"            # critic / GLM auditor
+    assert rows["reviewer"]["resolved_backend"] == "minimax"            # critic / auditor
     tiers = {rows["planner-claude"]["resolved_backend"],
              rows["worker-deepseek"]["resolved_backend"],
              rows["reviewer"]["resolved_backend"]}
-    assert tiers == {"claude_api", "deepseek_v4_flash", "glm_5_2"}
+    assert tiers == {"claude_api", "deepseek_v4_flash", "minimax"}
 
 
 async def test_routing_view_reflects_bobclaw_team_env(client, monkeypatch):
@@ -119,7 +119,7 @@ async def test_routing_view_text_format(client):
     text = await resp.text()
     assert "active_team: cloud-heavy" in text
     assert "FACE" in text and "RESOLVED" in text
-    assert "worker-deepseek" in text and "glm_5_2" in text
+    assert "worker-deepseek" in text and "deepseek_v4_flash" in text
 
 
 async def test_routing_view_advertises_live_probe_false(client):

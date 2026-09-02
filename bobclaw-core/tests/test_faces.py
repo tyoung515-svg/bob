@@ -37,9 +37,16 @@ EXPECTED_FACE_IDS = {
     "planner-gemini",
     "worker-agy",
     "planner-codex",
-    "planner-gpt",
     "worker-codex",
     "worker-kimi-cli",
+    "worker-pi-glm",
+    "worker-pi-deepseek",
+    "worker-pi-minimax",
+    "planner-pi",
+    "planner-gpt56-sol",
+    "worker-gpt56-terra",
+    "worker-gpt56-luna",
+    "telegram-bob",
 }
 
 @pytest.fixture(scope="module")
@@ -50,7 +57,7 @@ def registry() -> FaceRegistry:
 # ─── Loading ──────────────────────────────────────────────────────────────────
 
 def test_all_profiles_loaded(registry: FaceRegistry):
-    assert len(registry) == 24
+    assert len(registry) == 31
 
 
 def test_all_expected_ids_present(registry: FaceRegistry):
@@ -171,6 +178,8 @@ def test_get_face_assistant(registry: FaceRegistry):
     face = registry.get_face("assistant")
     assert face.name == "General Assistant"
     assert face.ui_theme == "green"
+    # Read-only tools only — the everyday face can look, not mutate.
+    assert face.allowed_tools == ["get_server_time", "list_backends"]
 
 
 def test_get_face_assistant_tools(registry: FaceRegistry):
@@ -194,7 +203,7 @@ def test_get_face_empty_string_raises_key_error(registry: FaceRegistry):
 
 def test_list_faces_returns_summaries(registry: FaceRegistry):
     summaries = registry.list_faces()
-    assert len(summaries) == 24
+    assert len(summaries) == 31
     for s in summaries:
         assert isinstance(s, FaceSummary)
         assert s.id
@@ -453,3 +462,70 @@ def test_prompt_assembly_byte_identical_with_and_without_display(tmp_path):
 
 
 # ─── R0: GPT-5.6 roster (Sol / Terra / Luna) ──────────────────────────────────
+
+def test_get_face_planner_gpt56_sol(registry):
+    face = registry.get_face("planner-gpt56-sol")
+
+    assert face.role == "apex"
+    assert face.preferred_backend == "codex_code"
+    assert face.codex_posture["model"] == "gpt-5.6-sol"
+
+
+def test_get_face_worker_gpt56_terra(registry):
+    face = registry.get_face("worker-gpt56-terra")
+
+    assert face.role == "worker"
+    assert face.preferred_backend == "codex_code"
+    assert face.codex_posture["model"] == "gpt-5.6-terra"
+
+
+def test_get_face_worker_gpt56_luna(registry):
+    face = registry.get_face("worker-gpt56-luna")
+
+    assert face.role == "worker"
+    assert face.preferred_backend == "codex_code"
+    assert face.codex_posture["model"] == "gpt-5.6-luna"
+
+
+# ─── Teammate marker (hermes-iface-2 wave 2): bot + is_teammate ──────────────
+
+_BOT_FACE_IDS = {"assistant", "researcher", "reviewer", "planner-claude", "telegram-bob"}
+
+
+def test_bot_field_loads_from_yaml(registry: FaceRegistry):
+    """The four marked profiles load with bot=True."""
+    for face_id in _BOT_FACE_IDS:
+        assert registry.get_face(face_id).bot is True, face_id
+
+
+def test_bot_field_defaults_false():
+    """Absent from the model declaration ⇒ False."""
+    face = Face(id="bare", name="Bare", system_prompt="Hi")
+    assert face.bot is False
+
+
+def test_bot_field_false_for_unmarked_profiles(registry: FaceRegistry):
+    """Every profile NOT in the marked set keeps bot=False."""
+    for face in registry.all_faces():
+        if face.id not in _BOT_FACE_IDS:
+            assert face.bot is False, f"face '{face.id}' unexpectedly bot=True"
+
+
+def test_is_teammate_property():
+    """bot OR simple_slot makes a face a teammate; neither ⇒ not."""
+    assert Face(id="a", name="A", system_prompt="Hi", bot=True).is_teammate
+    assert Face(id="b", name="B", system_prompt="Hi", simple_slot="quick").is_teammate
+    assert not Face(id="c", name="C", system_prompt="Hi").is_teammate
+
+
+def test_teammate_faces_roster_filter(registry: FaceRegistry):
+    """teammate_faces() returns exactly the bot:true OR simple_slot faces."""
+    roster = registry.teammate_faces()
+    roster_ids = {f.id for f in roster}
+    # marked faces are in
+    assert _BOT_FACE_IDS <= roster_ids
+    # every roster entry is a teammate, and no teammate is left out
+    assert all(f.is_teammate for f in roster)
+    assert roster_ids == {f.id for f in registry.all_faces() if f.is_teammate}
+    # an unmarked, unslotted face stays off the roster
+    assert "builder-bob" not in roster_ids

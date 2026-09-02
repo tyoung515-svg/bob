@@ -44,8 +44,8 @@ async def test_process_team_changes_worker_resolution():
     """Process-level team (cloud-heavy) remaps the worker role end-to-end."""
     teams.set_active_team("cloud-heavy")
     out = await route_node(_state("worker-deepseek"))
-    assert out["backend"] == "glm_5_2"                 # cloud-heavy worker backend
-    assert out["escalation_backend"] == "deepseek_v4_flash"  # chain head, not kimi_code
+    assert out["backend"] == "deepseek_v4_flash"       # cloud-heavy worker backend (GLM pulled)
+    assert out["escalation_backend"] == "deepseek_v4"  # chain head, not kimi_code
 
 
 @pytest.mark.asyncio

@@ -235,9 +235,57 @@ class TestApprovalsRoutes(unittest.TestCase):
             )
         self.assertEqual(resp.status, 200)
         data = self._run(resp.json())
+        self.assertEqual(data["decision"], "recorded")
         self.assertEqual(data["agent_resume"], "failed")
         self.assertEqual(data["status"], "approved")
         self.assertEqual(self._pool.approvals[a["id"]]["status"], "approved")
+        self.assertEqual(self._pool.approvals[a["id"]]["approved_by"], "bobclaw")
+
+    def test_decide_persists_approved_by_caller(self):
+        """Deciding records the caller's user_id in approved_by (previously
+        only 'gate' auto-clears ever wrote that column)."""
+        a = self._pool.add_approval(approval_id=self._uuid(), user_id="bobclaw")
+
+        with patch("routers.approvals.aiohttp.ClientSession", _FakeClientSession):
+            resp = self._run(
+                self._client.post(
+                    f"/approvals/{a['id']}/decide",
+                    json={"decision": "approve"},
+                    headers=self._auth_headers(),
+                )
+            )
+        self.assertEqual(resp.status, 200)
+        data = self._run(resp.json())
+        self.assertEqual(data["decision"], "recorded")
+        self.assertEqual(data["agent_resume"], "ok")
+        self.assertEqual(data["approved_by"], "bobclaw")
+        self.assertEqual(self._pool.approvals[a["id"]]["approved_by"], "bobclaw")
+
+    def test_decide_core_4xx_records_decision_and_approved_by(self):
+        """Core resume returning 4xx → decision stays recorded (status +
+        approved_by persisted) while agent_resume reports the failure."""
+        class _Core4xxSession(_FakeClientSession):
+            response_status = 422
+            response_body = "no pending turn"
+
+        a = self._pool.add_approval(approval_id=self._uuid(), user_id="bobclaw")
+
+        with patch("routers.approvals.aiohttp.ClientSession", _Core4xxSession):
+            resp = self._run(
+                self._client.post(
+                    f"/approvals/{a['id']}/decide",
+                    json={"decision": "reject"},
+                    headers=self._auth_headers(),
+                )
+            )
+        self.assertEqual(resp.status, 200)
+        data = self._run(resp.json())
+        self.assertEqual(data["decision"], "recorded")
+        self.assertEqual(data["agent_resume"], "failed")
+        self.assertEqual(data["agent_resume_message"], "no pending turn")
+        self.assertEqual(data["status"], "rejected")
+        self.assertEqual(self._pool.approvals[a["id"]]["status"], "rejected")
+        self.assertEqual(self._pool.approvals[a["id"]]["approved_by"], "bobclaw")
 
     def test_cc_edit_lists_and_decides_with_jwt(self):
         """A cc_edit approval (C4) lists in /approvals and decides via the

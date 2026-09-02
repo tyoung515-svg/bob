@@ -1,0 +1,28 @@
+# A fresh sweep batch. Deduped against seen_corpus.yaml over (title, url).
+# Expected over fields=[title, url] with normalize=True:
+#   inc-1 (== seen-1)                      -> SEEN  (previously-seen)
+#   inc-2 DeepSeek V4 Flash benchmark      -> NEW
+#   inc-3 MiniMax M3 announced             -> NEW
+#   inc-4 messy near-dup of inc-2          -> SEEN  (intra-batch, near-dup via _normalize)
+#   inc-5 (== seen-2)                      -> SEEN  (previously-seen)
+# => new_count == 2 (inc-2, inc-3) ; seen_count == 3 (inc-1, inc-4, inc-5)
+- id: inc-1
+  title: "Claude Opus 4.5 released"
+  url: "https://www.anthropic.com/news/opus-4-5"
+  source: anthropic-news
+- id: inc-2
+  title: "DeepSeek V4 Flash benchmark"
+  url: "https://api-docs.deepseek.com/news/v4-flash"
+  source: deepseek-news
+- id: inc-3
+  title: "MiniMax M3 announced"
+  url: "https://www.minimax.io/news/m3"
+  source: hn-frontpage
+- id: inc-4
+  title: "deepseek   V4   FLASH   benchmark!!"
+  url: "https://api-docs.deepseek.com/news/v4-flash"
+  source: deepseek-news
+- id: inc-5
+  title: "GPT-5 pricing update"
+  url: "https://openai.com/api/pricing"
+  source: openai-pricing

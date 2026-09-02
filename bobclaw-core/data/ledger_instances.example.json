@@ -2,23 +2,54 @@
   "version": 1,
   "instances": {
     "bobclaw-memory": {
-      "repo": ".",
+      "repo": "C:/dev/projects/bobclaw",
       "ledger_dir": "ledger",
-      "collection": "bobclaw__2560",
-      "dim": 2560,
-      "meta": {
-        "note": "BoB's own agent-memory L1 store — the single BoB-OWNED (writer) collection. Reads are universal; writes are single-owner (single-writer fence). collection = provider _collection_name(2560) from collection_prefix 'bobclaw_'. Dim follows the embed_text slot (qwen3-embedding-4b default since v0.98).",
-        "acl": {"writer": "bobclaw", "readers": ["bobclaw"], "mode": "rw"},
-        "embed": {"model_id": "qwen3-embedding-4b", "dim": 2560, "normalize": true, "distance": "cosine"}
-      }
-    },
-    "my-notes": {
-      "repo": "/path/to/your/notes-repo",
-      "ledger_dir": "ledger",
-      "collection": "my_notes_chunks",
+      "collection": "bobclaw__768",
       "dim": 768,
       "meta": {
-        "note": "EXAMPLE bring-your-own corpus instance. Point 'repo' at any local git repo of notes/docs you want BoB to read. Read-only from BoB's perspective (writer is your own indexer). Copy this block once per corpus you federate.",
+        "note": "BoB agent-memory L1 store — the single bobclaw-OWNED (writer) collection; reads universal (C3), writes single-owner (MS2-C4 / OD#2-A). collection = provider _collection_name(768) from collection_prefix 'bobclaw_'. (bobclaw_l1_768 is the C6 consolidation-rename target.)",
+        "acl": {"writer": "bobclaw", "readers": ["bobclaw"], "mode": "rw"},
+        "embed": {"model_id": "granite-embedding-311m", "dim": 768, "normalize": true, "distance": "cosine"}
+      }
+    },
+    "unwinding": {
+      "repo": "C:/dev/unwinding",
+      "ledger_dir": "ledger",
+      "collection": "unwinding_chunks",
+      "dim": 768,
+      "meta": {
+        "note": "The Unwinding thesis — JSON-truth ledger, git-init'd",
+        "acl": {"writer": "lks", "readers": ["bobclaw", "lks"], "mode": "ro"}
+      }
+    },
+    "wiki": {
+      "repo": "C:/dev/projects/lks",
+      "ledger_dir": "ledger",
+      "collection": "wiki_chunks",
+      "dim": 768,
+      "meta": {
+        "note": "LKS wiki corpus (wiki_chunks). P4 (2026-07-16) repointed repo C:/dev/wiki -> C:/dev/projects/lks and stamped meta.embed. repo is the LEDGER owner, not the corpus source: post-G3/S2 the canonical text ledger is tracked at lks/ledger (SQLite + qdrant_data are derived), so read_ledger_at/projection_key/diff_ledger/is_git all resolve against the LKS tree — is_git() is True there and False for the C:/dev/wiki vault, which is not a git repo and has no ledger/. The corpus SOURCE is still the C:/dev/wiki vault (scripts/reindex.py).",
+        "acl": {"writer": "lks", "readers": ["bobclaw", "lks"], "mode": "ro"},
+        "embed": {"model_id": "granite-embedding-311m", "dim": 768, "normalize": true, "distance": "cosine"}
+      }
+    },
+    "sps": {
+      "repo": "C:/dev/sps",
+      "ledger_dir": "ledger",
+      "collection": "sps_chunks",
+      "dim": 768,
+      "meta": {
+        "note": "SPS LKS instance — not yet git-init'd",
+        "acl": {"writer": "lks", "readers": ["bobclaw", "lks"], "mode": "ro"}
+      }
+    },
+    "music-maker": {
+      "repo": "C:/dev/music-maker",
+      "ledger_dir": "ledger",
+      "collection": "music_songs",
+      "dim": 768,
+      "meta": {
+        "note": "music-maker LKS — also has a music_playbook collection; primary mapped here",
         "acl": {"writer": "lks", "readers": ["bobclaw", "lks"], "mode": "ro"}
       }
     }

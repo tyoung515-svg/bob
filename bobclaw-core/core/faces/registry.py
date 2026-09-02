@@ -46,6 +46,11 @@ class Face(BaseModel):
     display_name: Optional[str] = None
     blurb: Optional[str] = None
     simple_slot: Optional[str] = None
+    # ── Teammate marker (hermes-iface-2 wave 2) ──
+    # True ⇒ the face is eligible as a named teammate in the Bots pane. Like the
+    # fields above it is display-only and never enters prompt assembly. The bot
+    # roster filters on this OR ``simple_slot`` presence (see ``is_teammate``).
+    bot: bool = False
     # ── JOAT v0: role/tier dimension (apex|worker|critic) ──
     # Orthogonal to which face answers (_select_face is unchanged). Optional so
     # every existing profile still loads. The `teams.resolve` layer maps
@@ -70,6 +75,21 @@ class Face(BaseModel):
     # threads only ``model`` (via dispatch→worker model_override); the planner tier
     # reads the full posture. Empty for non-codex faces.
     codex_posture: dict = Field(default_factory=dict)
+    # ── Pi (pi_code) posture ──
+    # Policy fed to the ``pi_code`` agentic backend per face: ``model`` (a
+    # ``provider/id`` string, e.g. ``zai/glm-5.2`` | ``deepseek/deepseek-v4-flash`` |
+    # ``minimax/MiniMax-M3``), ``tools`` (bool ⇒ enable the read/edit/bash loop),
+    # ``cwd``, ``extra_args``. The fan-out threads only ``model`` (via
+    # dispatch→worker model_override). Empty for non-pi faces.
+    pi_posture: dict = Field(default_factory=dict)
+    # ── Spawn-context descriptor (intake 2026-07-18) ──
+    # Optional per-face override for CLI-subprocess spawns (claude_code /
+    # agy_code / codex_code / kimi_cli): ``template`` (basename under
+    # config/spawn_contexts/), ``position``, ``role``, ``project_access``
+    # (True ⇒ the spawn keeps repo briefing/read grants — the explicit opt-in;
+    # e.g. planner-cc-edit genuinely needs the repo). Absent ⇒ the dispatch
+    # path's defaults apply (clean scratch). See core/spawn_context.py.
+    spawn_context: dict = Field(default_factory=dict)
     # ── Critic gate (handoff 008, LKS v3.1 rule 16) ──
     critic_backend: Optional[str] = None
     critic_prompt_template: Optional[str] = None
@@ -118,6 +138,12 @@ class Face(BaseModel):
                 raise ValueError("critic_prompt_template must contain {subtask_text} and {worker_output}")
         return v
 
+    @property
+    def is_teammate(self) -> bool:
+        """True for faces eligible for the bot roster: ``bot: true`` OR any
+        ``simple_slot`` (Simple-mode faces are already teammate-shaped)."""
+        return self.bot or self.simple_slot is not None
+
 
 class FaceSummary(BaseModel):
     id: str
@@ -131,6 +157,7 @@ class FaceSummary(BaseModel):
     display_name: Optional[str] = None
     blurb: Optional[str] = None
     simple_slot: Optional[str] = None
+    bot: bool = False  # teammate marker (phase 2) — must reach /api/faces for the roster
 
 
 # ─── Registry ─────────────────────────────────────────────────────────────────
@@ -185,6 +212,7 @@ class FaceRegistry:
                 display_name=f.display_name,
                 blurb=f.blurb,
                 simple_slot=f.simple_slot,
+                bot=f.bot,
             )
             for f in self._faces.values()
         ]
@@ -204,6 +232,12 @@ class FaceRegistry:
         per face to call ``teams.resolve``. Ordered by id for stable output.
         """
         return [self._faces[fid] for fid in sorted(self._faces)]
+
+    def teammate_faces(self) -> list[Face]:
+        """Return the bot roster: faces where ``is_teammate`` holds
+        (``bot: true`` OR any ``simple_slot``). Ordered by id for stable output.
+        """
+        return [f for f in self.all_faces() if f.is_teammate]
 
     def __len__(self) -> int:
         return len(self._faces)

@@ -580,7 +580,7 @@ async def test_resolve_cc_edit_honours_edit_content(monkeypatch, git_repo):
         +++ b/hello.txt
         @@ -1 +1 @@
         -hello
-        +edited by user
+        +edited by travis
         """
     )
     state = {
@@ -593,7 +593,7 @@ async def test_resolve_cc_edit_honours_edit_content(monkeypatch, git_repo):
     }
     out = await execute_node(state)
     assert out["approval_required"] is False
-    assert (git_repo / "hello.txt").read_text(encoding="utf-8") == "edited by user\n"
+    assert (git_repo / "hello.txt").read_text(encoding="utf-8") == "edited by travis\n"
 
 
 # ── F1: multi-file split so the Gate sees EVERY path ─────────────────────────

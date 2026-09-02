@@ -19,6 +19,7 @@ async def recall_node(
     *,
     enabled: bool,
     top_k: int = 5,
+    include_t0: bool = False,
 ) -> dict:
     if not enabled:
         return {"recalled_facts": []}
@@ -35,7 +36,12 @@ async def recall_node(
             fact = await fact_store.get(chunk.source_fact_id)
             facts.append(fact)
 
-    return {"recalled_facts": facts}
+    result = {"recalled_facts": facts}
+    if include_t0:
+        result["recalled_chunks"] = [
+            chunk for chunk in chunks if not chunk.source_fact_id
+        ]
+    return result
 
 
 def _last_user_message(state: AgentState) -> str | None:

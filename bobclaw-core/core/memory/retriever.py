@@ -29,6 +29,25 @@ log = logging.getLogger(__name__)
 # exhausted, or we hit the documented safety bound below.
 _RECALL_CANDIDATE_CAP = 200  # safety bound: max vector hits scanned per ranking
 
+# The production embedder has a 2048-token context.  Recall is a semantic hint,
+# not the model prompt, so keep a conservative character budget (roughly 768
+# English tokens) and preserve both ends of long messages: task framing is often
+# at the front while the actual question is commonly at the end.
+_RECALL_QUERY_CHAR_BUDGET = 3072
+_RECALL_QUERY_TRUNCATION_MARKER = "\n[... recall query truncated ...]\n"
+
+
+def _bounded_recall_query(query: str) -> str:
+    """Return an embedder-safe recall query without mutating chat state."""
+    if len(query) <= _RECALL_QUERY_CHAR_BUDGET:
+        return query
+    content_budget = (
+        _RECALL_QUERY_CHAR_BUDGET - len(_RECALL_QUERY_TRUNCATION_MARKER)
+    )
+    head_chars = content_budget // 2
+    tail_chars = content_budget - head_chars
+    return query[:head_chars] + _RECALL_QUERY_TRUNCATION_MARKER + query[-tail_chars:]
+
 
 def _recall_batch_size(top_k: int) -> int:
     """Per-page provider limit: over-fetch headroom so dangling hits can be
@@ -50,6 +69,7 @@ class MemoryRetriever:
         lks_adapter=None,
         lks_instance=None,
         lks_first=False,
+        t0_recall_enabled=False,
     ) -> None:
         self._embedder = embedder
         self._provider = provider
@@ -60,6 +80,7 @@ class MemoryRetriever:
         self._lks_adapter = lks_adapter
         self._lks_instance = lks_instance
         self._lks_first = bool(lks_first)
+        self._t0_recall_enabled = bool(t0_recall_enabled)
 
     async def search(
         self,
@@ -69,6 +90,7 @@ class MemoryRetriever:
         filters: dict | None = None,
         hop_budget: int = 1,
     ) -> list[RetrievedChunk]:
+        query = _bounded_recall_query(query)
         # MS2-C5 strangler cut-over (OD#4): when MEMORY_LKS_FIRST is ON and an LKS instance +
         # adapter are wired, read the LKS corpus collection FIRST; on a miss / availability error
         # fall back to BoB's own store (the dangling-vector fail-open lives in _search_bob_store).
@@ -160,149 +182,211 @@ class MemoryRetriever:
         if "include_deprecated" in provider_filters:
             include_deprecated = provider_filters.pop("include_deprecated")
 
-        query_vec = (await self._embedder.embed_query([query]))[0]
-
-        # R4: bounded overfetch/paging so dangling hits can be skipped and still
-        # backfill up to top_k valid facts (see _gather_ranking).
-        initial_hits = self._gather_ranking(query_vec, provider_filters or None, top_k)
-
-        all_rankings: list[list] = [initial_hits]
-        max_nodes = 1
+        query_vec = (await self._embedder.embed([query]))[0]
 
         if hop_budget == 2:
-            wikilinks: set[str] = set()
-            for hit in initial_hits:
-                for wl in hit.payload.get("wikilinks", []):
-                    wikilinks.add(wl)
+            return await self._search_hop2(
+                query, query_vec, top_k, threshold,
+                provider_filters or None, include_deprecated,
+            )
+        return await self._search_hop1(
+            query, query_vec, top_k, threshold,
+            provider_filters or None, include_deprecated,
+        )
 
-            for wl_target in wikilinks:
-                wl_vec = (await self._embedder.embed_query([wl_target]))[0]
-                wl_results = self._provider.query_vector(
-                    self._store_id, wl_vec, _recall_batch_size(top_k),
-                    provider_filters or None,
+    def _iter_ranking_hits(self, query_vec, provider_filters, batch):
+        """Yield provider hits in score order, paging in bounded batches and
+        deduping by id, up to a HARD total of ``_RECALL_CANDIDATE_CAP`` rows.
+
+        LAZY: the caller stops the generator the instant it has ``top_k`` valid
+        facts, so a healthy store (few/no dangling hits) is NOT drained on every
+        recall — only the dangling-backfill case pages deeper. The per-request
+        limit is clamped to the remaining budget, so total rows scanned never
+        exceeds the cap (not cap + batch).
+        """
+        seen: set[str] = set()
+        offset = 0
+        scanned = 0
+        while scanned < _RECALL_CANDIDATE_CAP:
+            limit = min(batch, _RECALL_CANDIDATE_CAP - scanned)
+            results = self._provider.query_vector(
+                self._store_id, query_vec, limit, provider_filters, offset=offset,
+            )
+            page = list(results.hits)
+            if not page:
+                return
+            fresh = [h for h in page if h.id not in seen]
+            if not fresh:
+                return  # provider ignored offset / only repeats — stop
+            for h in fresh:
+                seen.add(h.id)
+                scanned += 1
+                yield h
+                if scanned >= _RECALL_CANDIDATE_CAP:
+                    return
+            if len(page) < limit:
+                return  # provider exhausted
+            offset += len(page)
+
+    async def _classify_hit(self, hit, rrf_score: float, include_deprecated: bool):
+        """Validate one ranked hit against the FactStore and apply the read-time
+        credibility decay. Returns ``(chunk|None, kind)`` with kind in
+        ``{"valid","dangling","deprecated"}``. ``dangling`` = the fact was forgotten
+        but a vector lingers (fail open, backfill from the next hit)."""
+        if (
+            hit.payload.get("projection_task") == "project_verbatim"
+            and not self._t0_recall_enabled
+        ):
+            # Writer and read pins are intentionally independent.  Backfill past
+            # gated T0 hits so their presence cannot suppress legacy L1 facts.
+            return None, "t0_disabled"
+        source_fact_id: str | None = hit.payload.get("source_fact_id")
+        boosted = rrf_score
+        if source_fact_id:
+            try:
+                fact = await self._fact_store.get(source_fact_id)
+            except L1ValidationFailed:
+                log.warning(
+                    "recall: skipping hit %s — fact %s not in FactStore "
+                    "(forgotten or dangling vector)",
+                    hit.id, source_fact_id,
                 )
-                all_rankings.append(list(wl_results.hits))
+                return None, "dangling"
+            # Decay is applied at READ time (Hard Rule 15) — never written back.
+            cred_mean = credibility_mean(fact.confidence, datetime.now(timezone.utc))
+            boosted = rrf_score * max(0.05, cred_mean)
+            if not include_deprecated and fact.confidence.rank == "deprecated":
+                return None, "deprecated"
+        return (
+            RetrievedChunk(
+                content=hit.payload.get("text", ""),
+                score=rrf_score,
+                source_fact_id=source_fact_id,
+                source_path=hit.payload.get("source_path"),
+                heading_path=hit.payload.get("heading_path", []),
+                boosted_score=boosted,
+            ),
+            "valid",
+        )
 
-            max_nodes = len(wikilinks) + 1
-
-        # NOTE: Spec §5.5 — federation normalizes via rank, never via raw score.
-        # Thresholds are per-provider semantic guards applied pre-fusion.
-        # See docs/archive/AUDIT_WAVE2_2026-05-12.md Wave 3 seed "RRF Threshold Semantics".
-        filtered_rankings = [
-            [h for h in ranking if h.score >= threshold]
-            for ranking in all_rankings
-        ]
-        fused = rrf_fuse(filtered_rankings, k=60)
-
-        seen_ids: set[str] = set()
+    async def _search_hop1(
+        self, query, query_vec, top_k, threshold, provider_filters, include_deprecated,
+    ) -> list[RetrievedChunk]:
+        """Single-ranking recall with LAZY backfill: page the provider only until
+        ``top_k`` VALID facts are collected (skipping dangling/deprecated), the
+        provider is exhausted, or the safety cap is hit. The RRF score for a single
+        ranking is ``1/(60+rank+1)`` — identical to ``rrf_fuse`` — and a dangling
+        hit still consumes its rank (matches the pre-lazy behaviour)."""
+        batch = _recall_batch_size(top_k)
         result_chunks: list[RetrievedChunk] = []
-        dangling_skipped = 0
-        deprecated_skipped = 0
+        dangling_skipped = deprecated_skipped = 0
+        kept_rank = 0
+        scanned = 0
+        for hit in self._iter_ranking_hits(query_vec, provider_filters, batch):
+            scanned += 1
+            if hit.score < threshold:
+                continue  # pre-fusion threshold: no rank, not collected
+            rrf_score = 1.0 / (60 + kept_rank + 1)
+            kept_rank += 1
+            chunk, kind = await self._classify_hit(hit, rrf_score, include_deprecated)
+            if kind == "dangling":
+                dangling_skipped += 1
+                continue
+            if kind == "deprecated":
+                deprecated_skipped += 1
+                continue
+            if chunk is None:
+                continue
+            result_chunks.append(chunk)
+            if len(result_chunks) >= top_k:
+                break
 
+        result_chunks.sort(key=lambda r: r.boosted_score or 0, reverse=True)
+        result_chunks = result_chunks[:top_k]
+        self._log_recall(
+            query, top_k, 1, 1, scanned,
+            dangling_skipped, deprecated_skipped, len(result_chunks),
+        )
+        return result_chunks
+
+    async def _search_hop2(
+        self, query, query_vec, top_k, threshold, provider_filters, include_deprecated,
+    ) -> list[RetrievedChunk]:
+        """Two-hop (wikilink-expanded) recall: RRF-fuse the root ranking with a
+        bounded follow-up query per wikilink, then validate/backfill. Each ranking
+        is one bounded overfetch (not paged to the cap) — the deep dangling-backfill
+        paging is the hop-1 hot path; hop-2 stays bounded."""
+        batch = _recall_batch_size(top_k)
+        initial = list(
+            self._provider.query_vector(
+                self._store_id, query_vec, batch, provider_filters,
+            ).hits
+        )
+        wikilinks: set[str] = set()
+        for hit in initial:
+            for wl in hit.payload.get("wikilinks", []):
+                wikilinks.add(wl)
+        rankings: list[list] = [initial]
+        for wl_target in wikilinks:
+            wl_vec = (await self._embedder.embed([wl_target]))[0]
+            rankings.append(
+                list(
+                    self._provider.query_vector(
+                        self._store_id, wl_vec, batch, provider_filters,
+                    ).hits
+                )
+            )
+
+        filtered = [[h for h in r if h.score >= threshold] for r in rankings]
+        fused = rrf_fuse(filtered, k=60)
+
+        result_chunks: list[RetrievedChunk] = []
+        dangling_skipped = deprecated_skipped = 0
+        seen_ids: set[str] = set()
         for hit in fused:
-            # R4: stop scanning once we have top_k valid results — the fused pool is
-            # score-ordered, so any further hits rank below what we already have.
             if len(result_chunks) >= top_k:
                 break
             if hit.id in seen_ids:
                 continue
             seen_ids.add(hit.id)
-
-            source_fact_id: str | None = hit.payload.get("source_fact_id")
-            raw_score = hit.score
-
-            boosted = raw_score
-            if source_fact_id:
-                # Fail open on a dangling vector: if the fact was forgotten
-                # (DELETE /api/memory/facts) but a vector point lingers, skip the
-                # hit and BACKFILL from the next-ranked hit instead of truncating
-                # recall or letting L1ValidationFailed abort the whole turn.
-                try:
-                    fact = await self._fact_store.get(source_fact_id)
-                except L1ValidationFailed:
-                    dangling_skipped += 1
-                    log.warning(
-                        "recall: skipping hit %s — fact %s not in FactStore "
-                        "(forgotten or dangling vector)",
-                        hit.id, source_fact_id,
-                    )
-                    continue
-                # NOTE: Decay is applied at READ time per Hard Rule 15.
-                # Confidence in storage reflects evidence, not the passage of
-                # time — the decay transform is computed here, never written back.
-                cred_mean = credibility_mean(fact.confidence, datetime.now(timezone.utc))
-                boosted = raw_score * max(0.05, cred_mean)
-
-                if not include_deprecated and fact.confidence.rank == "deprecated":
-                    deprecated_skipped += 1
-                    continue
-
-            result_chunks.append(
-                RetrievedChunk(
-                    content=hit.payload.get("text", ""),
-                    score=raw_score,
-                    source_fact_id=source_fact_id,
-                    source_path=hit.payload.get("source_path"),
-                    heading_path=hit.payload.get("heading_path", []),
-                    boosted_score=boosted,
-                )
-            )
+            chunk, kind = await self._classify_hit(hit, hit.score, include_deprecated)
+            if kind == "dangling":
+                dangling_skipped += 1
+                continue
+            if kind == "deprecated":
+                deprecated_skipped += 1
+                continue
+            if chunk is None:
+                continue
+            result_chunks.append(chunk)
 
         result_chunks.sort(key=lambda r: r.boosted_score or 0, reverse=True)
         result_chunks = result_chunks[:top_k]
+        self._log_recall(
+            query, top_k, 2, len(wikilinks) + 1, len(fused),
+            dangling_skipped, deprecated_skipped, len(result_chunks),
+        )
+        return result_chunks
 
+    def _log_recall(self, query, top_k, hop_budget, max_nodes, candidate_count,
+                    dangling_skipped, deprecated_skipped, result_count) -> None:
         # Metric (counts only — never fact contents): a high dangling rate flags a
         # forget/index-drift problem worth cleaning up.
         if dangling_skipped or deprecated_skipped:
             log.info(
-                "recall: backfilled past %d dangling + %d deprecated hit(s) "
-                "over %d candidates for k=%d",
-                dangling_skipped, deprecated_skipped, len(fused), top_k,
+                "recall: backfilled past %d dangling + %d deprecated hit(s) over "
+                "%d candidates for k=%d",
+                dangling_skipped, deprecated_skipped, candidate_count, top_k,
             )
-
         self._query_log.append({
             "ts": datetime.now(timezone.utc).isoformat(),
             "query": query,
             "k": top_k,
             "hop_budget": hop_budget,
             "max_nodes": max_nodes,
-            "rank_count": len(fused),
-            "candidate_count": len(fused),
+            "rank_count": candidate_count,
+            "candidate_count": candidate_count,
             "dangling_skipped": dangling_skipped,
             "deprecated_skipped": deprecated_skipped,
-            "result_count": len(result_chunks),
+            "result_count": result_count,
         })
-
-        return result_chunks
-
-    def _gather_ranking(
-        self,
-        query_vec: list[float],
-        provider_filters: dict | None,
-        top_k: int,
-    ) -> list:
-        """Fetch a bounded, score-ordered candidate pool for one ranking, paging
-        past the first ``top_k`` so the dangling-skip loop can backfill.
-
-        Stops when: the candidate cap (``_RECALL_CANDIDATE_CAP``) is reached, the
-        provider returns a short page (fewer rows than requested ⇒ exhausted), or a
-        page contributes no new hit ids (provider ignored ``offset`` / repeated).
-        Score order across pages is preserved by appending in provider order.
-        """
-        batch = _recall_batch_size(top_k)
-        hits: list = []
-        seen: set[str] = set()
-        offset = 0
-        while len(hits) < _RECALL_CANDIDATE_CAP:
-            results = self._provider.query_vector(
-                self._store_id, query_vec, batch, provider_filters, offset=offset,
-            )
-            page = list(results.hits)
-            fresh = [h for h in page if h.id not in seen]
-            for h in fresh:
-                seen.add(h.id)
-            hits.extend(fresh)
-            if len(page) < batch or not fresh:
-                break
-            offset += len(page)
-        return hits[:_RECALL_CANDIDATE_CAP]

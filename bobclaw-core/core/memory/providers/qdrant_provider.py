@@ -5,18 +5,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from core.memory.acl import ACLRegistry
-from core.memory.exceptions import RetrievalProviderError
-from core.memory.models import (
-    ChunkRecord,
-    FilterExpr,
-    HealthStatus,
-    Hit,
-    IndexReceipt,
-    RankedResults,
-)
-from core.memory.write_fence import is_collection_in_family
-
 # Qdrant point IDs must be a uint64 or a UUID. Chunk ids are human-readable
 # strings ("chunk:<fact_id>:<hash>"), so map them to a deterministic UUID5 —
 # the same input always yields the same point id, so upsert and delete address
@@ -31,6 +19,19 @@ def _to_point_id(raw: Any) -> Any:
         return str(uuid.UUID(str(raw)))  # already UUID-shaped — keep as-is
     except (ValueError, AttributeError, TypeError):
         return str(uuid.uuid5(_POINT_ID_NAMESPACE, str(raw)))
+
+from core.memory.acl import ACLRegistry
+from core.memory.exceptions import RetrievalProviderError
+from core.memory.models import (
+    ChunkRecord,
+    FilterExpr,
+    HealthStatus,
+    Hit,
+    IndexReceipt,
+    Query,
+    RankedResults,
+)
+
 
 class QdrantRetrievalProvider:
     provider_id: str
@@ -53,8 +54,8 @@ class QdrantRetrievalProvider:
         self._acl = acl_registry
         self.capability_classes = {"text_dense"}
         # MS2-C4 single-writer write fence (optional; default None ⇒ byte-identical legacy behavior).
-        # When set, every upsert/delete target must be a strict member of the held family BEFORE the
-        # mutating client call. Registry ACLs remain reserved for external corpora via lks_adapter.
+        # When set, every upsert/delete target collection is asserted writable (resolved meta.acl.writer ==
+        # owner) BEFORE the mutating client call — a non-owned/unregistered/garbled target fails closed.
         self._write_fence = write_fence
 
         if client is not None:
@@ -89,8 +90,8 @@ class QdrantRetrievalProvider:
             by_dim.setdefault(len(item.vector), []).append(item)
 
         # MS2-C4 write fence: assert EVERY target collection is writable BEFORE any create/upsert, so a
-        # multi-dim call can never PARTIALLY write (fail-closed atomicity — a non-family or unheld target
-        # aborts the whole index with no mutation). None ⇒ legacy path is byte-identical below.
+        # multi-dim call can never PARTIALLY write (fail-closed atomicity — one non-owned dim aborts the
+        # whole index with no mutation). None ⇒ legacy path is byte-identical (the loop below is unchanged).
         if self._write_fence is not None:
             for dim in by_dim:
                 self._write_fence.assert_writable(self._collection_name(dim))
@@ -124,6 +125,20 @@ class QdrantRetrievalProvider:
             store_id=store_id,
             item_count=total_count,
             ts=_now(),
+        )
+
+    def query(
+        self,
+        store_id: str,
+        q: Query,
+        k: int,
+        filters: FilterExpr | None,
+    ) -> RankedResults:
+        raise RetrievalProviderError(
+            self.provider_id,
+            "query(Query) requires text→vector embedding at the provider edge, "
+            "deferred to Phase 2. Use query_vector(store_id, vector, k, filters) "
+            "with a pre-embedded vector instead.",
         )
 
     def query_vector(
@@ -208,11 +223,11 @@ class QdrantRetrievalProvider:
 
         targets = [
             ci.name for ci in collections
-            if is_collection_in_family(ci.name, self.collection_prefix)
+            if ci.name.startswith(self.collection_prefix + "_")
         ]
         # MS2-C4 write fence: assert EVERY matching collection is writable BEFORE any delete, so a refused
-        # collection aborts the whole delete with no PARTIAL mutation. Strict selection deliberately
-        # narrows the old startswith behavior even when no fence is supplied; lookalikes are never targets.
+        # collection aborts the whole delete with no PARTIAL mutation (fail-closed atomicity). None ⇒ the
+        # path below is byte-identical to the prior per-collection loop (same targets, same order).
         if self._write_fence is not None:
             for coll_name in targets:
                 self._write_fence.assert_writable(coll_name)
@@ -265,7 +280,7 @@ class QdrantRetrievalProvider:
 
         for coll_info in collections:
             coll_name = coll_info.name
-            if not is_collection_in_family(coll_name, self.collection_prefix):
+            if not coll_name.startswith(self.collection_prefix + "_"):
                 continue
             next_offset = None
             while True:

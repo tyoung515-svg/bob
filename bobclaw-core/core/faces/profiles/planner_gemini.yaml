@@ -25,12 +25,14 @@ system_prompt: |
   the final plan.
 preferred_backend: agy_code
 escalation_backend: gemini_pro
-# agy posture: subscription Gemini 3.1 Pro, project-aware via an INLINED CLAUDE.md
-# briefing (``brief: true``) but NO tool/shell/--add-dir access — a safe no-tool
-# planning turn (the strict tool-deny settings schema is an A2 follow-up; until
-# then ``brief`` keeps the planner project-aware without risking a permission-prompt
-# hang). The agy CLI runs under the subscription login (no metered API key).
+# agy posture: subscription Gemini 3.1 Pro, NO tool/shell/--add-dir access — a safe
+# no-tool planning turn (the strict tool-deny settings schema is an A2 follow-up).
+# Trimmed 2026-08-23 with user approval: brief now false — the planner loses the
+# inlined CLAUDE.md briefing that kept it project-aware without risking a
+# permission-prompt hang. Tradeoff accepted; pass needed context explicitly in the
+# task packet instead. The agy CLI runs under the subscription login (no metered API
+# key).
 agy_posture:
-  model: gemini-3.1-pro
-  brief: true
+  model: Gemini 3.1 Pro (High)
+  brief: false
 ui_theme: blue

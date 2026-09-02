@@ -1,0 +1,20 @@
+{
+  "facts": [
+    {
+      "fact_id": "smoke-travis-role",
+      "body": { "text": "Travis Young is the CIO (Chief Information Officer) of Systematic Power Solutions, abbreviated SPS." }
+    },
+    {
+      "fact_id": "smoke-sps-brands",
+      "body": { "text": "Systematic Power Solutions (SPS) owns these brands: XS Power, Sundown Audio, Ampere Audio, Lithium Pros, and Turbostart." }
+    },
+    {
+      "fact_id": "smoke-bobclaw-arch",
+      "body": { "text": "BoBClaw is a four-service multi-agent orchestration platform made of bobclaw-core (LangGraph), bobclaw-gateway (auth and chat), bobclaw-claude-pipeline (Claude build sessions), and a Kotlin Multiplatform app." }
+    },
+    {
+      "fact_id": "smoke-bobclaw-embedder",
+      "body": { "text": "The BoBClaw memory module embeds text with a llama.cpp granite-311m server running on port 8081, not LM Studio." }
+    }
+  ]
+}

@@ -16,8 +16,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-from core.config import MAX_FANOUT_WIDTH_BY_BACKEND
-from core.memory import Fact
+from core.memory import Fact, RetrievedChunk
 from core.memory.exceptions import EmbedderUnavailable, RetrievalProviderError
 from core.nodes.approval import approval_node
 from core.nodes.build_plan import plan_contracts_node
@@ -148,14 +147,30 @@ class AgentState(TypedDict):
     codex_posture: Optional[dict]
     # codex thread_id to resume for this conversation, when known.
     codex_resume_session_id: Optional[str]
+    # Pi (pi_code) posture. Like codex_posture, route_node does NOT thread it — the
+    # fan-out threads the worker face's provider/model via the Send sub_state.
+    pi_posture: Optional[dict]
     # Workspace directory for workspace-bound workers (e.g. OpenCode)
     workspace_dir: Optional[str]
     # ── Wave-chunking (handoff 007 Phase 2) ──
     # Current wave index for per-backend width cap re-entry.
     fanout_wave: Optional[int]
+    # join_node's authoritative "run another wave?" signal (source of truth for the
+    # wave loop). True on an intermediate wave (a further wave remains), False on the
+    # final wave. _route_after_join OBEYS this — it must not re-derive from fanout_wave
+    # (join has already incremented it, which double-advances the derivation and drops
+    # the last wave). Fresh each join; absent ⇒ no wave loop (single-wave / build).
+    fanout_continue: Optional[bool]
+    # FU1 D2 pause-with-teeth: set by route_node (via enforcement.paused_flight_refusal)
+    # when the turn's NAMED flight is auto-paused over budget. _route_after_recall routes
+    # to END so no work runs; the surfaced refusal message stands. Absent ⇒ byte-identical.
+    flight_refused: Optional[bool]
     # ── Memory integration (Sprint INT-1) ──
     # L1 facts retrieved by recall_node on each agent turn.
     recalled_facts: Optional[list[Fact]]
+    # W3 T0 verbatim chunks.  Populated only when the independent read-side pin
+    # is enabled; absent/off preserves the legacy L1 splice byte-for-byte.
+    recalled_chunks: Optional[list[RetrievedChunk]]
     # ── Projects (server-side workspaces) ──
     # Project-level instructions for the conversation's project, resolved by the
     # gateway and passed in the /api/chat payload. execute_node splices it into
@@ -291,6 +306,18 @@ class AgentState(TypedDict):
     # The tier research_plan picked ("single"|"fanout"|"hierarchical"); read by
     # _route_after_research_plan to pick the landed arm. None on non-research turns.
     research_tier: Optional[str]
+    # ── Flight substrate (Layer 0) — flight-scoped live telemetry identity ─────
+    # A named, budgeted task-stream tag threaded through the orchestration so every
+    # emitted event + tool_trace + spend datum rolls up under exactly ONE flight.
+    # Two-tier (Travis 2026-07-04): an explicit NAMED flight (a supervisor-created
+    # "block of work") OR an AMBIENT fallback (``chat:<conversation_id>`` for the live
+    # face talking to the user; the shared ``ambient`` flight for stray/mechanical
+    # work). Absent/None ⇒ byte-identical delta (NO key) — the ambient assignment
+    # happens at the entrypoint seams (chat/supervisor), never forced inside the
+    # graph, and the emit layer / spend meter resolve a None flight to ``ambient`` at
+    # READ time (``core.telemetry.flight.resolve_flight_id``). Threaded route →
+    # dispatch → worker (via Send) → join → council.
+    flight_id: Optional[str]
 
 
 # ─── Conditional routing helper ───────────────────────────────────────────────
@@ -311,6 +338,11 @@ def _route_after_recall(state: AgentState) -> str:
     returns "dispatch" — identical to the prior unconditional recall→dispatch
     edge — so the ~979 existing core tests stay green.
     """
+    # FU1 D2 pause-with-teeth: route_node refused this turn (its NAMED flight is paused
+    # over budget). END immediately — the surfaced refusal message is the whole turn.
+    # Absent (flag off / ambient / not paused) ⇒ byte-identical.
+    if state.get("flight_refused"):
+        return END
     # Verification spine §2.6 tier-1 (MS-2): its OWN arm, gated on the explicit
     # post_condition trigger so non-postcondition turns are byte-identical. Taken
     # first; the post-condition critic is a leaf node (→ END).
@@ -426,18 +458,20 @@ def _route_after_ground(state: AgentState) -> str:
 
 
 def _route_after_join(state: AgentState) -> str:
-    """After join: route to dispatch if more waves remain, else approval/END."""
+    """After join: route to dispatch if another wave remains, else approval/END.
+
+    OBEYS ``join_node``'s ``fanout_continue`` signal — it must NOT re-derive the
+    "more waves?" decision from ``fanout_wave``. join_node increments fanout_wave
+    when it launches the next wave, so re-deriving here reads the already-advanced
+    index and asks whether the wave *after* next exists — a double-advance that drops
+    the final (emitting) wave. See ``fanout_continue`` in AgentState.
+    """
     # Build pipeline (Feature 2): after the build join (re-wrote the app), run the
     # verify gate. verify → {repair → verify}* → END is the P2 verify/repair loop.
     if state.get("build_contracts") is not None:
         return "verify"
-    fanout_wave = state.get("fanout_wave")
-    if fanout_wave is not None:
-        backend = state.get("backend", "local")
-        cap = MAX_FANOUT_WIDTH_BY_BACKEND.get(backend, 0)
-        subtasks = state.get("subtasks") or []
-        if cap > 0 and (fanout_wave + 1) * cap < len(subtasks):
-            return "dispatch"
+    if state.get("fanout_continue"):
+        return "dispatch"
     if state.get("approval_required") and state.get("approval_response") is None:
         return "approval"
     return END
@@ -481,7 +515,11 @@ async def _recall_node_wrapper(state: AgentState) -> dict:
     # not availability problems — they must still propagate, never fail open.
     try:
         result = await recall_node(
-            patched, mem.retriever, mem.fact_store, enabled=True,
+            patched,
+            mem.retriever,
+            mem.fact_store,
+            enabled=True,
+            include_t0=_cfg.MEMORY_T0_RECALL_ENABLED,
         )
     except (EmbedderUnavailable, RetrievalProviderError) as exc:
         logger.warning(
@@ -564,9 +602,15 @@ def build_graph(checkpointer=None):
     # non-council runs `ground` is simply never reached.
     g.add_node("ground", grounding_node)
 
-    g.add_edge(START, "decompose")
-    g.add_edge("decompose", "route")
-    g.add_edge("route", "recall")
+    # LOCAL-1 residual / A-10: route runs FIRST, then decompose. This makes the
+    # council decision in ONE place (route sets council_spec) so decompose can read
+    # that authoritative signal instead of re-deriving route's triggers (the old
+    # `_is_council_turn` predicate mirror). Safe reorder: route never reads
+    # ``subtasks`` (its only consumers — dispatch/hier/join/research routing — run
+    # downstream of recall). See tasks/2026-07-22-graph-sprint/CONTRACTS.md (G2).
+    g.add_edge(START, "route")
+    g.add_edge("route", "decompose")
+    g.add_edge("decompose", "recall")
     # recall → (council branch | dispatch). When council_spec is absent this is
     # exactly the prior unconditional recall→dispatch edge.
     g.add_conditional_edges(

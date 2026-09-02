@@ -120,6 +120,7 @@ def _route_after_manager_dispatch(state: dict) -> Union[list[Send], str]:
                 "face_id": state.get("face_id", "assistant"),
                 "scope": state.get("scope"),
                 "recalled_facts": state.get("recalled_facts") or [],
+                "recalled_chunks": state.get("recalled_chunks") or [],
                 "messages": [],
             },
         )
@@ -141,6 +142,7 @@ async def mini_manager_node(sub_state: dict) -> dict:
     escalation = sub_state.get("escalation_backend")
     scope = sub_state.get("scope")
     recalled = sub_state.get("recalled_facts") or []
+    recalled_chunks = sub_state.get("recalled_chunks") or []
 
     # Fan the section's subtasks over the TESTED per-worker path (timeout / 429 /
     # critic / best-effort). worker_node is called directly (not as a graph node),
@@ -155,6 +157,7 @@ async def mini_manager_node(sub_state: dict) -> dict:
             "phase": "dispatch",
             "scope": scope,
             "recalled_facts": recalled,
+            "recalled_chunks": recalled_chunks,
         }
         for j, t in enumerate(subtasks)
     ]

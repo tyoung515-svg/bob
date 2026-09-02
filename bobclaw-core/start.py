@@ -26,11 +26,6 @@ from aiohttp import web
 
 from api.server import GRAPH_KEY, POOL_KEY, build_app
 from core.config import config
-# BUILD_SANDBOX* (and other trailing settings) are module-level globals defined
-# BELOW the `config = BoBClawConfig()` instance in config.py, so they are NOT
-# attributes of `config`. Read them via the module — the same access pattern
-# core/nodes/build_verify.py and build_plan.py already use.
-import core.config as _config
 from core.db import init_postgres, init_sqlite
 from core.graph import create_graph
 
@@ -65,33 +60,6 @@ async def _on_startup(app: web.Application) -> None:
     os.environ.setdefault("BOBCLAW_HEALTH_PROBE_REDIS", "1")
     install_live_probe()
 
-    # Build/verify sandbox posture — surfaced at STARTUP (not just per verify-run) so
-    # a deployment that would run LLM-written code un-isolated on the host is loud, not
-    # silent. Never raises: chat is unaffected by the sandbox, so we only warn.
-    from core.build.sandbox import docker_ready
-
-    _sbx = (_config.BUILD_SANDBOX or "docker").strip().lower()
-    if _sbx == "subprocess":
-        logger.warning(
-            "BUILD SANDBOX: BUILD_SANDBOX=subprocess — the build verify gate will run "
-            "LLM-written code UN-ISOLATED on the host. Use ONLY with trusted models."
-        )
-    elif _sbx == "auto" and not docker_ready():
-        logger.warning(
-            "BUILD SANDBOX: BUILD_SANDBOX=auto but Docker/image %r is unavailable — a "
-            "build turn would run LLM-written code UN-ISOLATED on the host. Build the "
-            "image and set BUILD_SANDBOX=docker for real isolation.",
-            _config.BUILD_SANDBOX_IMAGE,
-        )
-    elif _sbx == "docker" and not docker_ready():
-        logger.warning(
-            "BUILD SANDBOX: BUILD_SANDBOX=docker but Docker/image %r is not ready — "
-            "build turns will FAIL CLOSED until Docker is up (chat is unaffected).",
-            _config.BUILD_SANDBOX_IMAGE,
-        )
-    else:
-        logger.info("BUILD SANDBOX: mode=%s (isolated).", _sbx)
-
     if config.MEMORY_ENABLED:
         from core.memory.bootstrap import (
             MemoryBootstrapConfig,
@@ -111,26 +79,7 @@ async def _on_startup(app: web.Application) -> None:
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    """Release memory's family lock and close Postgres on shutdown."""
-    from core.memory.bootstrap import get_memory, reset_memory
-    from core.memory.exceptions import MemoryConfigError
-
-    try:
-        memory = get_memory()
-    except MemoryConfigError:
-        pass
-    else:
-        provider = getattr(getattr(memory, "indexer", None), "_provider", None)
-        close_provider = getattr(provider, "close", None)
-        if callable(close_provider):
-            logger.info("bobclaw-core: closing memory provider")
-            close_provider()
-        fence = getattr(memory, "write_fence", None)
-        if fence is not None:
-            logger.info("bobclaw-core: releasing memory write fence")
-            fence.close()
-    finally:
-        reset_memory()
+    """Close the Postgres pool on shutdown (SQLite is process-lifetime)."""
     pool = app.get(POOL_KEY)
     if pool is not None:
         logger.info("bobclaw-core: closing Postgres pool")

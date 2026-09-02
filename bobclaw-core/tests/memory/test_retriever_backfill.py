@@ -92,10 +92,7 @@ def _slot_resolver() -> MagicMock:
 def _embedder() -> MagicMock:
     emb = MagicMock()
     emb.embedding_dimension = 768
-    # OSS retriever reads through the asymmetric seam (G-3): queries embed via
-    # embed_query, documents via embed_doc.
-    emb.embed_query = AsyncMock(return_value=[[0.1] * 768])
-    emb.embed_doc = AsyncMock(return_value=[[0.1] * 768])
+    emb.embed = AsyncMock(return_value=[[0.1] * 768])
     return emb
 
 
@@ -172,7 +169,8 @@ async def test_backfill_across_pages_via_offset(tmp_path):
 @pytest.mark.asyncio
 async def test_paging_terminates_at_safety_cap(tmp_path):
     """A provider that never runs dry (always a full fresh page) still terminates,
-    bounded by the candidate cap — no unbounded scan."""
+    TIGHTLY bounded by the candidate cap — the per-request limit is clamped to the
+    remaining budget, so total rows scanned never exceeds the cap (not cap+batch)."""
     # Every id unique and every page full, so 'short page' / 'no fresh' never trip.
     all_dangling = [_hit(f"d{i}", 0.9) for i in range(_RECALL_CANDIDATE_CAP + 500)]
     provider = _PagingProvider(all_dangling)
@@ -180,8 +178,23 @@ async def test_paging_terminates_at_safety_cap(tmp_path):
     results = await r.search("q", top_k=5, threshold=0.0)
     assert results == []
     scanned = sum(len(provider._hits[o : o + k]) for o, k in provider.calls)
-    # never scans more than the cap (plus at most one final page overshoot)
-    assert scanned <= _RECALL_CANDIDATE_CAP + _recall_batch_size(5)
+    assert scanned <= _RECALL_CANDIDATE_CAP  # tight bound, no cap+batch overshoot
+
+
+@pytest.mark.asyncio
+async def test_no_overfetch_when_valid_hits_present(tmp_path):
+    """A healthy store (all valid) must NOT be drained: recall stops paging the
+    instant top_k valid facts are collected. Regression guard for the eager-fill
+    over-fetch (top_k=3 previously paged to the 200-cap even with valid top hits)."""
+    hits = [_hit(f"v{i}", 1.0 - i * 0.001) for i in range(_RECALL_CANDIDATE_CAP)]
+    provider = _PagingProvider(hits)
+    r = _retriever(provider, _fact_store({h.payload["source_fact_id"] for h in hits}), tmp_path)
+    results = await r.search("q", top_k=3, threshold=0.0)
+    assert [c.source_fact_id for c in results] == ["v0", "v1", "v2"]
+    # one page fetched, and it stopped early — nowhere near the 200-row candidate pool
+    assert len(provider.calls) == 1
+    rows_fetched = sum(min(k, len(provider._hits) - o) for o, k in provider.calls)
+    assert rows_fetched < 20  # a single batch (13 for top_k=3), not 200
 
 
 @pytest.mark.asyncio

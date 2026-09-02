@@ -1,0 +1,41 @@
+# Fixture: a valid Scout dossier — a new model release (new_cost, note-only EST).
+schema_version: 0
+id: minimax-m2-release-2026-07
+title: "MiniMax M2 released"
+summary: "MiniMax announced M2, a larger MoE with stronger agentic scores."
+category: model_release
+sources_ref: scout/sources_v0.yaml
+claims:
+  - id: c1-release
+    statement: "MiniMax M2 is available on the platform with an OpenAI-compatible API."
+    evidence:
+      - source_id: minimax-news
+        url: "https://www.minimax.io/news/m2"
+        excerpt: "Introducing MiniMax M2: improved agentic and long-context performance."
+        retrieved_at: "2026-07-07T07:40:00+00:00"
+      - source_id: hf-trending
+        url: "https://huggingface.co/MiniMaxAI/MiniMax-M2"
+        excerpt: "MiniMax-M2 trending on the Hugging Face models board."
+    cost_impact:
+      framing: EST
+      direction: new_cost
+      note: "EST — adds a metered route; spend is BYO-your-keys, not a fixed BoB cost."
+    maturity: preview
+    verification:
+      vclass: claim-ratchet
+      status: entailed
+      votes: 1
+      note: "Vendor announcement entailed by the HF model card."
+    tags: [model-release, minimax, agentic]
+  - id: c2-bench
+    statement: "M2 posts a higher agentic-coding benchmark than the prior M1 route."
+    evidence:
+      - source_id: aider-leaderboard
+        url: "https://aider.chat/docs/leaderboards/"
+        excerpt: "M2 appears above M1 on the polyglot coding leaderboard."
+    cost_impact:
+      framing: EST
+      direction: unknown
+      note: "Benchmark gain does not by itself imply a cost change."
+    maturity: preview
+    tags: [benchmark]

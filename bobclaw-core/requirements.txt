@@ -14,12 +14,10 @@ pydantic>=2.0
 pyyaml>=6.0
 croniter>=2,<7    # P5 profile scheduler: cron expr parsing + next/prev fire times
 anthropic>=0.39
-google-generativeai>=0.8
 redis>=5.0
 python-frontmatter>=1,<2
 markdown-it-py>=3,<4
 tiktoken>=0.5,<1
-filelock>=3.12
 
 qdrant-client>=1.12
 

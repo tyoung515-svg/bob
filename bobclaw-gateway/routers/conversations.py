@@ -50,7 +50,7 @@ async def list_conversations(request: web.Request) -> web.Response:
 
     rows = await pool.fetch(
         """
-        SELECT c.id, c.title, c.face_id, c.model_preference, c.backend_preference, c.project_id, c.updated_at,
+        SELECT c.id, c.title, c.face_id, c.model_preference, c.backend_preference, c.profile, c.locale, c.project_id, c.updated_at,
                (
                    SELECT LEFT(m.content, 120)
                    FROM messages m
@@ -123,7 +123,7 @@ async def get_conversation(request: web.Request) -> web.Response:
     user_id = _get_user_id(request)
     row = await pool.fetchrow(
         """
-        SELECT id, title, face_id, model_preference, backend_preference, project_id, updated_at, is_archived, user_id
+        SELECT id, title, face_id, model_preference, backend_preference, profile, locale, project_id, updated_at, is_archived, user_id
         FROM conversations
         WHERE id = $1 AND user_id = $2
         """,
@@ -224,6 +224,51 @@ async def rename_conversation(request: web.Request) -> web.Response:
         conv_id,
         title,
         user_id,
+    )
+    if row is None:
+        raise web.HTTPNotFound()
+    return web.json_response(_record_to_dict(row))
+
+
+_PATCHABLE_FIELDS = ("face_id", "model_preference", "backend_preference", "profile", "locale")
+
+
+@router.patch("/conversations/{conv_id}")
+async def update_conversation(request: web.Request) -> web.Response:
+    conv_id = request.match_info["conv_id"]
+    body = await request.json()
+
+    unknown = sorted(set(body) - set(_PATCHABLE_FIELDS))
+    if unknown:
+        raise web.HTTPBadRequest(
+            text=f'{{"error": "unknown field(s): {", ".join(unknown)}"}}',
+            content_type="application/json",
+        )
+    present = [key for key in _PATCHABLE_FIELDS if key in body]
+    if not present:
+        raise web.HTTPBadRequest(text='{"error": "no updatable fields provided"}', content_type="application/json")
+
+    pool = _get_pool(request)
+    user_id = _get_user_id(request)
+
+    args = [conv_id]
+    set_clauses = []
+    for key in present:
+        # Normalize empty strings to NULL, matching the switch_* handlers'
+        # "empty clears the pin" semantics for the same columns.
+        args.append(body[key] or None)
+        set_clauses.append(f"{key} = ${len(args)}")
+    set_clauses.append("updated_at = NOW()")
+    args.append(user_id)
+
+    row = await pool.fetchrow(
+        f"""
+        UPDATE conversations
+        SET {", ".join(set_clauses)}
+        WHERE id = $1 AND user_id = ${len(args)} AND is_archived = FALSE
+        RETURNING id, user_id, title, face_id, model_preference, backend_preference, profile, locale, project_id, updated_at, is_archived
+        """,
+        *args,
     )
     if row is None:
         raise web.HTTPNotFound()

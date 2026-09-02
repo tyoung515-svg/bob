@@ -194,28 +194,33 @@ class LocalModelRouter:
         """
         Ranked selection.
 
-        Residency preference (when *resident* is provided and non-empty):
-          1. gemma-27b/26b **AND** resident
-          2. any gemma **AND** resident
-          3. first resident model
-          4. fall through to legacy static order on *models*
+        The preferred name comes from config.PREFERRED_LOCAL_MODEL (env
+        ``PREFERRED_LOCAL_MODEL``, case-insensitive substring match; default
+        unset = no name preference). No model name is baked into core code —
+        the hardwired name ranking was purged 2026-07-24 (embedding-only
+        posture, 2026-07-20 directive; enforced by
+        tests/memory/test_no_model_names_in_core.py).
 
-        Legacy static order (when *resident* is None/empty — the "no
-        residency info" path):
-          1. gemma with 27b or 26b in the name (e.g. gemma-4-27b)
-          2. any gemma model
-          3. first available model
+        Residency preference (when *resident* is provided and non-empty):
+          1. preferred-name match **AND** resident
+          2. first resident model
+          3. fall through to static order on *models*
+
+        Static order (when *resident* is None/empty — the "no residency
+        info" path):
+          1. preferred-name match
+          2. first available model
         """
         if not models:
             return None
 
+        preferred = config.PREFERRED_LOCAL_MODEL.strip().lower()
+
         def _rank(candidates: list[str]) -> Optional[str]:
-            for m in candidates:
-                if "gemma" in m.lower() and re.search(r"2[76]b", m.lower()):
-                    return m
-            for m in candidates:
-                if "gemma" in m.lower():
-                    return m
+            if preferred:
+                for m in candidates:
+                    if preferred in m.lower():
+                        return m
             return candidates[0] if candidates else None
 
         if resident:

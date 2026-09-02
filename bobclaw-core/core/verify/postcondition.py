@@ -56,6 +56,7 @@ FAMILY_BY_BACKEND: dict[str, str] = {
     "kimi_code": "kimi",
     "kimi_cli": "kimi",
     "deepseek_v4_flash": "deepseek",
+    "deepseek_v4": "deepseek",
     "glm_5_2": "glm",
     "minimax": "minimax",
     "codex_code": "codex",

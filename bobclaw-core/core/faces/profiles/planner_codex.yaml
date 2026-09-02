@@ -9,13 +9,13 @@ system_prompt: |
   actionable plan or focused answer. Show trade-offs and rationale, not just a
   recommendation. Never claim to have made edits you have not made.
 preferred_backend: codex_code
-escalation_backend: claude_api
-# Codex planner via the local LiteLLM proxy, briefed with the repo CLAUDE.md
-# (brief: true inlines it on STDIN — no argv overflow). Read-only posture (the
-# concept-planning tier writes nothing). NOTE: the posture (profile + brief) binds
-# once the state-aware execute_node codex block lands (CX-3); until then a
-# planner-codex turn still routes to codex_code via the generic path (base default).
+escalation_backend: claude_code
+# Codex planner = GPT-5.6 generation via the native ChatGPT login (profile `gpt`; NO
+# LiteLLM proxy). Trimmed 2026-08-23: brief now false — full prod CLAUDE.md is no longer
+# shipped to the ChatGPT subscription spawn; pass needed context explicitly in the task
+# packet. Read-only posture (the concept-planning tier writes nothing). The posture
+# binds in execute_node's state-aware codex block (apex = single spawn).
 codex_posture:
-  profile: glm
-  brief: true
+  profile: gpt
+  brief: false
 ui_theme: green

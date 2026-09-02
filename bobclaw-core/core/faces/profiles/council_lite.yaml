@@ -12,7 +12,7 @@ system_prompt: |
   This is the lightweight mock persona. For a real multi-voice deliberation
   (a panel of distinct model seats reconciled by a rotating Synthesizer under
   COUNCIL-OS v1.0), use the `council-max` face instead.
-preferred_backend: local
+preferred_backend: minimax  # my-bob 2026-07-20: was 'local' (no chat server on this box, embedding-only)
 allowed_tools: []
-escalation_backend: minimax
+escalation_backend: deepseek_v4  # my-bob 2026-07-20: was 'minimax' (distinct live fallback)
 ui_theme: gold

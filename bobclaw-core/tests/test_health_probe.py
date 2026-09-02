@@ -389,13 +389,13 @@ def test_install_live_probe_flips_flag_and_wires_resolve():
 
 @pytest.mark.asyncio
 async def test_resolve_walks_past_throttled_primary_via_live_probe(monkeypatch):
-    """cloud-heavy worker chain = [glm_5_2, deepseek_v4_flash, kimi_code]. Pin
-    (throttle) the primary glm_5_2 → resolve, wired to the LIVE probe, must walk to
-    the first healthy hop. End-to-end teams.resolve ↔ health_probe."""
+    """cloud-heavy worker chain = [deepseek_v4_flash, deepseek_v4, kimi_code] (GLM pulled —
+    single-lane-only). Pin (throttle) the primary deepseek_v4_flash → resolve, wired to the
+    LIVE probe, must walk to the first healthy hop. End-to-end teams.resolve ↔ health_probe."""
     import core.nodes.execute as ex
 
     async def pin(b):
-        return "x" if b == "glm_5_2" else None     # only glm_5_2 throttled
+        return "x" if b == "deepseek_v4_flash" else None   # only the primary throttled
 
     monkeypatch.setattr(ex, "_check_escalation_pin", pin)
     monkeypatch.setattr(hp, "_client_health", lambda b: _async(True))  # all reachable
@@ -403,7 +403,7 @@ async def test_resolve_walks_past_throttled_primary_via_live_probe(monkeypatch):
 
     face = _face(preferred_backend="local", role="worker")
     teams.set_active_team("cloud-heavy")
-    assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"
+    assert await teams.resolve("worker", face=face) == "deepseek_v4"
 
 
 @pytest.mark.asyncio
@@ -417,7 +417,7 @@ async def test_resolve_returns_primary_when_whole_chain_unhealthy_via_live_probe
     face = _face(preferred_backend="local", role="worker")
     teams.set_active_team("cloud-heavy")
     # whole chain down ⇒ primary (execute_node's runtime fallback then handles it).
-    assert await teams.resolve("worker", face=face) == "glm_5_2"
+    assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"
 
 
 @pytest.mark.asyncio

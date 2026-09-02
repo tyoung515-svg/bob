@@ -11,14 +11,14 @@ system_prompt: |
   you; do not expand it.
 
   Return only the work product the subtask requests.
-# Codex sits ABOVE opencode — opencode_serve is the fallback when codex_code is
-# unavailable (e.g. the LiteLLM proxy is down; the JOAT health-walk does this).
+# Codex sits ABOVE opencode — opencode_serve (Copilot GPT) is the fallback when
+# codex_code is unavailable (the JOAT health-walk does this).
 preferred_backend: codex_code
 escalation_backend: opencode_serve
-# codex_code routes through the local LiteLLM proxy. The fan-out threads only the
-# model (as model_override): a strong coding model for bulk work — swap to a
-# cheaper or alternate provider model via this field. Output is consumed as text
-# and merged by the fan-out join.
+# GPT worker = gpt-5.6-terra via the native ChatGPT login. Threaded as a GPT MODEL
+# (not a profile) so the fan-out stateless path resolves it natively
+# (`-p gpt -m gpt-5.6-terra`), identical to the single-spawn path. Swap this id to
+# move the worker tier; no confirmed gpt-5.6-mini model is available.
 codex_posture:
-  model: glm-5.2
+  model: gpt-5.6-terra
 ui_theme: green

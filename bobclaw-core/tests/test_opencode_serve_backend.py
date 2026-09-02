@@ -67,10 +67,11 @@ async def test_health_check_returns_false_on_exception():
 
 @pytest.mark.asyncio
 async def test_create_session_posts_and_returns_session_id():
+    # opencode 1.17: POST /session (empty body) → {"id": ...}
     client = _make_client()
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.json = AsyncMock(return_value={"session_id": "sess-42"})
+    mock_resp.json = AsyncMock(return_value={"id": "sess-42"})
     mock_cm = AsyncMock()
     mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_cm.__aexit__ = AsyncMock(return_value=False)
@@ -87,17 +88,24 @@ async def test_create_session_posts_and_returns_session_id():
 
     assert sid == "sess-42"
     assert captured["url"].endswith("/session")
-    assert captured["json"]["workspace_dir"] == "/tmp/ws"
+    assert captured["json"] == {}  # 1.17: workspace is the instance cwd, not a body field
 
 
 # ─── prompt ───────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_prompt_posts_message_and_returns_text():
+async def test_prompt_posts_message_pins_model_and_returns_text(monkeypatch):
+    # opencode 1.17: POST parts[], read parts[]. The seat model is PINNED per request.
+    monkeypatch.setattr(
+        "core.backends.opencode_serve.config.OPENCODE_SEAT_MODEL",
+        "github-copilot/gpt-5.3-codex",
+    )
     client = _make_client()
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.json = AsyncMock(return_value={"text": "hello back"})
+    mock_resp.json = AsyncMock(return_value={
+        "parts": [{"type": "reasoning", "text": "hmm"}, {"type": "text", "text": "hello back"}]
+    })
     mock_cm = AsyncMock()
     mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_cm.__aexit__ = AsyncMock(return_value=False)
@@ -112,9 +120,33 @@ async def test_prompt_posts_message_and_returns_text():
     with patch("aiohttp.ClientSession.post", side_effect=fake_post):
         text = await client.prompt("sess-42", "hello")
 
-    assert text == "hello back"
+    assert text == "hello back"  # reasoning part dropped, text part kept
     assert captured["url"].endswith("/session/sess-42/message")
-    assert captured["json"]["text"] == "hello"
+    assert captured["json"]["parts"][0] == {"type": "text", "text": "hello"}
+    # model pinned so the seat can NEVER silently serve the instance-default local model
+    assert captured["json"]["model"] == {"providerID": "github-copilot", "modelID": "gpt-5.3-codex"}
+
+
+@pytest.mark.asyncio
+async def test_prompt_omits_model_when_seat_unset(monkeypatch):
+    monkeypatch.setattr("core.backends.opencode_serve.config.OPENCODE_SEAT_MODEL", "")
+    client = _make_client()
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = AsyncMock(return_value={"parts": [{"type": "text", "text": "x"}]})
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+    captured = {}
+
+    def fake_post(url, *, json, headers=None):
+        captured["json"] = json
+        return mock_cm
+
+    with patch("aiohttp.ClientSession.post", side_effect=fake_post):
+        await client.prompt("s", "hi")
+    assert "model" not in captured["json"]  # empty seat ⇒ no pin (legacy instance-default)
 
 
 # ─── chat adapter ─────────────────────────────────────────────────────────────
@@ -129,9 +161,9 @@ async def test_chat_creates_prompts_deletes_session():
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         if "/session/" in url and "/message" in url:
-            mock_resp.json = AsyncMock(return_value={"text": "done"})
+            mock_resp.json = AsyncMock(return_value={"parts": [{"type": "text", "text": "done"}]})
         else:
-            mock_resp.json = AsyncMock(return_value={"session_id": "sess-99"})
+            mock_resp.json = AsyncMock(return_value={"id": "sess-99"})
         mock_cm = AsyncMock()
         mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
@@ -167,7 +199,7 @@ async def test_chat_deletes_session_even_on_error():
     def fake_post(url, *, json, headers=None):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = AsyncMock(return_value={"session_id": "sess-1"})
+        mock_resp.json = AsyncMock(return_value={"id": "sess-1"})
         mock_cm = AsyncMock()
         mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_cm.__aexit__ = AsyncMock(return_value=False)

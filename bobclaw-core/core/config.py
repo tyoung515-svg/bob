@@ -5,21 +5,12 @@ Loads from secure .secrets path with fallback to local .env
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Load env: check .secrets first, then local
 _SECURE_ENV = Path(__file__).parent.parent.parent / ".secrets" / "bobclaw.env"
 _LOCAL_ENV = Path(__file__).parent.parent / ".env"
-
-# Base directory for per-conversation scratch dirs and build workspaces. Defaults
-# to an OS-temp subdirectory so a fresh checkout runs with no configuration on any
-# platform. Override any individual *_SCRATCH_ROOT / BUILD_WORKSPACE_ROOT below to
-# point them elsewhere; each MUST stay OUTSIDE the repo tree (generated code and
-# subprocess workers run there, and repo-scoped write denies would otherwise block
-# scratch writes).
-_SCRATCH_BASE = os.path.join(tempfile.gettempdir(), "bobclaw")
 
 # override=False: the real process environment (service launchers, and pytest's
 # conftest os.environ.setdefault) wins over the .secrets file. This keeps .secrets
@@ -31,13 +22,28 @@ else:
     load_dotenv(_LOCAL_ENV, override=False)
 
 
+def _default_cli_scratch_root(name: str) -> str:
+    """Platform-native default scratch root for a CLI backend's spawn dirs.
+
+    Windows keeps the original ``C:/dev/scratch/<name>`` layout (the paths every
+    existing Windows deployment was seeded with); POSIX gets a per-user
+    ``~/.bobclaw/scratch/<name>`` — a bare ``C:/...`` default on Linux resolves
+    as a RELATIVE path and silently sprays ``C:/`` dirs under whatever cwd the
+    service started from. Created on demand by the clients, not here.
+    """
+    if os.name == "nt":
+        return f"C:/dev/scratch/{name}"
+    return os.path.join(os.path.expanduser("~"), ".bobclaw", "scratch", name)
+
+
 class BoBClawConfig:
     """Core service configuration."""
 
     # ── Server ────────────────────────────────────────────
     PORT: int = int(os.getenv("BOBCLAW_CORE_PORT", "7825"))
-    # Loopback by default: core has no auth of its own — it trusts a gateway HMAC
-    # vouch — so it must never listen on a routable interface. See SECURITY.md.
+    # Loopback-only by default (R1 network containment). Only the authenticated
+    # gateway is ever intentionally exposed, behind the TLS/SSH boundary in
+    # docs/SECURITY.md. Override with BOBCLAW_CORE_HOST=0.0.0.0 to bind all interfaces.
     HOST: str = os.getenv("BOBCLAW_CORE_HOST", "127.0.0.1")
 
     # ── Database ──────────────────────────────────────────
@@ -48,25 +54,16 @@ class BoBClawConfig:
     # ── Local Model Backends ──────────────────────────────
     OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
     LMSTUDIO_URL: str = os.getenv("LMSTUDIO_URL", "http://localhost:1234")
-    PREFERRED_LOCAL_MODEL: str = os.getenv("PREFERRED_LOCAL_MODEL", "gemma-4-27b")
+    # No default name — set per environment; core code carries no model names.
+    PREFERRED_LOCAL_MODEL: str = os.getenv("PREFERRED_LOCAL_MODEL", "")
 
     # ── Cloud Backends ────────────────────────────────────
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     ANTHROPIC_BASE_URL: str = os.getenv(
         "ANTHROPIC_BASE_URL", "https://api.anthropic.com"
     )
-    ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+    ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
-
-    # Spawn-identity card: when on, every face gets a front-most system message telling it it's
-    # running inside BoB + who it is (name / role / backend), so a face never says "I have no
-    # idea I'm deployed in bob". Default OFF ⇒ byte-identical (no message added); the shipped
-    # install turns it on via .env. BOB_IDENTITY_TEXT overrides the built-in card (supports the
-    # {face_name} / {role_clause} / {backend} placeholders); empty ⇒ the default card.
-    BOB_IDENTITY_ENABLED: bool = (
-        os.getenv("BOB_IDENTITY_ENABLED", "false").lower() in ("1", "true", "yes")
-    )
-    BOB_IDENTITY_TEXT: str = os.getenv("BOB_IDENTITY_TEXT", "")
 
     # ── Gemini (cloud, REST API) ──────────────────────────
     GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
@@ -84,14 +81,13 @@ class BoBClawConfig:
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    # DS Pro (senior/audit tier) — the `deepseek_v4` backend. Confirmed id 2026-07-04.
+    DEEPSEEK_PRO_MODEL: str = os.getenv("DEEPSEEK_PRO_MODEL", "deepseek-v4-pro")
 
     # ── Z.AI / GLM-5.2 (cloud, OpenAI-compat) ─────────────
     # Base is `.../paas/v4` (NOT `/v1`); the client appends `/chat/completions`.
-    # Z.AI exposes two surfaces on one key: `api/paas/v4` bills pay-as-you-go balance
-    # (returns 429 code 1113 when the balance is empty); `api/coding/paas/v4` is billed
-    # against a GLM Coding Plan subscription. The default targets the coding-plan
-    # endpoint — set ZAI_BASE_URL to the PAYG endpoint if you pay per request, and set
-    # ZAI_MODEL to your provider's current model ID.
+    # ONE key, TWO surfaces: `api/paas/v4` bills PAYG BALANCE (429 code 1113 when empty);
+    # `api/coding/paas/v4` is the GLM Coding Plan subscription. Default = coding (our plan).
     ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "")
     ZAI_BASE_URL: str = os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4")
     ZAI_MODEL: str = os.getenv("ZAI_MODEL", "glm-5.2")
@@ -130,8 +126,8 @@ class BoBClawConfig:
     # Opt-in (NOT in validate()). No API key on this path — the genuine
     # ``claude`` CLI runs under the user's subscription OAuth login.
     # CC_CLI_PATH unset → resolve ``claude`` on PATH.
-    # CC_PROJECT_DIR defaults to the repo root (two levels up from this file:
-    # core/ -> bobclaw-core/ -> repo root).
+    # CC_PROJECT_DIR defaults to the bobclaw repo root (two levels up from
+    # this file: core/ -> bobclaw-core/ -> repo root, where CLAUDE.md lives).
     CC_CLI_PATH: str = os.getenv("CC_CLI_PATH", "")
     CC_PROJECT_DIR: str = os.getenv(
         "CC_PROJECT_DIR",
@@ -144,7 +140,14 @@ class BoBClawConfig:
     # repo. It MUST be outside CC_PROJECT_DIR — when scratch lived under the
     # repo, the Write(<repo>/**) deny blocked scratch writes too (manager probe
     # 2026-06-15). Opt-in; NOT in validate().
-    CC_SCRATCH_ROOT: str = os.getenv("CC_SCRATCH_ROOT", os.path.join(_SCRATCH_BASE, "cc"))
+    CC_SCRATCH_ROOT: str = os.getenv("CC_SCRATCH_ROOT", _default_cli_scratch_root("cc"))
+    # Optional segregated claude CLI config home — the CLAUDE_CONFIG_DIR analog
+    # of AGY_HOME / CODEX_HOME (spawn-context intake 2026-07-18). When set AND
+    # the dir exists, every claude_code spawn runs with CLAUDE_CONFIG_DIR=<dir>
+    # so headless spawns never read the interactive user's ~/.claude state
+    # (settings, skills, MCP registrations, memory). Unset ⇒ inherit the real
+    # config home (subscription auth lives there until a seeded dir carries it).
+    CC_CONFIG_DIR: str = os.getenv("CC_CONFIG_DIR", "")
     # Sidecar JSONL for the session_id -> conversation_id mapping (C3); the LKS
     # transcript adapter reads it. Opt-in; NOT in validate().
     CC_SIDECAR_PATH: str = os.getenv(
@@ -168,12 +171,17 @@ class BoBClawConfig:
     # Opt-in (NOT in validate()). No API key on this path — the genuine ``agy``
     # CLI runs under the user's Google subscription login. The metered REST twin
     # is the SEPARATE ``gemini_pro`` backend (the escalation target).
-    # AGY_CLI_PATH is an ABSOLUTE path: agy is NOT on PATH.
+    # AGY_CLI_PATH: on Windows agy installs to a known AppData path and is NOT
+    # on PATH, so that absolute path is the default. On POSIX there is no fixed
+    # install location — default empty ⇒ the client falls back to resolving
+    # ``agy`` on PATH; set AGY_CLI_PATH explicitly when it lives elsewhere.
     AGY_CLI_PATH: str = os.getenv(
         "AGY_CLI_PATH",
         os.path.join(
             os.path.expanduser("~"), "AppData", "Local", "agy", "bin", "agy.exe"
-        ),
+        )
+        if os.name == "nt"
+        else "",
     )
     AGY_PROJECT_DIR: str = os.getenv(
         "AGY_PROJECT_DIR",
@@ -183,18 +191,20 @@ class BoBClawConfig:
     # Per-conversation scratch dir is AGY_SCRATCH_ROOT/<conversation_id>; it is the
     # subprocess cwd for scratch-write spawns and the only path the strict
     # settings.json allows writes to. MUST be outside AGY_PROJECT_DIR.
-    AGY_SCRATCH_ROOT: str = os.getenv("AGY_SCRATCH_ROOT", os.path.join(_SCRATCH_BASE, "agy"))
+    AGY_SCRATCH_ROOT: str = os.getenv("AGY_SCRATCH_ROOT", _default_cli_scratch_root("agy"))
     # Segregated BoBClaw-owned agy home. When set AND the dir exists, every agy
-    # spawn runs with USERPROFILE=AGY_HOME so agy reads AGY_HOME/.gemini/... — a
+    # spawn runs with USERPROFILE=AGY_HOME *and* HOME=AGY_HOME (Windows CLIs read
+    # USERPROFILE, POSIX CLIs read HOME) so agy reads AGY_HOME/.gemini/... — a
     # strict (no-shell, write-only-scratch) settings.json that NEVER touches the
     # user's real interactive agy. Unset / not-yet-seeded ⇒ inherit the real home
     # (planner-only fallback). Seeded by the A2 auth-carryover step.
-    AGY_HOME: str = os.getenv("AGY_HOME", os.path.join(_SCRATCH_BASE, "agy-home"))
+    AGY_HOME: str = os.getenv("AGY_HOME", _default_cli_scratch_root("agy-home"))
     # Documentation / health only — agy has no --settings flag; the file is global
-    # within whichever home USERPROFILE resolves to.
+    # within whichever home the spawn env resolves to. Default FOLLOWS AGY_HOME
+    # (the old default hardcoded the Windows path even when AGY_HOME was moved).
     AGY_SETTINGS_PATH: str = os.getenv(
         "AGY_SETTINGS_PATH",
-        os.path.join(_SCRATCH_BASE, "agy-home", ".gemini", "antigravity-cli", "settings.json"),
+        os.path.join(AGY_HOME, ".gemini", "antigravity-cli", "settings.json"),
     )
 
     # ── Codex CLI (subprocess `codex exec`, glm/ds/qwen via LiteLLM) ─────
@@ -209,14 +219,14 @@ class BoBClawConfig:
     CODEX_TIMEOUT_SECONDS: int = int(os.getenv("CODEX_TIMEOUT_SECONDS", "300"))
     # Per-conversation scratch cwd = CODEX_SCRATCH_ROOT/<conversation_id>; the
     # codex spawn's working root + where the -o reply file is written. Outside the repo.
-    CODEX_SCRATCH_ROOT: str = os.getenv("CODEX_SCRATCH_ROOT", os.path.join(_SCRATCH_BASE, "codex"))
+    CODEX_SCRATCH_ROOT: str = os.getenv("CODEX_SCRATCH_ROOT", _default_cli_scratch_root("codex"))
     # Optional segregated CODEX_HOME (a BoBClaw-owned ~/.codex with the provider
     # profiles) so spawns don't touch the user's interactive codex config. Unset /
     # missing ⇒ inherit the real CODEX_HOME (uses the user's profiles).
     CODEX_HOME: str = os.getenv("CODEX_HOME", "")
-    # The local LiteLLM proxy codex routes non-OpenAI providers (glm/deepseek/qwen) through.
-    # NOTE: codex_code.health_check is CLI-only and does NOT gate on this proxy (native gpt
-    # needs no proxy); a litellm-routed profile that hits a down proxy escalates at runtime.
+    # The local LiteLLM proxy codex routes through. codex_code.health_check probes
+    # it — codex is dead without it (all providers route through it). The JOAT
+    # health-walk uses this to route codex_code → opencode_serve when :4000 is down.
     # 127.0.0.1, NOT localhost — aiohttp may resolve localhost→::1 and miss the
     # IPv4-bound proxy (the project-wide IPv4 rule; codex's own config can keep
     # localhost since its HTTP client handles both).
@@ -232,6 +242,42 @@ class BoBClawConfig:
         str(Path(__file__).resolve().parent.parent.parent),
     )
     KIMI_CLI_TIMEOUT_SECONDS: int = int(os.getenv("KIMI_CLI_TIMEOUT_SECONDS", "300"))
+    # Clean scratch cwds for kimi spawn-context spawns (kimi had no scratch root
+    # before — it spawned from the repo cwd, the exact charter-leak the
+    # spawn-context seam closes).
+    KIMI_CLI_SCRATCH_ROOT: str = os.getenv(
+        "KIMI_CLI_SCRATCH_ROOT", _default_cli_scratch_root("kimi")
+    )
+
+    # ── Spawn-context injection (per-position CLI spawn framing) ─────
+    # Templates rendered into each CLI spawn's scratch cwd as its context file
+    # (CLAUDE.md / AGENTS.md / GEMINI.md) — position/role framing, task, and the
+    # "do not adopt the host charter" constraints. Data, not code: tune the
+    # framing by editing the templates. See core/spawn_context.py.
+    SPAWN_CONTEXT_DIR: str = os.getenv(
+        "SPAWN_CONTEXT_DIR",
+        str(Path(__file__).resolve().parent.parent / "config" / "spawn_contexts"),
+    )
+
+    # ── Pi CLI (subprocess `pi -p`, agentic harness for GLM/DeepSeek/MiniMax) ──
+    # Opt-in (NOT in validate()). The AGENTIC tool-loop harness for the OPEN
+    # providers, replacing codex's fragile LiteLLM-proxy path. pi speaks each
+    # provider's OpenAI-compat API DIRECTLY; provider config lives in
+    # ~/.pi/agent/models.json (providers zai/deepseek/minimax) and the per-provider
+    # keys are injected into the child env by the adapter from ZAI/DEEPSEEK/MINIMAX
+    # keys above — no API key on this config line. pi ships no .exe (npm gives
+    # pi.cmd/pi.ps1 + dist/cli.js); the adapter spawns `node <cli.js>`. PI_CLI_PATH,
+    # when set, is the absolute path to that cli.js; unset → resolve it next to the
+    # `pi` shim on PATH.
+    PI_CLI_PATH: str = os.getenv("PI_CLI_PATH", "")
+    PI_PROJECT_DIR: str = os.getenv(
+        "PI_PROJECT_DIR",
+        str(Path(__file__).resolve().parent.parent.parent),
+    )
+    PI_TIMEOUT_SECONDS: int = int(os.getenv("PI_TIMEOUT_SECONDS", "300"))
+    # Per-conversation scratch cwd = PI_SCRATCH_ROOT/<conversation_id>; pi's working
+    # root (only relevant when a posture enables tools). Outside the repo.
+    PI_SCRATCH_ROOT: str = os.getenv("PI_SCRATCH_ROOT", "C:/dev/scratch/pi")
 
     # ── Profiles Scheduler (P5) ───────────────────────────
     # A profile carrying a ``schedule.cron`` can run unattended on a cron. Opt-in,
@@ -249,6 +295,37 @@ class BoBClawConfig:
     PROFILE_SCHEDULER_DB: str = os.getenv(
         "PROFILE_SCHEDULER_DB", ".memory/bobclaw_scheduler.db"
     )
+    # Flight substrate (Lane 1a) — the flight supervisor's registry (Flight records:
+    # name/project/budget_usd/priority/status). Its own tiny SQLite file, independent of
+    # MEMORY_ENABLED (mirrors PROFILE_SCHEDULER_DB). Live per-flight spend lives in Redis
+    # (core.telemetry.spend); this holds the durable control-plane metadata.
+    FLIGHT_DB: str = os.getenv("FLIGHT_DB", ".memory/bobclaw_flights.db")
+    # Flight substrate (Lane 1a / FU1) — LIVE hot-path enforcement master switch (default
+    # OFF, same posture as T1_FASTPATH_ENABLED / CC_EDIT_APPLY_ENABLED; NOT in validate()).
+    # When off, the GLM ProviderSlots mutex, the over-budget pause status-gate, and the
+    # budget-enforcer daemon are all inert — dispatch/execute are byte-identical. Flip only
+    # after the live GLM E2E + Travis OK (Gate A). Named flights only; ambient/live-face
+    # work is never gated regardless.
+    FLIGHT_ENFORCE_ENABLED: bool = (
+        os.getenv("FLIGHT_ENFORCE_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    # Budget-enforcer daemon poll cadence (s). Mirrors PROFILE_POLL_SECONDS; enforce_budget
+    # is idempotent so a coarse cadence is fine (pausing an already-paused flight is a no-op).
+    FLIGHT_ENFORCE_POLL_SECONDS: int = int(os.getenv("FLIGHT_ENFORCE_POLL_SECONDS", "60"))
+    # T1 flight-aware routing (Lane 1b) — the cross-project consensus ledger (a profile
+    # promotes to the GLOBAL namespace tier only after crystallizing in >= N distinct
+    # projects). Its own tiny SQLite file; INSERT OR IGNORE exactly-once per (job_shape,
+    # project). See core.mcp_tools.profile_consensus.
+    T1_PROFILE_DB: str = os.getenv("T1_PROFILE_DB", ".memory/bobclaw_t1_profiles.db")
+    # Consensus threshold: distinct projects a job-shape must crystallize in before the
+    # profile is promoted to the global tier (cross-contamination guard).
+    T1_GLOBAL_PROMOTE_PROJECTS: int = int(os.getenv("T1_GLOBAL_PROMOTE_PROJECTS", "2"))
+    # T1 fast-path master switch (default OFF — inert until profiles crystallize + Travis
+    # tunes the class→face taxonomy + ε policy, SPEC §8). When off, route_node is
+    # byte-identical (never consults the profile cache).
+    T1_FASTPATH_ENABLED: bool = os.getenv("T1_FASTPATH_ENABLED", "false").lower() in ("1", "true", "yes")
+    # ε exploration-valve rate (F1): on a servable hit, skip the fast path with this prob.
+    T1_FASTPATH_EPSILON: float = float(os.getenv("T1_FASTPATH_EPSILON", "0.10"))
     # Catch-up window (s): a tick only fires a cron bucket whose scheduled time is
     # within this many seconds of now. Prevents a long-past bucket from firing when
     # the daemon starts fresh / wakes from sleep (no backfill of missed runs). Keep
@@ -265,7 +342,7 @@ class BoBClawConfig:
     # catch-up window can never be re-claimed; pruned each tick to keep the DB small.
     PROFILE_FIRE_RETENTION_DAYS: int = int(os.getenv("PROFILE_FIRE_RETENTION_DAYS", "7"))
     # Surface scheduled-run output: persist each fire to a Postgres conversation so
-    # it's visible in the desktop app (the same conversations table it reads).
+    # it's visible in the web UI / KMM (the same conversations table they read).
     # Best-effort — auto-disabled with a warning if Postgres is unreachable.
     PROFILE_SCHEDULE_PERSIST: bool = (
         os.getenv("PROFILE_SCHEDULE_PERSIST", "true").lower() in ("1", "true", "yes")
@@ -316,11 +393,32 @@ class BoBClawConfig:
     OPENCODE_HEALTH_PROBE_INTERVAL_S: int = int(
         os.getenv("OPENCODE_HEALTH_PROBE_INTERVAL_S", "60")
     )
+    # Model the serve seat is pinned to PER REQUEST, as ``providerID/modelID``.
+    # ``opencode serve`` does NOT pick a model itself — WITHOUT this pin it answers
+    # with the instance's config-default model, which in this environment is a LOCAL
+    # llama.cpp model. That is the "opencode silently serves local" failure: the
+    # client sends the model on every /message so a Copilot GPT seat is guaranteed
+    # cloud GPT, never a silent local fallback. Default = the GitHub Copilot GPT seat
+    # (Travis's target: opencode → Copilot plan). Empty ⇒ send NO model (legacy;
+    # WILL serve the instance default — only set empty deliberately).
+    OPENCODE_SEAT_MODEL: str = os.getenv("OPENCODE_SEAT_MODEL", "github-copilot/gpt-5.3-codex")
 
     # ── Memory Module ────────────────────────────────────
     MEMORY_ENABLED: bool = os.getenv("MEMORY_ENABLED", "false").lower() == "true"
     MEMORY_L1_EXTRACTION_ENABLED: bool = (
         os.getenv("MEMORY_L1_EXTRACTION_ENABLED", "false").lower() == "true"
+    )
+    # W3 T0 writer pin.  The writer core is inert unless explicitly enabled;
+    # within an enabled writer, project_verbatim is the default-ON task and all
+    # LLM/derived tasks remain default-OFF stubs.  Bootstrap additionally
+    # requires the single-writer fence to be armed.
+    MEMORY_WRITER_ENABLED: bool = (
+        os.getenv("MEMORY_WRITER_ENABLED", "false").strip().lower() == "true"
+    )
+    # Read-side pin is independent so replay can be completed and audited before
+    # T0 chunks are admitted to the live "Prior context" splice.
+    MEMORY_T0_RECALL_ENABLED: bool = (
+        os.getenv("MEMORY_T0_RECALL_ENABLED", "false").strip().lower() == "true"
     )
     MEMORY_SQLITE_PATH: str = os.getenv(
         "MEMORY_SQLITE_PATH", ".memory/bobclaw_memory.db"
@@ -426,11 +524,6 @@ class BoBClawConfig:
                 errors.append(
                     "MEMORY_DEFAULT_STORE_ID is required when MEMORY_ENABLED=true"
                 )
-        if not cls.BOBCLAW_SECRET:
-            errors.append(
-                "BOBCLAW_SECRET is required — it keys the gateway->core scope vouch "
-                "(empty => scoped requests fail closed). Run scripts/gen_secrets.py."
-            )
         if errors:
             raise ValueError(f"Config errors: {'; '.join(errors)}")
 
@@ -461,6 +554,35 @@ RESEARCH_RETURN_TOKEN_CEILING: int = int(os.getenv("RESEARCH_RETURN_TOKEN_CEILIN
 RESEARCH_MAX_ROUNDS: int = int(os.getenv("RESEARCH_MAX_ROUNDS", "3"))                          # IterResearch round budget
 RESEARCH_MAX_CLAIMS: int = int(os.getenv("RESEARCH_MAX_CLAIMS", "8"))                          # cap on claims[] in the return
 RESEARCH_MAX_SOURCES: int = int(os.getenv("RESEARCH_MAX_SOURCES", "8"))                        # cap on sources[] in the return
+
+# -- Research lane: federated LKS read (hermes wiring) --
+# Comma-separated federation instance ids the LIVE research lane reads LKS-first
+# (e.g. "hermes"). Default empty ⇒ today's behavior byte-identical (no retriever,
+# no research_subagent Sends). This is the research lane's OWN seam — it must NOT
+# reuse MEMORY_LKS_FIRST/MEMORY_LKS_INSTANCE (the recall seam has REPLACEMENT
+# semantics over BoB's own memory facts; pointing it at a foreign corpus is wrong).
+
+
+def parse_research_lks_instances(raw: str) -> tuple[str, ...]:
+    """Strict parse of a comma-separated instance-id list (the RESEARCH_LKS_INSTANCES env).
+
+    Whitespace around ids is stripped; empty segments (``""``, ``"a,,b"``, ``" , "``) are
+    dropped rather than passed on — ``ResearchRetriever`` rejects empty instance ids at
+    construction, and a config-typo'd empty segment must not kill every research turn.
+    Order is preserved (LKS tiers are consulted in listed order); duplicates are collapsed
+    to the first occurrence so one instance is never read twice per query.
+    """
+    seen: dict[str, None] = {}
+    for part in (raw or "").split(","):
+        name = part.strip()
+        if name and name not in seen:
+            seen[name] = None
+    return tuple(seen)
+
+
+RESEARCH_LKS_INSTANCES: tuple[str, ...] = parse_research_lks_instances(
+    os.getenv("RESEARCH_LKS_INSTANCES", "")
+)
 
 # -- Research convergence: refute-and-vote termination (MS2-R5) --
 # Deterministic surviving-claim-set stability (the debate_converge Idea-ID no-delta pattern, keyed by bid_key)
@@ -506,9 +628,11 @@ MAX_WORKER_USD_BY_BACKEND: dict[str, float] = {
     "kimi_platform":  0.10,
     "kimi_code":      0.05,
     "kimi_cli":       0.05,  # kimi CLI (membership) — flat-rate; $ cap is informational
+    "pi_code":        0.05,  # pi agentic CLI (GLM/DeepSeek/MiniMax) — GLM flat, DS/MiniMax metered; pessimistic
     "opencode_serve": 0.00,
     "local":          0.00,
     "deepseek_v4_flash": 0.005,
+    "deepseek_v4":    0.02,  # DS Pro — senior/audit tier (pricier than flash)
     "glm_5_2":        0.01,
     "minimax":        0.05,
     "gemini_flash": 0.02,
@@ -533,11 +657,17 @@ MAX_FANOUT_WIDTH_BY_BACKEND: dict[str, int] = {
     "claude_api":    20,
     "claude_code":    1,  # planning tier — single heavy spawn, never a fan-out worker
     "agy_code":       8,  # planner is single-spawn but worker-agy IS a fan-out worker
-    "codex_code":     8,  # worker-codex IS a fan-out worker; bounded by the local LiteLLM proxy
+    "codex_code":     8,  # worker-codex IS a fan-out worker (GPT-native via `-p gpt`)
+    "pi_code":        8,  # agentic worker harness. NOTE: GLM-via-pi rides the Z.AI coding
+                          # plan's serial-1 ceiling — a GLM roster must keep pi_code at width 1
+                          # (per-provider cap is a roster concern; DeepSeek/MiniMax can fan wider).
     "opencode_serve": 1,
     "local":          1,
     "deepseek_v4_flash": 20,
-    "glm_5_2":       10,
+    "deepseek_v4":   10,  # DS Pro — senior/audit tier, not fanned as wide as flash
+    "glm_5_2":        1,  # SINGLE-LANE-ONLY ([[glm-single-lane-only]]): Z.AI coding plan caps
+                          # concurrency ~1; combined with the hard cap below, any GLM fan-out
+                          # fails LOUD instead of silently 429-ing. GLM = single serial calls only.
     "minimax":        10,
     "gemini_flash": 20,
     "gemini_pro": 10,
@@ -557,7 +687,12 @@ MAX_FANOUT_WIDTH_GLOBAL: int = 100
 # instance) are genuine single-instance ceilings (cap 1) — without them here a no-team
 # build would fan N concurrent workers at a width-1 backend and overrun it.
 HARD_CONCURRENCY_CAP_BACKENDS: frozenset[str] = frozenset(
-    {"kimi_code", "kimi_cli", "kimi_platform", "local", "opencode_serve", "agy_code", "codex_code"}
+    {"kimi_code", "kimi_cli", "kimi_platform", "local", "opencode_serve", "agy_code",
+     "codex_code", "pi_code",
+     # glm_5_2: Z.AI coding plan caps concurrency ~1 ([[glm-single-lane-only]]). Cap 1 + hard
+     # ⇒ any GLM fan-out fails LOUD (rosters keep GLM single-lane; the FU1 cross-flight mutex
+     # then gives true serial-1). Removed from fan-out critic/worker spots in core/teams.py.
+     "glm_5_2"}
 )
 
 # Per-backend env override pattern: BOBCLAW_MAX_FANOUT_WIDTH_<BACKEND>
@@ -578,13 +713,13 @@ def _load_width_overrides() -> dict[str, int]:
 
 # ── CoCouncil seat → backend map (P1; design §E "Seats: posture → backend") ───
 # Vendor-decoupled seat dispatch: each posture maps to a default backend plus an
-# ordered fallback chain (providers can revoke access — never hard-bind a seat to
-# one vendor). panel.py's resolve_seat_backend reads this; a profile override arg is
+# ordered fallback chain (the Fable-pull lesson — never hard-bind a seat to one
+# vendor). panel.py's resolve_seat_backend reads this; a profile override arg is
 # accepted there but profiles YAML is P4, so P1b uses these table-E defaults.
 #
 # Postures (design table E):
-#   framer    (voice 1) — frame, map constraints       → claude_api
-#   stress    (voice 2) — structural assumption hunt    → gemini_flash
+#   framer    (voice 1) — frame, map constraints        → claude_code
+#   stress    (voice 2) — structural assumption hunt    → agy_code
 #   wildcard  (optional) — diversity seat               → deepseek_v4_flash
 #   synth     (rotating) — reconcile + handoff [ROLE-01] → minimax
 # (Chair is P3 — not wired in P1.) Every backend named here is a registered
@@ -596,24 +731,65 @@ def _load_width_overrides() -> dict[str, int]:
 # Module-level (like the other COUNCIL_* below) so route._build_council_spec imports it.
 COUNCIL_MODE_DEFAULT: str = os.getenv("COUNCIL_MODE_DEFAULT", "fusion")
 
-COUNCIL_SEAT_BACKENDS: dict[str, dict] = {
+# Seat defaults GENERALIZED from the my-bob prod policy (my-bob-next 9776dfc,
+# 2026-07-18): the CLI-subscription tier leads per provider (claude_code /
+# agy_code — flat-rate logins), metered/open providers fill behind; a failed
+# CLI spawn (missing binary, throttle) walks the chain like any other seat
+# error. Boxes retune per-deployment via the COUNCIL_SEAT_BACKENDS env var —
+# JSON shaped {posture: {"backend": ..., "fallback_chain": [...]}} merged
+# per-seat over these defaults — instead of patching this table downstream.
+_COUNCIL_SEAT_DEFAULTS: dict[str, dict] = {
     "framer": {
-        "backend": "claude_api",
-        "fallback_chain": ["gemini_pro", "deepseek_v4_flash"],
+        "backend": "claude_code",
+        "fallback_chain": ["deepseek_v4_flash", "minimax"],
     },
     "stress": {
-        "backend": "gemini_flash",
-        "fallback_chain": ["deepseek_v4_flash", "minimax"],
+        "backend": "agy_code",
+        "fallback_chain": ["gemini_flash", "deepseek_v4_flash"],
     },
     "wildcard": {
         "backend": "deepseek_v4_flash",
-        "fallback_chain": ["kimi_code", "local"],
+        "fallback_chain": ["kimi_code", "minimax"],
     },
     "synth": {
         "backend": "minimax",
-        "fallback_chain": ["local", "claude_api", "gemini_pro"],
+        "fallback_chain": ["claude_code", "deepseek_v4_flash"],
     },
 }
+
+
+def _seat_backends_with_env_override(defaults: dict[str, dict], raw: str) -> dict[str, dict]:
+    """Merge the COUNCIL_SEAT_BACKENDS env JSON over *defaults*, per seat.
+
+    A seat entry overrides only the fields it names (backend and/or
+    fallback_chain). Malformed JSON / a non-dict payload logs and returns the
+    defaults untouched — a bad env var must not take the council down.
+    """
+    if not (raw or "").strip():
+        return {k: dict(v) for k, v in defaults.items()}
+    try:
+        override = json.loads(raw)
+    except json.JSONDecodeError:
+        print("WARNING: COUNCIL_SEAT_BACKENDS env is not valid JSON; using defaults", file=sys.stderr)
+        return {k: dict(v) for k, v in defaults.items()}
+    if not isinstance(override, dict):
+        print("WARNING: COUNCIL_SEAT_BACKENDS env must be a JSON object; using defaults", file=sys.stderr)
+        return {k: dict(v) for k, v in defaults.items()}
+    merged = {k: dict(v) for k, v in defaults.items()}
+    for posture, entry in override.items():
+        if not isinstance(entry, dict):
+            continue
+        seat = merged.setdefault(str(posture), {"backend": "", "fallback_chain": []})
+        if entry.get("backend"):
+            seat["backend"] = str(entry["backend"])
+        if isinstance(entry.get("fallback_chain"), list):
+            seat["fallback_chain"] = [str(b) for b in entry["fallback_chain"]]
+    return merged
+
+
+COUNCIL_SEAT_BACKENDS: dict[str, dict] = _seat_backends_with_env_override(
+    _COUNCIL_SEAT_DEFAULTS, os.getenv("COUNCIL_SEAT_BACKENDS", "")
+)
 
 # Default fusion panel: the three core voices, blind in parallel. synth is the
 # reconciler (not a panel seat) — it runs after the panel in synthesize_node.
@@ -675,7 +851,7 @@ GRAPH_RECURSION_LIMIT: int = int(os.getenv("GRAPH_RECURSION_LIMIT", "50"))
 # tracked files. plan_contracts_node creates <root>/<conversation>/<stamp>-<rand>
 # per turn; P3 hardens path-containment (permissions.evaluate_path) + the subprocess
 # env. Opt-in / NOT in validate() (no build turn happens unless contracts are planned).
-BUILD_WORKSPACE_ROOT: str = os.getenv("BUILD_WORKSPACE_ROOT", os.path.join(_SCRATCH_BASE, "build"))
+BUILD_WORKSPACE_ROOT: str = os.getenv("BUILD_WORKSPACE_ROOT", "C:/dev/scratch/bobclaw-build")
 # Default contract count plan_contracts_node requests when a turn carries no
 # build_units override. The live E2E (P4) drives a small N (10) through the graph.
 BUILD_DEFAULT_UNITS: int = int(os.getenv("BUILD_DEFAULT_UNITS", "10"))
@@ -694,17 +870,14 @@ BUILD_REPAIR_UNIT_CAP: int = int(os.getenv("BUILD_REPAIR_UNIT_CAP", "25"))
 # bar but cannot contain Python; the REAL boundary is running the gate in a throwaway
 # container with ONLY the per-turn workspace bind-mounted (no host secrets/repo),
 # --network none, and resource caps. Modes:
-#   "docker"     — force the container; FAIL-LOUD if the daemon/image is unavailable. (Default.)
-#   "subprocess" — host execution (P3 static gate + env-strip only); trusted models / CI ONLY.
-#   "auto"       — docker when the daemon + image are available, else subprocess + a loud
-#                  warning. Opt-in — convenient for dev, but it can silently run LLM-written
-#                  code on the host if Docker is down, so it is no longer the default.
-# The default is "docker" (fail-closed): the verify gate runs LLM-written code, and Docker is
-# already a hard prerequisite (it hosts Postgres/Redis/Qdrant). plan_contracts' build-empty
-# gate runs only deterministic STUBS (no LLM code) so it stays on the host regardless. Build
-# the image once (from the repo root):
-#   docker build -t bobclaw-build-sandbox:py313 -f bobclaw-core/docker/build-sandbox.Dockerfile bobclaw-core/docker
-BUILD_SANDBOX: str = os.getenv("BUILD_SANDBOX", "docker")
+#   "docker"     — force the container; FAIL-LOUD if the daemon/image is unavailable.
+#   "subprocess" — host execution (P3 static gate + env-strip only); trusted models / CI.
+#   "auto"       — docker when the daemon + image are available, else subprocess + a
+#                  loud warning. (Default.)
+# plan_contracts' build-empty gate runs only deterministic STUBS (no LLM code) so it
+# stays on the host regardless. Build the image once:
+#   docker build -t bobclaw-build-sandbox:py313 -f docker/build-sandbox.Dockerfile docker
+BUILD_SANDBOX: str = os.getenv("BUILD_SANDBOX", "auto")
 BUILD_SANDBOX_IMAGE: str = os.getenv("BUILD_SANDBOX_IMAGE", "bobclaw-build-sandbox:py313")
 BUILD_SANDBOX_MEMORY: str = os.getenv("BUILD_SANDBOX_MEMORY", "512m")
 BUILD_SANDBOX_PIDS: int = int(os.getenv("BUILD_SANDBOX_PIDS", "256"))

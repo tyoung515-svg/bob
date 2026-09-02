@@ -10,11 +10,49 @@ class InMemoryPostgresPool:
         self.ideas: dict[str, dict[str, Any]] = {}
         self.approvals: dict[str, dict[str, Any]] = {}
         self.projects: dict[str, dict[str, Any]] = {}
+        self.agent_bindings: dict[str, dict[str, Any]] = {}
+        self.channel_bindings: dict[str, dict[str, Any]] = {}
         self._conversation_seq = 0
         self._message_seq = 0
         self._idea_seq = 0
         self._approval_seq = 0
         self._project_seq = 0
+        self._agent_binding_seq = 0
+        self._channel_binding_seq = 0
+
+    def add_agent_binding(
+        self,
+        *,
+        slug: str,
+        face_id: str,
+        user_id: str = "admin",
+        display_name: str | None = None,
+        profile_name: str | None = None,
+        conversation_id: str | None = None,
+        ui_meta: dict | None = None,
+        is_archived: bool = False,
+        updated_at: datetime | None = None,
+        created_at: datetime | None = None,
+        binding_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._agent_binding_seq += 1
+        record_id = binding_id or f"binding-{self._agent_binding_seq}"
+        now = datetime.now(timezone.utc)
+        record = {
+            "id": record_id,
+            "user_id": user_id,
+            "slug": slug,
+            "display_name": display_name or slug,
+            "face_id": face_id,
+            "profile_name": profile_name,
+            "conversation_id": conversation_id,
+            "ui_meta": ui_meta or {},
+            "is_archived": is_archived,
+            "created_at": created_at or now,
+            "updated_at": updated_at or now,
+        }
+        self.agent_bindings[record_id] = record
+        return record
 
     def add_project(
         self,
@@ -114,6 +152,8 @@ class InMemoryPostgresPool:
         face_id: str | None = None,
         model_preference: str | None = None,
         backend_preference: str | None = None,
+        profile: str | None = None,
+        locale: str | None = None,
         project_id: str | None = None,
         updated_at: datetime | None = None,
         is_archived: bool = False,
@@ -128,6 +168,8 @@ class InMemoryPostgresPool:
             "face_id": face_id,
             "model_preference": model_preference,
             "backend_preference": backend_preference,
+            "profile": profile,
+            "locale": locale,
             "project_id": project_id,
             "updated_at": updated_at or datetime.now(timezone.utc),
             "is_archived": is_archived,
@@ -260,6 +302,17 @@ class InMemoryPostgresPool:
             rows.sort(key=lambda item: item["updated_at"], reverse=True)
             return rows
 
+        # Agent bindings: list active for user, oldest-created first
+        if "from agent_bindings" in normalized:
+            (user_id,) = args
+            rows = [
+                binding
+                for binding in self.agent_bindings.values()
+                if binding["user_id"] == user_id and not binding["is_archived"]
+            ]
+            rows.sort(key=lambda item: item["created_at"])
+            return rows
+
         if "from conversations c" in normalized:
             # New schema: limit, offset, user_id
             if len(args) == 3:
@@ -334,13 +387,14 @@ class InMemoryPostgresPool:
 
         # Approvals: UPDATE decide
         if normalized.startswith("update approvals set status = $2"):
-            approval_id, new_status, user_id = args
+            approval_id, new_status, user_id, approved_by = args
             approval_id_str = str(approval_id)
             a = self.approvals.get(approval_id_str)
             if a is None or a["user_id"] != user_id or a["status"] != "pending":
                 return None
             a["status"] = new_status
             a["decided_at"] = datetime.now(timezone.utc)
+            a["approved_by"] = approved_by
             return a
 
         # Ideas: INSERT
@@ -426,6 +480,50 @@ class InMemoryPostgresPool:
             project["updated_at"] = datetime.now(timezone.utc)
             return project
 
+        # Agent bindings: INSERT
+        if "insert into agent_bindings" in normalized:
+            user_id, slug, display_name, face_id, profile_name, conversation_id = args
+            return self.add_agent_binding(
+                user_id=user_id,
+                slug=slug,
+                display_name=display_name,
+                face_id=face_id,
+                profile_name=profile_name,
+                conversation_id=conversation_id,
+            )
+
+        # Agent bindings: archive (DELETE route, RETURNING id, conversation_id)
+        if normalized.startswith("update agent_bindings set is_archived = true"):
+            user_id, slug = args
+            binding = next(
+                (
+                    b for b in self.agent_bindings.values()
+                    if b["user_id"] == user_id and b["slug"] == slug and not b["is_archived"]
+                ),
+                None,
+            )
+            if binding is None:
+                return None
+            binding["is_archived"] = True
+            binding["updated_at"] = datetime.now(timezone.utc)
+            return binding
+
+        # Agent bindings: SELECT active by slug (GET route)
+        if "from agent_bindings" in normalized and "is_archived = false" in normalized:
+            user_id, slug = args
+            for binding in self.agent_bindings.values():
+                if binding["user_id"] == user_id and binding["slug"] == slug and not binding["is_archived"]:
+                    return binding
+            return None
+
+        # Agent bindings: SELECT by slug, any state (create conflict pre-check)
+        if "from agent_bindings" in normalized and "where user_id = $1 and slug = $2" in normalized:
+            user_id, slug = args
+            for binding in self.agent_bindings.values():
+                if binding["user_id"] == user_id and binding["slug"] == slug:
+                    return binding
+            return None
+
         # INSERT with user_id (new schema)
         if "insert into conversations" in normalized and "user_id" in normalized:
             user_id, title, face_id, model_preference, backend_preference, project_id = args
@@ -448,7 +546,7 @@ class InMemoryPostgresPool:
             )
 
         # SELECT by id with user_id filter
-        if "select id, title, face_id, model_preference, backend_preference, project_id, updated_at, is_archived, user_id from conversations" in normalized:
+        if "select id, title, face_id, model_preference, backend_preference, profile, locale, project_id, updated_at, is_archived, user_id from conversations" in normalized:
             conversation_id, user_id = args
             conv = self.conversations.get(conversation_id)
             if conv is None or conv["is_archived"] or conv.get("user_id", "admin") != user_id:
@@ -471,6 +569,8 @@ class InMemoryPostgresPool:
                 "face_id": conv.get("face_id"),
                 "model_preference": conv.get("model_preference"),
                 "backend_preference": conv.get("backend_preference"),
+                "profile": conv.get("profile"),
+                "locale": conv.get("locale"),
                 "project_name": project["name"] if project else None,
                 "project_description": project.get("description") if project else None,
                 "project_instructions": project["instructions"] if project else None,
@@ -519,6 +619,26 @@ class InMemoryPostgresPool:
             if conversation is None or conversation["is_archived"]:
                 return None
             conversation["title"] = title
+            conversation["updated_at"] = datetime.now(timezone.utc)
+            return conversation
+
+        # Conversations: PATCH (dynamic SET clause, RETURNING full row)
+        if normalized.startswith("update conversations set") and any(
+            f"{key} = $" in normalized
+            for key in ("face_id", "model_preference", "backend_preference", "profile", "locale")
+        ):
+            conversation_id = args[0]
+            user_id = args[-1]
+            conversation = self.conversations.get(conversation_id)
+            if conversation is None or conversation["is_archived"] or conversation.get("user_id", "admin") != user_id:
+                return None
+            # Re-derive which columns were set from the SET clause + positional args.
+            updatable = ("face_id", "model_preference", "backend_preference", "profile", "locale")
+            arg_index = 1  # $1 is conversation_id, set values start at $2
+            for key in updatable:
+                if f"{key} = $" in normalized:
+                    conversation[key] = args[arg_index]
+                    arg_index += 1
             conversation["updated_at"] = datetime.now(timezone.utc)
             return conversation
 
@@ -597,6 +717,26 @@ class InMemoryPostgresPool:
                 return "UPDATE 0"
             conv["backend_preference"] = new_backend
             conv["model_preference"] = new_model
+            conv["updated_at"] = datetime.now(timezone.utc)
+            return "UPDATE 1"
+
+        # Conversations: switch_profile persistence (empty pin stores NULL).
+        if normalized.startswith("update conversations set profile ="):
+            conversation_id, new_profile, user_id = args
+            conv = self.conversations.get(conversation_id)
+            if conv is None or conv.get("user_id", "admin") != user_id:
+                return "UPDATE 0"
+            conv["profile"] = new_profile
+            conv["updated_at"] = datetime.now(timezone.utc)
+            return "UPDATE 1"
+
+        # Conversations: switch_locale persistence (empty pin stores NULL).
+        if normalized.startswith("update conversations set locale ="):
+            conversation_id, new_locale, user_id = args
+            conv = self.conversations.get(conversation_id)
+            if conv is None or conv.get("user_id", "admin") != user_id:
+                return "UPDATE 0"
+            conv["locale"] = new_locale
             conv["updated_at"] = datetime.now(timezone.utc)
             return "UPDATE 1"
 

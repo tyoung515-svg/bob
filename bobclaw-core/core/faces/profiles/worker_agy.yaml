@@ -18,5 +18,5 @@ escalation_backend: deepseek_v4_flash
 # no tool access in v1 (autonomous tool/write scoping is gated on the A2 strict
 # settings schema). Output is consumed as text and merged by the fan-out join.
 agy_posture:
-  model: gemini-3.5-flash
+  model: Gemini 3.5 Flash (Medium)
 ui_theme: blue

@@ -5,7 +5,6 @@ BoBClaw Claude Build Pipeline — Configuration
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -51,8 +50,10 @@ if not JWT_SECRET:
 # ---------------------------------------------------------------------------
 
 PORT: int = int(os.environ.get("PORT", 7823))
-# Loopback by default — this service holds an ANTHROPIC_API_KEY and must not be
-# exposed on a routable interface. See SECURITY.md.
+# Loopback-only by default (R1 network containment). The pipeline sits behind the
+# authenticated gateway; only the gateway is ever intentionally exposed, behind
+# the TLS/SSH boundary in docs/SECURITY.md. Override with HOST=0.0.0.0 to bind all
+# interfaces.
 HOST: str = os.environ.get("HOST", "127.0.0.1")
 
 # ---------------------------------------------------------------------------
@@ -66,14 +67,12 @@ BUILD_TIMEOUT_SECONDS: int = int(os.environ.get("BUILD_TIMEOUT_SECONDS", 300))
 # Models
 # ---------------------------------------------------------------------------
 
-# Current-generation Claude model IDs (see https://platform.claude.com/docs/en/about-claude/models).
-# Add or change these to whatever your Anthropic account has access to.
 ALLOWED_MODELS: list[str] = [
-    "claude-sonnet-5",
-    "claude-opus-4-8",
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
 ]
 
-DEFAULT_MODEL: str = os.environ.get("DEFAULT_MODEL", "claude-sonnet-5")
+DEFAULT_MODEL: str = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-20250514")
 
 if DEFAULT_MODEL not in ALLOWED_MODELS:
     raise ValueError(
@@ -90,6 +89,4 @@ DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
 # Build workspace root (sandboxed)
 # ---------------------------------------------------------------------------
 
-BUILD_WORKSPACE_ROOT: Path = Path(
-    os.environ.get("BUILD_WORKSPACE_ROOT") or str(Path(tempfile.gettempdir()) / "bobclaw-builds")
-)
+BUILD_WORKSPACE_ROOT: Path = Path(os.environ.get("BUILD_WORKSPACE_ROOT", "/tmp/bobclaw-builds"))

@@ -1,0 +1,32 @@
+# BoBClaw Telegram bot (phase 3A pilot) — systemd --user unit template.
+#
+# NOT installed by the repo. To install:
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/bobclaw-telegram.service ~/.config/systemd/user/
+#   # edit the %h/Projects/bob paths below to your checkout
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now bobclaw-telegram.service
+#
+# Ops:
+#   systemctl --user status bobclaw-telegram.service
+#   systemctl --user stop bobclaw-telegram.service
+#   journalctl --user -u bobclaw-telegram.service -f
+#
+# Paths are absolute to a checkout — adjust to yours before installing.
+# Secrets come from .secrets/bobclaw.env (read by the package itself; never
+# inline them here — unit files are world-readable in the process list).
+[Unit]
+Description=BoBClaw Telegram bot (phase 3A pilot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/bob
+Environment=PYTHONPATH=%h/Projects/bob/bobclaw-telegram
+ExecStart=%h/Projects/bob/.venv/bin/python -m bobclaw_telegram
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

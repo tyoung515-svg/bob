@@ -1,0 +1,107 @@
+{
+  "digest_id": "blake3:b8caab5761fab1614baee4bc8336fee2110504a1b9cd83108cfa031a91180046",
+  "kind": "watch_digest",
+  "version": 0,
+  "title": "Watch digest",
+  "profile": "scout-weekly",
+  "group_by": "category",
+  "new_count": 6,
+  "event_count": 6,
+  "alerts": [
+    {
+      "threshold": "pricing-alert",
+      "level": "alert",
+      "count": 2,
+      "event_ids": [
+        "ev-1",
+        "ev-4"
+      ]
+    },
+    {
+      "threshold": "any-notable",
+      "level": "notable",
+      "count": 3,
+      "event_ids": [
+        "ev-1",
+        "ev-2",
+        "ev-4"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "label": "community",
+      "events": [
+        {
+          "id": "ev-6",
+          "title": "r/LocalLLaMA weekly megathread",
+          "url": "https://old.reddit.com/r/LocalLLaMA",
+          "source": "localllama",
+          "category": "community",
+          "severity": "info",
+          "summary": null
+        }
+      ]
+    },
+    {
+      "label": "pricing",
+      "events": [
+        {
+          "id": "ev-1",
+          "title": "DeepSeek V4 Flash price cut 40%",
+          "url": "https://api-docs.deepseek.com/news/v4-flash-pricing",
+          "source": "deepseek-news",
+          "category": "pricing",
+          "severity": "alert",
+          "summary": "Input/output token price reduced; EST monthly impact on fleet routing."
+        },
+        {
+          "id": "ev-4",
+          "title": "OpenAI GPT-5 pricing update",
+          "url": "https://openai.com/api/pricing",
+          "source": "openai-pricing",
+          "category": "pricing",
+          "severity": "alert",
+          "summary": "Price change on the API tier BoB routes."
+        }
+      ]
+    },
+    {
+      "label": "registry",
+      "events": [
+        {
+          "id": "ev-5",
+          "title": "New MCP server directory listing",
+          "url": "https://example.com/mcp/servers",
+          "source": "mcp-servers",
+          "category": "registry",
+          "severity": "info",
+          "summary": null
+        }
+      ]
+    },
+    {
+      "label": "release",
+      "events": [
+        {
+          "id": "ev-2",
+          "title": "Claude Opus 4.5 released",
+          "url": "https://www.anthropic.com/news/opus-4-5",
+          "source": "anthropic-news",
+          "category": "release",
+          "severity": "notable",
+          "summary": "New flagship; benchmark deltas pending refute-and-vote."
+        },
+        {
+          "id": "ev-3",
+          "title": "llama.cpp b9600 release",
+          "url": "https://github.com/ggml-org/llama.cpp/releases/tag/b9600",
+          "source": "llamacpp-releases",
+          "category": "release",
+          "severity": "info",
+          "summary": null
+        }
+      ]
+    }
+  ]
+}

@@ -65,6 +65,8 @@ class DeepSeekClient:
         model: Optional[str] = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # deepseek-v4-flash is thinking-by-default; disable unless caller opts in.
+        kwargs.setdefault("thinking", {"type": "disabled"})
         payload = {
             "model": model or config.DEEPSEEK_MODEL,
             "messages": messages,
@@ -86,6 +88,8 @@ class DeepSeekClient:
         model: Optional[str] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
+        # deepseek-v4-flash is thinking-by-default; disable unless caller opts in.
+        kwargs.setdefault("thinking", {"type": "disabled"})
         payload = {
             "model": model or config.DEEPSEEK_MODEL,
             "messages": messages,

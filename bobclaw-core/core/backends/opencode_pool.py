@@ -37,7 +37,12 @@ from core.config import config
 
 
 def _normalize_workspace(path: str) -> str:
-    return os.path.normcase(os.path.normpath(path))
+    # Separator- AND case-insensitive on EVERY platform (registry rows can carry
+    # Windows separators/casing; POSIX normcase is a no-op, so fold both
+    # explicitly — the same platform gap as agy's uuid-by-cwd lookup). Two
+    # registered workspaces differing only by case are operator error, not a
+    # distinction this matcher should preserve.
+    return os.path.normpath(str(path).replace("\\", "/")).lower()
 
 
 # Rows older than this threshold are treated as alive=False regardless of

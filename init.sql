@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     face_id TEXT,
     model_preference TEXT,
     backend_preference TEXT,
+    profile TEXT,
+    locale TEXT,
     is_archived BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -204,6 +206,37 @@ CREATE INDEX IF NOT EXISTS idx_ideas_user_state
     ON ideas(user_id, state, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ideas_user_updated
     ON ideas(user_id, updated_at DESC);
+
+-- ══════════════════════════════════════════════════════
+-- Agent & Channel Bindings (bot roster — Hermes-shaped interface W2)
+-- ══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS agent_bindings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL DEFAULT 'admin',
+    slug TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    face_id TEXT NOT NULL,
+    profile_name TEXT,
+    conversation_id UUID NOT NULL UNIQUE REFERENCES conversations(id),
+    ui_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_archived BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_bindings_user ON agent_bindings(user_id, is_archived, created_at);
+
+CREATE TABLE IF NOT EXISTS channel_bindings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL DEFAULT 'admin',
+    agent_binding_id UUID NOT NULL REFERENCES agent_bindings(id),
+    platform TEXT NOT NULL,
+    external_chat_id TEXT NOT NULL,
+    external_thread_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, platform, external_chat_id, external_thread_id)
+);
 
 -- ══════════════════════════════════════════════════════
 -- Default Face Configurations

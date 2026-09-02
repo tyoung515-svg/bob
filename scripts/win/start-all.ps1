@@ -5,25 +5,19 @@
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 
-# --env-file so compose interpolates the SAME POSTGRES_PASSWORD the app uses (read
-# from .secrets, not the shell env) — container + app agree on first init.
-$composeArgs = @('compose', '-f', "$repo\docker-compose.yml")
-$envFile = "$repo\.secrets\bobclaw.env"
-if (Test-Path $envFile) { $composeArgs += @('--env-file', $envFile) }
-
 Write-Host "== Postgres (docker) ==" -ForegroundColor Yellow
-docker @composeArgs up -d postgres redis | Out-Host
+docker compose --env-file "$repo\.secrets\bobclaw.env" -f "$repo\docker-compose.yml" up -d postgres redis | Out-Host
 
 Write-Host "== Qdrant (:6353) ==" -ForegroundColor Yellow
 # BobClaw's Qdrant is mapped to host :6353 (compose 6353->6333) to avoid the
 # LKS Qdrant on :6333. Probe :6353 — NOT :6333 — or we'd "reuse" the wrong
 # (version-mismatched) instance and never launch bobclaw's own.
 $qdrantUp = $false
-try { $null = Invoke-RestMethod 'http://localhost:6353/healthz' -TimeoutSec 3; $qdrantUp = $true } catch {}
+try { $null = Invoke-RestMethod 'http://127.0.0.1:6353/healthz' -TimeoutSec 3; $qdrantUp = $true } catch {}
 if ($qdrantUp) {
     Write-Host "BobClaw Qdrant already running on :6353 (reusing it)." -ForegroundColor Green
 } else {
-    docker @composeArgs up -d qdrant | Out-Host
+    docker compose --env-file "$repo\.secrets\bobclaw.env" -f "$repo\docker-compose.yml" up -d qdrant | Out-Host
 }
 
 function Spawn($title, $script) {

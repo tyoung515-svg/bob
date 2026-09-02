@@ -20,12 +20,13 @@ from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Optional
 import aiohttp
 import redis.asyncio as aioredis
 
-from core.backends._cost import check_cap, parse_usage, track_cost
+from core.backends._cost import check_cap, parse_usage, track_cost, usd_for
 from core.backends._lc_openai import TOOL_CAPABLE_BACKENDS, build_chat_openai
 from core.backends.local_router import LocalModelRouter
 from core.config import config
 from core.nodes._l0_events import _append_agent_turn_event
 from core.permissions import check_tool_access, requires_approval, task_requires_approval
+from core.telemetry.spend import bind_flight_from_state, record_current_flight_spend
 from core.tools.projects import _current_conversation_id, _current_user_id
 from core.tools.registry import NATIVE_TOOLS, get_all_tools
 
@@ -50,47 +51,6 @@ def locale_directive_message(locale) -> Optional[dict]:
     if isinstance(locale, str) and locale != "en" and locale in LOCALE_DIRECTIVE:
         return {"role": "system", "content": LOCALE_DIRECTIVE[locale]}
     return None
-
-
-# The default spawn-identity card. Front-most system message telling a face it runs inside BoB
-# + who it is, so it stops answering "I have no idea I'm deployed in bob". Placeholders are
-# filled per turn; BOB_IDENTITY_TEXT can override the whole thing. Module-level so tests assert it.
-BOB_IDENTITY_CARD = (
-    "You are running inside **BoB** (Build · Orchestrate · Bind), a self-hosted multi-agent "
-    "orchestration platform — not a bare chat endpoint. You are the \"{face_name}\" face{role_clause}, "
-    "and this reply is being served through the \"{backend}\" backend that BoB's router selected. "
-    "BoB routes turns to different faces, fans work out to a worker fleet, convenes a deliberating "
-    "council, and runs a build→verify pipeline; you are one voice in that system. If the user asks "
-    "how you're deployed or how you're talking to them, answer from THIS — you are BoB's "
-    "\"{face_name}\", served by \"{backend}\" — rather than claiming you can't see your environment."
-)
-
-
-def bob_identity_message(state: dict) -> Optional[dict]:
-    """A front-most system card telling the face it's running inside BoB + who it is (name / role /
-    backend). Returns None when BOB_IDENTITY_ENABLED is off (default) ⇒ byte-identical. Rides the
-    same splice rail as the project-context + locale messages, so it reaches every backend.
-    Best-effort: any lookup failure degrades to a minimal card, never raises."""
-    if not config.BOB_IDENTITY_ENABLED:
-        return None
-    face_id = state.get("face_id") or "assistant"
-    face_name, role = face_id, None
-    try:
-        from core.faces.registry import get_default_registry
-        face = get_default_registry().get_face(face_id)
-        face_name = getattr(face, "name", None) or face_id
-        role = getattr(face, "role", None)
-    except Exception:  # noqa: BLE001 — identity is best-effort; never break the turn
-        pass
-    backend = state.get("backend") or "the routed"
-    role_clause = f" (a {role}-role voice)" if role else ""
-    template = config.BOB_IDENTITY_TEXT.strip() or BOB_IDENTITY_CARD
-    try:
-        content = template.format(face_name=face_name, role_clause=role_clause, backend=backend)
-    except Exception:  # noqa: BLE001 — a bad custom template must not break the turn
-        content = BOB_IDENTITY_CARD.format(
-            face_name=face_name, role_clause=role_clause, backend=backend)
-    return {"role": "system", "content": content}
 
 
 # ── Ask-Bob helper bubble page context (MS9 U5, SPEC §3 / D3) ──────────────────
@@ -405,7 +365,7 @@ def _resolve_cc_edit(
             ],
         }
 
-    # Approve. Honour an edit_content override (the operator tweaked the diff).
+    # Approve. Honour an edit_content override (Travis tweaked the diff).
     diff = (state.get("approval_edit_content") or "").strip() or pending_edit.get("diff", "")
 
     if not config.CC_EDIT_APPLY_ENABLED:
@@ -645,6 +605,45 @@ async def _run_tool_loop(
 
 # ── Backend transport ────────────────────────────────────────────────────────
 
+def _cli_spawn_posture(model_override: Optional[str] = None) -> dict:
+    """Posture for the STATELESS CLI-subprocess branches (fan-out workers,
+    council seat sends, critics — anything behind the bare seam).
+
+    Spawn-context intake 2026-07-18: clean scratch is the default for every
+    stateless CLI spawn. Callers with a position of their own (council seats)
+    publish a descriptor via ``spawn_descriptor``; absent that, the spawn is
+    framed as a plain worker — never as an agent of whatever repo the process
+    happens to run from.
+    """
+    from core.spawn_context import active_spawn_descriptor
+
+    posture: dict = {"model": model_override} if model_override else {}
+    posture["spawn_context"] = active_spawn_descriptor() or {"position": "worker"}
+    return posture
+
+
+def _face_spawn_posture(posture: dict, state: dict) -> dict:
+    """Merge the face YAML ``spawn_context:`` block into a state-aware CLI
+    posture (claude_code / agy_code / codex_code planner-tier dispatch).
+
+    An explicit descriptor already in the posture wins; a face without the
+    block leaves the posture untouched (legacy behavior — face authors opt in
+    per face, e.g. planner-cc-edit's project-aware planner template).
+    """
+    if isinstance(posture.get("spawn_context"), dict) and posture["spawn_context"]:
+        return posture
+    try:
+        from core.faces.registry import get_default_registry
+
+        face = get_default_registry().get_face((state.get("face_id") or "").strip())
+        descriptor = dict(face.spawn_context or {})
+    except Exception:
+        return posture
+    if not descriptor:
+        return posture
+    return {**posture, "spawn_context": descriptor}
+
+
 def _messages_to_prompt(messages: list[dict]) -> str:
     """Collapse a message list into the single prompt string the ``claude`` CLI
     takes via ``-p``.
@@ -716,6 +715,9 @@ async def _default_send_to_backend(
         raw = await client.chat(messages=messages, model=None)
         usage = parse_usage(raw)
         track_cost(**usage)
+        # L0.4: attribute this metered call's USD to the current flight (contextvar set
+        # by the node) so the per-flight spend meter aggregates it. Best-effort.
+        await record_current_flight_spend("kimi_platform", usd_for(**usage))
         return raw["choices"][0]["message"]["content"]
 
     if backend == "claude_api":
@@ -737,6 +739,17 @@ async def _default_send_to_backend(
         raw = await client.chat(messages=messages, model=None)
         return raw["choices"][0]["message"]["content"]
 
+    if backend == "deepseek_v4":
+        # DS Pro — senior/audit tier. Same DeepSeek endpoint, the Pro model id
+        # (config.DEEPSEEK_PRO_MODEL). A per-request override still wins.
+        from core.backends.deepseek import DeepSeekClient
+
+        client = DeepSeekClient()
+        raw = await client.chat(
+            messages=messages, model=model_override or config.DEEPSEEK_PRO_MODEL
+        )
+        return raw["choices"][0]["message"]["content"]
+
     if backend == "qwen_research":
         # MS2-R0: the self-hostable Qwen research floor (local llama.cpp, OpenAI-compat). Thread the
         # per-request model override through (the worker face's model alias / the served gguf id).
@@ -747,10 +760,20 @@ async def _default_send_to_backend(
         return raw["choices"][0]["message"]["content"]
 
     if backend == "glm_5_2":
+        # FU1: serial-GLM cross-flight mutex (inert unless FLIGHT_ENFORCE_ENABLED). On
+        # contention, D1 back-off escalates to a parallel-safe backend instead of blocking.
+        from core.flight.enforcement import acquire_or_escalate, release
+
+        run_backend, holder = await acquire_or_escalate(backend)
+        if run_backend != backend:
+            return await _default_send_to_backend(messages, run_backend, model_override)
         from core.backends.glm import GLMClient
 
         client = GLMClient()
-        raw = await client.chat(messages=messages, model=None)
+        try:
+            raw = await client.chat(messages=messages, model=None)
+        finally:
+            await release(backend, holder)
         return raw["choices"][0]["message"]["content"]
 
     if backend == "minimax":
@@ -792,12 +815,14 @@ async def _default_send_to_backend(
 
         # State-aware callers (execute_node) intercept claude_code before this
         # function is reached and thread posture + resume_session_id via state.
-        # This stateless fallback uses defaults (no posture, no resume).
+        # This stateless path serves council seats / fan-out sends: clean-scratch
+        # spawn context by default (worker framing, or the caller's published
+        # descriptor — council seats), never the repo cwd + its charter.
         client = ClaudeCodeClient()
         result = await client.chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture={},
+            posture=_cli_spawn_posture(),
         )
         return result["text"]
 
@@ -813,7 +838,7 @@ async def _default_send_to_backend(
         result = await client.chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture={"model": model_override} if model_override else {},
+            posture=_cli_spawn_posture(model_override),
         )
         return result["text"]
 
@@ -830,7 +855,7 @@ async def _default_send_to_backend(
         result = await client.chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture={"model": model_override} if model_override else {},
+            posture=_cli_spawn_posture(model_override),
         )
         return result["text"]
 
@@ -841,6 +866,21 @@ async def _default_send_to_backend(
         # threaded as model_override; absent ⇒ the kimi config default. The prompt
         # is an argv value (kimi -p) so callers must keep it bounded.
         client = KimiCliClient()
+        result = await client.chat(
+            prompt=_messages_to_prompt(messages),
+            resume_session_id=None,
+            posture=_cli_spawn_posture(model_override),
+        )
+        return result["text"]
+
+    if backend == "pi_code":
+        from core.backends.pi_code import PiCodeClient
+
+        # Pi agentic CLI (GLM/DeepSeek/MiniMax, direct OpenAI-compat — no proxy). The
+        # fan-out threads the worker's provider/model (e.g. "deepseek/deepseek-v4-flash")
+        # as model_override; absent ⇒ pi's default provider. Tools OFF for the stateless
+        # worker path (clean text). A unique scratch cwd per client → fan-out safe.
+        client = PiCodeClient()
         result = await client.chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
@@ -978,6 +1018,15 @@ async def _default_stream_to_backend(
             yield delta
         return
 
+    if backend == "deepseek_v4":
+        from core.backends.deepseek import DeepSeekClient
+
+        async for delta in DeepSeekClient().stream_chat(
+            messages, model=config.DEEPSEEK_PRO_MODEL
+        ):
+            yield delta
+        return
+
     if backend == "qwen_research":
         from core.backends.qwen_research import QwenResearchClient
 
@@ -986,10 +1035,22 @@ async def _default_stream_to_backend(
         return
 
     if backend == "glm_5_2":
+        # FU1: serial-GLM cross-flight mutex (inert unless FLIGHT_ENFORCE_ENABLED). On
+        # contention, D1 back-off streams from a parallel-safe backend instead of blocking.
+        from core.flight.enforcement import acquire_or_escalate, release
+
+        run_backend, holder = await acquire_or_escalate(backend)
+        if run_backend != backend:
+            async for delta in _default_stream_to_backend(messages, run_backend, model_override):
+                yield delta
+            return
         from core.backends.glm import GLMClient
 
-        async for delta in GLMClient().stream_chat(messages, model=None):
-            yield delta
+        try:
+            async for delta in GLMClient().stream_chat(messages, model=None):
+                yield delta
+        finally:
+            await release(backend, holder)
         return
 
     if backend == "kimi_code":
@@ -1031,12 +1092,13 @@ async def _default_stream_to_backend(
 
         # Message-level streaming (probe-confirmed: one whole text block per
         # assistant event, NOT token deltas). Drive stream_chat directly so the
-        # UI surfaces CC replies live. Stateless fallback path: no posture /
-        # resume (execute_node's state-aware block threads those).
+        # UI surfaces CC replies live. Stateless fallback path: no resume
+        # (execute_node's state-aware block threads that); clean-scratch spawn
+        # context by default.
         async for delta in ClaudeCodeClient().stream_chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture={},
+            posture=_cli_spawn_posture(),
         ):
             yield delta
         return
@@ -1049,7 +1111,7 @@ async def _default_stream_to_backend(
         async for delta in AntigravityClient().stream_chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture={"model": model_override} if model_override else {},
+            posture=_cli_spawn_posture(model_override),
         ):
             yield delta
         return
@@ -1062,7 +1124,7 @@ async def _default_stream_to_backend(
         async for delta in CodexCodeClient().stream_chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture={"model": model_override} if model_override else {},
+            posture=_cli_spawn_posture(model_override),
         ):
             yield delta
         return
@@ -1071,6 +1133,19 @@ async def _default_stream_to_backend(
         from core.backends.kimi_cli import KimiCliClient
 
         async for delta in KimiCliClient().stream_chat(
+            prompt=_messages_to_prompt(messages),
+            resume_session_id=None,
+            posture=_cli_spawn_posture(model_override),
+        ):
+            yield delta
+        return
+
+    if backend == "pi_code":
+        from core.backends.pi_code import PiCodeClient
+
+        # Message-level streaming (one whole block). Stateless fallback: no resume;
+        # the provider/model is threaded via model_override.
+        async for delta in PiCodeClient().stream_chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
             posture={"model": model_override} if model_override else {},
@@ -1163,6 +1238,11 @@ async def execute_node(state: "AgentState") -> dict:
     messages = list(state.get("messages", []))
     approval_response = state.get("approval_response")
 
+    # L0.4: bind this turn's flight (two-tier) so a metered backend call inside this
+    # node attributes its USD to the right flight via the spend contextvar. Task-local
+    # (rebound each turn); the fan-out path binds per-worker in worker_node.
+    bind_flight_from_state(state)
+
     # ── CC approved-edit apply path (C4) ────────────────────────────────────
     # If a planner-cc-edit turn parked a proposed diff and the user just made a
     # decision on it, resolve it here (BEFORE the generic reject/approve flow):
@@ -1209,8 +1289,15 @@ async def execute_node(state: "AgentState") -> dict:
 
     # ── Memory splice (Sprint INT-1) ─────────────────────────────────────────
     recalled = state.get("recalled_facts") or []
-    if recalled:
-        bullets = "\n".join(f"- {f.body.get('text', '')}" for f in recalled[:5])
+    recalled_chunks = (
+        state.get("recalled_chunks") or []
+        if config.MEMORY_T0_RECALL_ENABLED
+        else []
+    )
+    memory_lines = [f.body.get("text", "") for f in recalled]
+    memory_lines.extend(chunk.content for chunk in recalled_chunks)
+    if memory_lines:
+        bullets = "\n".join(f"- {text}" for text in memory_lines[:5])
         messages.insert(0, {"role": "system", "content": f"Prior context:\n{bullets}"})
 
     # ── Project context splice (server-side projects) ────────────────────────
@@ -1237,11 +1324,6 @@ async def execute_node(state: "AgentState") -> dict:
     _locale_directive = locale_directive_message(state.get("locale"))
     if _locale_directive is not None:
         messages.insert(0, _locale_directive)
-    # Spawn-identity card (front-most so it frames who the face is), on the SAME rail so it reaches
-    # every backend. None when BOB_IDENTITY_ENABLED is off ⇒ byte-identical.
-    _identity = bob_identity_message(state)
-    if _identity is not None:
-        messages.insert(0, _identity)
 
     # ── Opt-in LangChain tool-calling loop (P0) ──────────────────────────────
     # Only fires for a tool-enabled face on a tool-capable backend. Every other
@@ -1311,6 +1393,7 @@ async def execute_node(state: "AgentState") -> dict:
         from core.cc_sessions import _lookup_cc_session, _record_cc_session
 
         posture = state.get("cc_posture") or {}          # C2 puts the face's flags here
+        posture = _face_spawn_posture(posture, state)    # face spawn_context: block
         conversation_id = (state.get("conversation_id") or "").strip()
         resume_id = state.get("cc_resume_session_id")
         # Continuity (C3): resume this conversation's prior CC session if known.
@@ -1426,6 +1509,7 @@ async def execute_node(state: "AgentState") -> dict:
                 posture = dict(face.agy_posture or {})
             except Exception:
                 posture = {}
+        posture = _face_spawn_posture(posture, state)  # face spawn_context: block
         conversation_id = (state.get("conversation_id") or "").strip()
         resume_id = state.get("agy_resume_session_id")
         if conversation_id and not resume_id:
@@ -1508,20 +1592,7 @@ async def execute_node(state: "AgentState") -> dict:
                 posture = dict(face.codex_posture or {})
             except Exception:
                 posture = {}
-        # Honour a UI-picked model on the planner tier: a `switch_model` /
-        # model-pin lands in state.model_override (api/server.py → state), but the
-        # planner posture only carries a `profile` (e.g. gpt), so without this the
-        # pick was silently dropped — you could enter "gpt mode" but never choose
-        # WHICH gpt model. The stateless fan-out (worker) path already threads
-        # model_override; mirror it here so an explicit pick binds. Combined with
-        # codex_code._build_argv, a gpt-profile face runs the chosen gpt model
-        # natively (no litellm). Council-shape overrides divert before execute,
-        # so a model_override reaching this backend is a genuine model id. str() first:
-        # a malformed direct-to-core payload could send a non-string model, and a bare
-        # .strip() would crash the node instead of being ignored.
-        model_override = str(state.get("model_override") or "").strip()
-        if model_override:
-            posture = {**posture, "model": model_override}
+        posture = _face_spawn_posture(posture, state)  # face spawn_context: block
         conversation_id = (state.get("conversation_id") or "").strip()
         resume_id = state.get("codex_resume_session_id")
         if conversation_id and not resume_id:

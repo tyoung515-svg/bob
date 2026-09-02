@@ -1,0 +1,19 @@
+# .pre-commit-config.yaml — BoBClaw repo hygiene gate.
+#
+# The hygiene guardrail (scripts/check_hygiene.py, stdlib-only) runs as a LOCAL hook so a
+# commit that reintroduces a loose secret at the root, a committed service artifact, root
+# doc-sprawl, or an inline-comment-poisoned .secrets/*.env is BLOCKED before it lands.
+# Rules + rationale: REPO_HYGIENE.md. The same script runs in-suite via
+# bobclaw-core/tests/test_repo_hygiene.py, so CI enforces it even without pre-commit.
+#
+# Enable once per clone:   pre-commit install
+# Run ad-hoc against all files:   pre-commit run --all-files
+repos:
+  - repo: local
+    hooks:
+      - id: repo-hygiene
+        name: repo hygiene guardrail
+        entry: .venv/Scripts/python.exe scripts/check_hygiene.py
+        language: system
+        pass_filenames: false
+        always_run: true

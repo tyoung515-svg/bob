@@ -229,9 +229,10 @@ async def test_register_stores_normalized_form():
         pool._load_instances()
 
     assert len(pool._instances) == 1
-    import os
-    expected = os.path.normcase(os.path.normpath(raw_input))
-    assert pool._instances[0].workspace_dir == expected
+    from core.backends.opencode_pool import _normalize_workspace
+    # The stored form IS the matcher's normalized form — separator/case
+    # folding lives in _normalize_workspace, not re-derived here.
+    assert pool._instances[0].workspace_dir == _normalize_workspace(raw_input)
 
 
 # ─── Multi-process registry convergence ────────────────────────────────────────

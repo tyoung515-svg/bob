@@ -373,6 +373,6 @@ async def test_persist_run_honors_owner():
     db = _FakeDB()
     prof = _profile("p", cron="0 2 * * *", task="t")
     await persist_run(prof, prof["schedule"], "b", _final_with_answer("a"),
-                      owner="admin", create_conversation=db.create_conversation,
+                      owner="travis", create_conversation=db.create_conversation,
                       save_message=db.save_message)
-    assert db.conversations[0]["user_id"] == "admin"
+    assert db.conversations[0]["user_id"] == "travis"

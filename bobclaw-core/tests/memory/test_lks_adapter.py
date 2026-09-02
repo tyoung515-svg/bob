@@ -54,7 +54,7 @@ def acl_block(readers=("bobclaw", "lks"), mode="ro", writer="lks"):
 def make_registry(tmp_path, *, meta):
     """Register one instance 'inst' -> collection 'c', dim DIM."""
     reg = FederationRegistry(tmp_path / "reg.json")
-    reg.register("inst", "/repos/_t", collection="c", dim=DIM, meta=meta)
+    reg.register("inst", "C:/dev/_t", collection="c", dim=DIM, meta=meta)
     return reg
 
 
@@ -65,12 +65,9 @@ class FakeEmbedder:
         self._out = out
         self.calls = []
 
-    async def embed_query(self, texts):
+    async def embed(self, texts):
         self.calls.append(list(texts))
         return [list(self._out)]
-
-    async def embed_doc(self, texts):
-        raise AssertionError("LKS read adapter must not embed documents")
 
 
 def point(pid, score, payload=None):
@@ -424,11 +421,11 @@ class TestLKSReadAdapter:
         client = MagicMock()
 
         class EmptyEmbedder:
-            async def embed_query(self, texts):
+            async def embed(self, texts):
                 return []  # no vector
 
         class JunkEmbedder:
-            async def embed_query(self, texts):
+            async def embed(self, texts):
                 return ["not-a-vector"]  # embedded[0] is not a list/tuple
 
         ad_empty = LKSReadAdapter(reg, client=client, embedder=EmptyEmbedder(), live_slot=slot())

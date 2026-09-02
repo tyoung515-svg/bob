@@ -16,11 +16,8 @@ DIM = 768
 class FakeEmbedder:
     def __init__(self):
         self.calls = []
-    async def embed_query(self, texts):
+    async def embed(self, texts):
         self.calls.append(list(texts))
-        return [[0.1] + [0.0]*(DIM-1) for _ in texts]
-
-    async def embed_doc(self, texts):
         return [[0.1] + [0.0]*(DIM-1) for _ in texts]
 
 class FakeProvider:
@@ -253,9 +250,17 @@ async def test_top_k_truncation_lks():
 # rather than re-route through a config object that carries neither flag.)
 # ------------------------------
 
+# acl but NO embed — the shape of 3 of the 5 records in the shipped example registry.
 REG_JSON = (
     '{"version":1,"instances":{"x":{"repo":"C:/d","ledger_dir":"ledger","collection":"x_768",'
     '"dim":768,"meta":{"acl":{"writer":"lks","readers":["bobclaw"],"mode":"ro"}}}}}'
+)
+
+# acl AND embed — the P4-stamped shape (what `wiki` looks like post-P4.2).
+REG_STAMPED_JSON = (
+    '{"version":1,"instances":{"x":{"repo":"C:/d","ledger_dir":"ledger","collection":"x_768",'
+    '"dim":768,"meta":{"acl":{"writer":"lks","readers":["bobclaw"],"mode":"ro"},'
+    '"embed":{"model_id":"m","dim":768,"normalize":true,"distance":"cosine"}}}}}'
 )
 
 
@@ -264,7 +269,7 @@ class GoodSlotResolver:
     def get(self, name):
         from core.memory.models import SlotResolution
         return SlotResolution(slot_name=name, model="m", backend="lmstudio",
-                              endpoint="http://localhost:8081", embedding_dimension=DIM)
+                              endpoint="http://127.0.0.1:8081", embedding_dimension=DIM)
 
 
 def test_maybe_build_lks_adapter_off_by_default(monkeypatch):
@@ -280,11 +285,11 @@ def test_maybe_build_lks_adapter_on_but_no_instance(monkeypatch):
     assert _maybe_build_lks_adapter(GoodSlotResolver(), object()) == (None, None, False)
 
 
-def test_maybe_build_lks_adapter_on_builds_soft_stamp_adapter(monkeypatch, tmp_path):
+def test_maybe_build_lks_adapter_on_builds_hard_stamp_adapter(monkeypatch, tmp_path):
     from core.memory.bootstrap import _maybe_build_lks_adapter
     from core.memory.lks_adapter import LKSReadAdapter
     reg = tmp_path / "reg.json"
-    reg.write_text(REG_JSON, encoding="utf-8")
+    reg.write_text(REG_STAMPED_JSON, encoding="utf-8")
     monkeypatch.setenv("MEMORY_LKS_FIRST", "true")
     monkeypatch.setenv("MEMORY_LKS_INSTANCE", "x")
     monkeypatch.delenv("MEMORY_LKS_QDRANT_URL", raising=False)
@@ -294,11 +299,103 @@ def test_maybe_build_lks_adapter_on_builds_soft_stamp_adapter(monkeypatch, tmp_p
     assert isinstance(adapter, LKSReadAdapter)
     assert instance == "x"
     assert lks_first is True
-    # soft-stamp posture + reuse of the provider client (no MEMORY_LKS_QDRANT_URL)
-    assert adapter._require_stamp is False
+    # P4/D7 hard-stamp posture + reuse of the provider client (no MEMORY_LKS_QDRANT_URL)
+    assert adapter._require_stamp is True
     assert adapter._require_acl is True
     assert adapter._reader_id == "bobclaw"
     assert adapter._client is sentinel_client
+
+
+def test_maybe_build_lks_adapter_passes_live_slot(monkeypatch, tmp_path):
+    """P4/D7 COUPLING GUARD — the stamp gate is useless (worse: silently OFF) without a live_slot.
+
+    LKSReadAdapter.search raises ReadAdapterError("refusing to read unverified") when an instance is
+    stamped but no live_slot was supplied, and ReadAdapterError is on the retriever's FALLBACK list —
+    so dropping live_slot here would route every LKS read back to BoB's store with NO error surfaced
+    and the phase would look green while doing nothing. Pin it: the seam MUST bind the live slot, and
+    it must be the resolved embed_text slot (what the C2 gate compares meta.embed against).
+    """
+    from core.memory.bootstrap import _maybe_build_lks_adapter
+    reg = tmp_path / "reg.json"
+    reg.write_text(REG_STAMPED_JSON, encoding="utf-8")
+    monkeypatch.setenv("MEMORY_LKS_FIRST", "true")
+    monkeypatch.setenv("MEMORY_LKS_INSTANCE", "x")
+    monkeypatch.setenv("BOBCLAW_LEDGER_INSTANCES", str(reg))
+    adapter, _, _ = _maybe_build_lks_adapter(GoodSlotResolver(), object())
+    assert adapter._live_slot is not None, "live_slot must be bound or a stamped read silently falls back"
+    assert adapter._live_slot.slot_name == "embed_text"
+    assert adapter._live_slot.embedding_dimension == DIM
+
+
+def test_maybe_build_lks_adapter_degrades_on_unstamped_instance(monkeypatch, tmp_path):
+    """P4/D7 SAFETY VALVE (audit F1) — an unstamped instance must degrade to OFF, not kill every turn.
+
+    With require_stamp=True, reading an instance that has `acl` but no `embed` raises FingerprintMissing —
+    and that PROPAGATES: retriever._search_lks_first re-raises it and graph._recall_node_wrapper does not
+    catch it, so the chat turn dies. This is reachable: 3 of the 5 records in the SHIPPED
+    ledger_instances.example.json are acl-without-embed, and that example is the provisioning template
+    (the real registry is gitignored). A missing stamp is a provisioning problem, so the seam must fail
+    OFF at bootstrap. Drift (a MISMATCHED stamp) still fail-closes at query time — that is D7's target.
+    """
+    from core.memory.bootstrap import _maybe_build_lks_adapter
+    reg = tmp_path / "reg.json"
+    reg.write_text(REG_JSON, encoding="utf-8")  # 'x' has acl, NO embed
+    monkeypatch.setenv("MEMORY_LKS_FIRST", "true")
+    monkeypatch.setenv("MEMORY_LKS_INSTANCE", "x")
+    monkeypatch.setenv("BOBCLAW_LEDGER_INSTANCES", str(reg))
+    assert _maybe_build_lks_adapter(GoodSlotResolver(), object()) == (None, None, False)
+
+
+def test_maybe_build_lks_adapter_degrades_on_missing_registry_file(monkeypatch, tmp_path):
+    """audit F3 — a MISSING registry must degrade to OFF at bootstrap, not fall back quietly per query.
+
+    FederationRegistry.load() returns an EMPTY registry for a missing file (it does not raise), and the
+    registry file is gitignored — so on a fresh machine the adapter would build over an empty registry and
+    every read would hit FederationError, which IS on the fallback list. Result: recall silently serves
+    BoB's store forever while looking configured. Same 'passes while doing nothing' trap as the live_slot
+    coupling, through a different door.
+    """
+    from core.memory.bootstrap import _maybe_build_lks_adapter
+    monkeypatch.setenv("MEMORY_LKS_FIRST", "true")
+    monkeypatch.setenv("MEMORY_LKS_INSTANCE", "wiki")
+    monkeypatch.setenv("BOBCLAW_LEDGER_INSTANCES", str(tmp_path / "does_not_exist.json"))
+    assert _maybe_build_lks_adapter(GoodSlotResolver(), object()) == (None, None, False)
+
+
+def test_maybe_build_lks_adapter_on_with_stamped_instance_is_enabled(monkeypatch, tmp_path):
+    """The positive control for the two degrade tests above: a STAMPED instance stays ON."""
+    from core.memory.bootstrap import _maybe_build_lks_adapter
+    from core.memory.lks_adapter import LKSReadAdapter
+    reg = tmp_path / "reg.json"
+    reg.write_text(REG_STAMPED_JSON, encoding="utf-8")
+    monkeypatch.setenv("MEMORY_LKS_FIRST", "true")
+    monkeypatch.setenv("MEMORY_LKS_INSTANCE", "x")
+    monkeypatch.setenv("BOBCLAW_LEDGER_INSTANCES", str(reg))
+    adapter, instance, lks_first = _maybe_build_lks_adapter(GoodSlotResolver(), object())
+    assert isinstance(adapter, LKSReadAdapter) and instance == "x" and lks_first is True
+
+
+def test_maybe_build_lks_adapter_degrades_on_unresolvable_slot(monkeypatch, tmp_path):
+    """A slot that cannot resolve must degrade to OFF at bootstrap, not crash the memory subsystem.
+
+    NOTE (audit F6): this is NOT a live_slot guard — SlotResolvedEmbedder's ctor already resolves
+    embed_text before the live_slot line, so BadSlotResolver raises there and this test passes with or
+    without live_slot. The real live_slot guard is test_maybe_build_lks_adapter_passes_live_slot. This
+    test earns its keep only as a graceful-degrade check on slot misconfiguration.
+    """
+    from core.memory.bootstrap import _maybe_build_lks_adapter
+    from core.memory.exceptions import SlotMisconfigured
+    reg = tmp_path / "reg.json"
+    reg.write_text(REG_JSON, encoding="utf-8")
+    monkeypatch.setenv("MEMORY_LKS_FIRST", "true")
+    monkeypatch.setenv("MEMORY_LKS_INSTANCE", "x")
+    monkeypatch.setenv("BOBCLAW_LEDGER_INSTANCES", str(reg))
+
+    class BadSlotResolver:
+        def get(self, name):
+            raise SlotMisconfigured(name, "not declared")
+
+    assert _maybe_build_lks_adapter(BadSlotResolver(), object()) == (None, None, False)
 
 
 def test_maybe_build_lks_adapter_truthy_parse_matches_config(monkeypatch):

@@ -50,16 +50,18 @@ The council reconciles the panel as follows: option A is the strongest.
 # ─── seat selector (design table E) ──────────────────────────────────────────
 
 def test_resolve_seat_backend_table_e_defaults():
+    """CLI-subscription tier first (generalized from my-bob 9776dfc): the
+    flat-rate CLI logins lead their provider's seat; metered/open fill behind."""
     framer, framer_fb, _ = resolve_seat_backend("framer")
     stress, _, _ = resolve_seat_backend("stress")
     wildcard, _, _ = resolve_seat_backend("wildcard")
     synth, _, _ = resolve_seat_backend("synth")
-    assert framer == "claude_api"
-    assert stress == "gemini_flash"
+    assert framer == "claude_code"
+    assert stress == "agy_code"
     assert wildcard == "deepseek_v4_flash"
     assert synth == "minimax"
-    # framer carries a fallback chain (providers can revoke access).
-    assert framer_fb and framer_fb[0] == "gemini_pro"
+    # framer carries a fallback chain (the Fable-pull lesson).
+    assert framer_fb and framer_fb[0] == "deepseek_v4_flash"
 
 
 def test_resolve_seat_backend_unknown_posture_degrades():
@@ -192,10 +194,10 @@ async def test_panel_worker_returns_idx_carrying_entry():
     with patch("core.nodes.panel._send_to_backend",
                AsyncMock(return_value="framer voice text")):
         out = await panel_worker_node(sub)
-    # COST-2: the entry now carries a post-hoc token estimate + its USD at the
-    # reference rate table. Recompute both from the SAME primitives the node
-    # uses (the seat's real request messages + response) — rate-consistent, not
-    # a magic number.
+    # COST-2 (MS5-C1): the entry now carries a post-hoc token estimate + its USD at
+    # the reference rate table. Recompute both from the SAME primitives the node
+    # uses (the seat's real request messages + response) — rate-consistent, not a
+    # magic number.
     _messages = [
         {"role": "system", "content": _COUNCIL_SYSTEM_BASE},
         {"role": "user", "content": "the shared prompt"},
@@ -495,9 +497,9 @@ def test_build_council_spec_derives_seats_from_roles():
 
 # ─── face registry ───────────────────────────────────────────────────────────
 
-def test_registry_has_24_faces_with_council_split():
+def test_registry_has_23_faces_with_council_split():
     reg = FaceRegistry()
-    assert len(reg) == 24
+    assert len(reg) == 31
     ids = {f.id for f in reg.list_faces()}
     assert "council-max" in ids
     assert "council-lite" in ids

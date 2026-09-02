@@ -1,0 +1,31 @@
+# SC3 fixture — user-supplied subscriptions (the subscriptions YAML the stack auditor cross-refs).
+# A realistic scattered AI-subscription stack. Each sub declares the BoB backends it enables
+# (the join key to routing telemetry); a sub BoB routes nothing for is flagged not-measurable.
+schema_version: 0
+subscriptions:
+  - id: claude-max
+    provider: Anthropic
+    plan: Claude Max 20x
+    monthly_usd: 200.0
+    backends: [claude_code]          # heavy telemetry -> KEEP
+
+  - id: kimi-membership
+    provider: Moonshot
+    plan: Kimi Allegretto 30x
+    monthly_usd: 60.0
+    backends: [kimi_cli, kimi_code]
+    downgrade_to_usd: 20.0           # light telemetry + a cheaper tier known -> DOWNGRADE (~$40 EST)
+
+  - id: gemini-advanced
+    provider: Google
+    plan: Gemini Advanced (annual)
+    monthly_usd: 20.0
+    billing: annual
+    annual_usd: 240.0
+    backends: [gemini_flash, gemini_pro]   # zero telemetry -> CANCEL
+
+  - id: chatgpt-plus
+    provider: OpenAI
+    plan: ChatGPT Plus
+    monthly_usd: 20.0
+    backends: []                     # BoB routes nothing -> REVIEW (not measurable via routing telemetry)

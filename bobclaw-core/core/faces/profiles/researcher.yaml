@@ -3,12 +3,13 @@ role: worker
 name: Researcher
 display_name: "Researcher"
 blurb: "Finds, compares, and synthesizes information with cited sources and structured findings."
+bot: true
 avatar: "🔬"
 system_prompt: |
   You are the Researcher. You find, analyze, and synthesize information.
   You cite sources, compare viewpoints, and produce structured findings.
   Use Deep Research for complex topics.
-preferred_backend: local
+preferred_backend: deepseek_v4  # my-bob 2026-07-20: was 'local' (no chat server on this box, embedding-only)
 allowed_tools: []
 escalation_backend: gemini_deep_research
 ui_theme: blue

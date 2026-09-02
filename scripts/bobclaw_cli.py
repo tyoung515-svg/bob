@@ -68,10 +68,13 @@ async def _get_token(s, gateway: str, password: str, totp_secret: str) -> str:
     return token
 
 
-async def _stream(ws, conv_id: str, text: str, face: str) -> None:
-    await ws.send_json(
-        {"type": "message", "conversation_id": conv_id, "content": text, "face_id": face}
-    )
+async def _stream(ws, conv_id: str, text: str, face: str, *, research: bool = False) -> None:
+    frame = {"type": "message", "conversation_id": conv_id, "content": text, "face_id": face}
+    if research:
+        # Research-lane opt-in (strict JSON true end-to-end: gateway _research_field →
+        # core research_request). Absent ⇒ the frame is byte-identical to before.
+        frame["research"] = True
+    await ws.send_json(frame)
     async for msg in ws:
         if msg.type != aiohttp.WSMsgType.TEXT:
             if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
@@ -109,6 +112,9 @@ async def main() -> None:
     ap.add_argument("--face", default="assistant", help="face/persona id")
     ap.add_argument("--gateway", default="http://localhost:7826")
     ap.add_argument("--conversation", default="", help="resume an existing conversation by id (skip creation)")
+    ap.add_argument("--research", action="store_true",
+                    help="run turns through the research orchestrator (decompose -> fan-out; "
+                         "reads federated corpora when core has RESEARCH_LKS_INSTANCES set)")
     args = ap.parse_args()
     if args.model and args.model.strip().lower() == "local":
         args.model = ""
@@ -161,7 +167,7 @@ async def main() -> None:
                     }
                 )
             if args.message:
-                await _stream(ws, conv_id, args.message, args.face)
+                await _stream(ws, conv_id, args.message, args.face, research=args.research)
             else:
                 print("Interactive chat. Empty line or Ctrl-C to quit.")
                 loop = asyncio.get_event_loop()
@@ -172,7 +178,7 @@ async def main() -> None:
                         break
                     if not text.strip():
                         break
-                    await _stream(ws, conv_id, text, args.face)
+                    await _stream(ws, conv_id, text, args.face, research=args.research)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ BoBClaw Core — Kimi CLI subprocess backend (``kimi_cli``)
 
 Drives the genuine ``kimi`` CLI (``kimi -p``) as a headless one-shot subprocess
 under the Kimi membership login. DISTINCT from ``kimi_code`` (the HTTP membership
-API client) and from codex's ``-p kimi`` — the operator: "Kimi stays in its own CLI,
+API client) and from codex's ``-p kimi`` — Travis: "Kimi stays in its own CLI,
 it's built for it." ``kimi_code`` (HTTP) is the natural escalation when the CLI
 is unavailable.
 
@@ -30,10 +30,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 from typing import Any, AsyncIterator, Optional
 
 from core.config import config
+from core.spawn_context import SpawnContext, resolve_spawn_context
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,25 @@ class KimiCliClient:
         self.conversation_id = conversation_id
         self.last_session_id: Optional[str] = None
 
+    # ── spawn-context seam (intake 2026-07-18) ──────────────────────────────────
+
+    def _spawn_context(self, posture: dict) -> Optional[SpawnContext]:
+        """Build the SpawnContext when the posture carries a descriptor.
+
+        kimi is the one CLI backend that still spawned from the PROJECT cwd
+        (``KIMI_CLI_PROJECT_DIR``) — the exact charter-leak the seam closes. A
+        descriptor moves the spawn into a clean scratch cwd (under
+        ``KIMI_CLI_SCRATCH_ROOT``) with a rendered AGENTS.md.
+        """
+        descriptor = posture.get("spawn_context")
+        if not isinstance(descriptor, dict) or not descriptor:
+            return None
+        return resolve_spawn_context(
+            "kimi_cli",
+            posture,
+            conversation_id=self.conversation_id,
+        )
+
     def _build_argv(
         self, prompt: str, posture: dict, resume_session: Optional[str]
     ) -> list[str]:
@@ -142,8 +163,9 @@ class KimiCliClient:
         other failure (non-zero exit, no reply, missing binary, timeout).
         """
         posture = self.posture if posture is None else posture
+        spawn_ctx = self._spawn_context(posture)
         argv = self._build_argv(prompt, posture, resume_session_id)
-        stdout, stderr, rc = await self._spawn(argv)
+        stdout, stderr, rc = await self._spawn(argv, spawn_ctx=spawn_ctx)
         err = stderr.decode("utf-8", errors="replace").strip()
 
         if rc != 0:
@@ -205,18 +227,29 @@ class KimiCliClient:
             return False
         return bool(stdout.decode("utf-8", errors="replace").strip())
 
-    async def _spawn(self, argv: list[str]) -> tuple[bytes, bytes, Optional[int]]:
+    async def _spawn(
+        self, argv: list[str], spawn_ctx: Optional[SpawnContext] = None
+    ) -> tuple[bytes, bytes, Optional[int]]:
         """Spawn ``kimi -p`` with stdin CLOSED (one-shot; the prompt is an argv
-        value), enforce the timeout, return (stdout, stderr, rc). Raises
-        ``KimiCliError`` on a missing binary or timeout (the child is killed first).
+        value), enforce the timeout, return (stdout, stderr, rc). A spawn
+        context relocates the cwd to its clean scratch dir (legacy: the project
+        dir) and applies its env overrides. Raises ``KimiCliError`` on a
+        missing binary or timeout (the child is killed first).
         """
+        cwd = spawn_ctx.cwd if spawn_ctx is not None else self.cwd
+        env = (
+            {**os.environ, **spawn_ctx.env_overrides}
+            if spawn_ctx is not None and spawn_ctx.env_overrides
+            else None
+        )
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
+                cwd=cwd,
+                env=env,
             )
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             raise KimiCliError(f"kimi CLI not found at {self.cli_path!r}: {exc}") from exc

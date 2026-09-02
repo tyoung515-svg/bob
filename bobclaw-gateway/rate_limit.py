@@ -19,7 +19,9 @@ from client_ip import client_ip
 
 # Paths the rate limiter does not see. /health is skipped to avoid throttling
 # k8s liveness probes; /ws/chat is a long-lived WS handshake (rate-limit per
-# connection makes no sense — message-level limits would be a different layer).
+# connection makes no sense — message-level limits would be a different layer);
+# /ui static assets are public files (not API actions) and a single page load
+# pulls several — rate-limiting them only risks throttling legitimate loads.
 _BYPASS_PATHS: frozenset[str] = frozenset({"/health"})
 _BYPASS_PREFIXES: tuple[str, ...] = ("/ws/chat",)
 
@@ -59,7 +61,8 @@ def _request_key(request: web.Request) -> str:
     user = request.get("user")
     if user and "sub" in user:
         return f"user:{user['sub']}"
-    return f"ip:{client_ip(request)}"
+    remote = client_ip(request)
+    return f"ip:{remote}"
 
 
 def _is_bypassed(path: str) -> bool:

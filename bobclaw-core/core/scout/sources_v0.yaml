@@ -1,0 +1,221 @@
+# Scout sources registry — schema v0 (module M1 / MS8-SC1).
+#
+# Scout rides the Watch-pipe substrate (S1): this file is validated by
+# core.watch.registry.SourcesRegistry (via core.scout.sources.load_scout_sources).
+# It is the FULLER fleet view — every provider BoB actually routes (Anthropic,
+# OpenAI, Google, Moonshot/Kimi, Z.AI/GLM, DeepSeek, MiniMax) plus model registries,
+# local-runtime releases, MCP directories, and community/benchmark channels
+# (MODULES.md M1). The watch registry's shorter list is the generic default; Scout's
+# is the market-hunt surface.
+#
+# NO CREDENTIALS in v0 (inv.): every source is public — auth_required is false
+# (enforced by the shared validator). Authed sources are a forward dependency on S3
+# credential custody (MS8-CC1), not shippable here.
+#
+# Offline/fixture-only (inv. 11): these URLs are never fetched by the M-lane; the
+# first live sweep is a post-merge attended smoke (MEGA-SPRINT-8 §7d).
+version: 0
+
+schedule:
+  cron: "0 8 * * 1"        # weekly, Monday 08:00 UTC — the Scout digest cadence
+  task: "run_watch"
+  face_hint: "assistant"
+  owner: "admin"
+
+sources:
+  # ── provider changelogs + pricing (the fleet BoB routes) ──────────────────
+  - id: anthropic-news
+    name: "Anthropic news / changelog"
+    kind: changelog
+    url: "https://www.anthropic.com/news"
+    provider: anthropic
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: anthropic-pricing
+    name: "Anthropic API pricing"
+    kind: pricing
+    url: "https://www.anthropic.com/pricing"
+    provider: anthropic
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: openai-changelog
+    name: "OpenAI API changelog"
+    kind: changelog
+    url: "https://platform.openai.com/docs/changelog"
+    provider: openai
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: openai-pricing
+    name: "OpenAI API pricing"
+    kind: pricing
+    url: "https://openai.com/api/pricing"
+    provider: openai
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: google-gemini-changelog
+    name: "Google Gemini API changelog"
+    kind: changelog
+    url: "https://ai.google.dev/gemini-api/docs/changelog"
+    provider: google
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: google-gemini-pricing
+    name: "Google Gemini API pricing"
+    kind: pricing
+    url: "https://ai.google.dev/gemini-api/docs/pricing"
+    provider: google
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: moonshot-docs
+    name: "Moonshot / Kimi platform docs + changelog"
+    kind: changelog
+    url: "https://platform.moonshot.ai/docs"
+    provider: moonshot
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: moonshot-pricing
+    name: "Moonshot / Kimi API pricing"
+    kind: pricing
+    url: "https://platform.moonshot.ai/docs/pricing/chat"
+    provider: moonshot
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: zai-docs
+    name: "Z.AI / GLM API docs + release notes"
+    kind: changelog
+    url: "https://docs.z.ai/guides/llm/glm-4.6"
+    provider: zai
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: zai-pricing
+    name: "Z.AI / GLM API pricing"
+    kind: pricing
+    url: "https://docs.z.ai/guides/overview/pricing"
+    provider: zai
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: deepseek-news
+    name: "DeepSeek API news"
+    kind: changelog
+    url: "https://api-docs.deepseek.com/news"
+    provider: deepseek
+    tags: [models, pricing]
+    fingerprint_fields: [title, url]
+
+  - id: deepseek-pricing
+    name: "DeepSeek API pricing"
+    kind: pricing
+    url: "https://api-docs.deepseek.com/quick_start/pricing"
+    provider: deepseek
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: minimax-news
+    name: "MiniMax platform news"
+    kind: changelog
+    url: "https://www.minimax.io/news"
+    provider: minimax
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: minimax-pricing
+    name: "MiniMax API pricing"
+    kind: pricing
+    url: "https://platform.minimax.io/docs/guides/price"
+    provider: minimax
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  # ── model registries ──────────────────────────────────────────────────────
+  - id: hf-trending
+    name: "Hugging Face trending models"
+    kind: registry
+    url: "https://huggingface.co/models?sort=trending"
+    provider: huggingface
+    tags: [models, registry]
+    fingerprint_fields: [title, url]
+
+  - id: ollama-library
+    name: "Ollama model library"
+    kind: registry
+    url: "https://ollama.com/library"
+    provider: ollama
+    tags: [local, registry]
+    fingerprint_fields: [title, url]
+
+  - id: lmstudio-models
+    name: "LM Studio model catalog"
+    kind: registry
+    url: "https://lmstudio.ai/models"
+    provider: lmstudio
+    tags: [local, registry]
+    fingerprint_fields: [title, url]
+
+  # ── local runtime releases ────────────────────────────────────────────────
+  - id: llamacpp-releases
+    name: "llama.cpp releases"
+    kind: release
+    url: "https://github.com/ggml-org/llama.cpp/releases"
+    provider: ggml
+    tags: [local, releases]
+    fingerprint_fields: [title, url]
+
+  # ── MCP server directories ────────────────────────────────────────────────
+  - id: mcp-servers-official
+    name: "MCP reference servers directory"
+    kind: registry
+    url: "https://github.com/modelcontextprotocol/servers"
+    provider: mcp
+    tags: [mcp, tools]
+    fingerprint_fields: [title, url]
+
+  - id: mcp-registry-smithery
+    name: "Smithery MCP directory"
+    kind: registry
+    url: "https://smithery.ai"
+    provider: smithery
+    tags: [mcp, tools]
+    fingerprint_fields: [title, url]
+
+  # ── community + benchmark drops ───────────────────────────────────────────
+  - id: localllama
+    name: "r/LocalLLaMA"
+    kind: community
+    url: "https://www.reddit.com/r/LocalLLaMA"
+    provider: reddit
+    tags: [community]
+    fingerprint_fields: [title, url]
+
+  - id: hn-frontpage
+    name: "Hacker News front page"
+    kind: community
+    url: "https://news.ycombinator.com"
+    provider: hn
+    tags: [community]
+    fingerprint_fields: [title, url]
+
+  - id: lmarena-leaderboard
+    name: "LMArena leaderboard (benchmark drops)"
+    kind: registry
+    url: "https://lmarena.ai/leaderboard"
+    provider: lmarena
+    tags: [benchmark, models]
+    fingerprint_fields: [title, url]
+
+  - id: aider-leaderboard
+    name: "Aider polyglot coding leaderboard"
+    kind: docs
+    url: "https://aider.chat/docs/leaderboards/"
+    provider: aider
+    tags: [benchmark, models]
+    fingerprint_fields: [title, url]

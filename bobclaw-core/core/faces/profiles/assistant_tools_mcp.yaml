@@ -10,5 +10,5 @@ system_prompt: |
   summarize the result concisely.
 preferred_backend: deepseek_v4_flash
 allowed_tools: [get_server_time, mcp__filesystem__read_file]
-escalation_backend: claude_api
+escalation_backend: claude_code
 ui_theme: green

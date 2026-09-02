@@ -1,0 +1,25 @@
+id: research-forest
+name: "Research Forest"
+audience: "Travis first; any BoB user with standing questions"
+first_user: Travis
+wow_flow: "seed a program -> watch it observe for days -> first delta-triggered epoch proposes hypotheses"
+faces:
+  - ref: researcher
+    io_contract: text
+tools: []                                   # forest ops surface later via MCP; v1 is core + scheduler driven
+pipes:
+  - research
+  - council
+lks_namespace: research_forest
+verification_class: claim-ratchet           # measurement-entailment is an EXTENSION of claim-ratchet (SPEC §3, R4-valid)
+cost_posture: "local-first; metered epochs delta-triggered; EST framing mandatory"
+always_human:
+  - "fork approval"
+  - "experiment above auto-budget"
+  - "crystallize-out merge"
+  - "tree archive"
+dependencies:
+  - "S1 watch pipe (pattern)"
+  - "scheduler seam (W0)"
+  - "M0 loader"
+watch_subscriptions: []

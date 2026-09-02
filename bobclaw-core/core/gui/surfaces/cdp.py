@@ -237,7 +237,7 @@ def _terminate_process(proc: subprocess.Popen) -> None:
     ``launch()`` error path (audit r2: the error path must be as forceful as close()).
 
     On Windows a belt-and-suspenders PowerShell ``Stop-Process -Id <pid>`` follows
-    ``terminate()`` (by PID ONLY — never a broad ``chrome.exe`` kill; the operator has his own
+    ``terminate()`` (by PID ONLY — never a broad ``chrome.exe`` kill; Travis has his own
     Chrome open).
     """
     try:

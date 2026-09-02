@@ -28,8 +28,9 @@ verified facts the code depends on:
   concurrency-safe (distinct conversation ⇒ distinct cwd ⇒ distinct key).
 * **Errors / throttle = exit code + stderr** (no structured stdout). A non-zero
   exit whose stderr matches a throttle marker raises ``AgyThrottled``.
-* **Segregated home.** Each spawn runs with ``USERPROFILE=AGY_HOME`` (when set
-  AND seeded) so agy reads a BoBClaw-owned ``~/.gemini`` — keeping any strict
+* **Segregated home.** Each spawn runs with ``USERPROFILE=AGY_HOME`` and
+  ``HOME=AGY_HOME`` (when set AND seeded — Windows CLIs read USERPROFILE, POSIX
+  CLIs read HOME) so agy reads a BoBClaw-owned ``~/.gemini`` — keeping any strict
   posture OFF the user's own interactive agy. Auth carries via the seeded home.
 
 Streaming is message-level (one block) — agy buffers the whole reply.
@@ -43,6 +44,7 @@ import os
 from typing import Any, AsyncIterator, Optional
 
 from core.config import config
+from core.spawn_context import SpawnContext, resolve_spawn_context
 
 logger = logging.getLogger(__name__)
 
@@ -182,10 +184,16 @@ class AntigravityClient:
         return os.path.join(self._home_dir(), ".gemini", "antigravity-cli")
 
     def _subprocess_env(self) -> Optional[dict]:
-        """Env override pointing agy at the segregated home (or None to inherit)."""
+        """Env override pointing agy at the segregated home (or None to inherit).
+
+        BOTH spellings are set: Windows CLIs resolve the home from USERPROFILE,
+        POSIX CLIs from HOME. Setting only USERPROFILE (the original code) made
+        the segregated-home hardening a silent no-op on Linux — agy kept reading
+        the interactive user's real ``~/.gemini``.
+        """
         home = (config.AGY_HOME or "").strip()
         if home and os.path.isdir(home):
-            return {**os.environ, "USERPROFILE": home}
+            return {**os.environ, "USERPROFILE": home, "HOME": home}
         return None
 
     # ── working dir (the capture key) ───────────────────────────────────────────
@@ -206,6 +214,26 @@ class AntigravityClient:
             posture.get("read_repo")
         )
 
+    # ── spawn-context seam (intake 2026-07-18) ──────────────────────────────────
+
+    def _spawn_context(self, posture: dict) -> Optional[SpawnContext]:
+        """Build the SpawnContext when the posture carries a descriptor.
+
+        The scratch dir is the client's OWN ``_work_dir()`` — that cwd is agy's
+        uuid-capture key (``last_conversations.json`` maps cwd → uuid), so the
+        spawn MUST keep running from it. The builder just renders the context
+        files into it and hands back the env overrides.
+        """
+        descriptor = posture.get("spawn_context")
+        if not isinstance(descriptor, dict) or not descriptor:
+            return None
+        return resolve_spawn_context(
+            "agy_code",
+            posture,
+            scratch_dir=self._work_dir(),
+            conversation_id=self.conversation_id,
+        )
+
     # ── uuid capture + reply read ───────────────────────────────────────────────
 
     def _capture_uuid(self, work_dir: str) -> Optional[str]:
@@ -223,9 +251,17 @@ class AntigravityClient:
             return None
         if not isinstance(mapping, dict):
             return None
-        target = os.path.normcase(os.path.normpath(work_dir))
+
+        def _norm(p: str) -> str:
+            # Separator-insensitive on EVERY platform: agy may store a
+            # backslashed key while the query cwd is forward-slashed (or vice
+            # versa). Windows normcase already folds separators + case; POSIX
+            # normcase is a no-op, so fold backslashes explicitly first.
+            return os.path.normcase(os.path.normpath(str(p).replace("\\", "/")))
+
+        target = _norm(work_dir)
         for key, uuid in mapping.items():
-            if os.path.normcase(os.path.normpath(str(key))) == target:
+            if _norm(key) == target:
                 return str(uuid)
         return None
 
@@ -248,15 +284,22 @@ class AntigravityClient:
 
     # ── prompt briefing ─────────────────────────────────────────────────────────
 
-    def _brief_prompt(self, prompt: str, posture: dict) -> str:
+    def _brief_prompt(
+        self, prompt: str, posture: dict, spawn_ctx: Optional[SpawnContext] = None
+    ) -> str:
         """Inline the repo ``CLAUDE.md`` (repo-read posture) and, by default, steer
         the turn to a no-tool answer so an unattended spawn cannot block on a
         permission prompt (the strict tool-deny settings schema is an A2 follow-up).
+
+        A CLEAN spawn context (descriptor present, ``project_access`` False)
+        suppresses the charter inline — that briefing is exactly the leak the
+        spawn-context seam closes. The no-tool steer stays.
         """
         parts: list[str] = []
+        clean_spawn = spawn_ctx is not None and not spawn_ctx.project_access
         # ``brief`` inlines CLAUDE.md WITHOUT granting tool/--add-dir access, so a
         # planner can be project-aware while staying a safe no-tool turn.
-        if posture.get("brief") or self._is_repo_read(posture):
+        if not clean_spawn and (posture.get("brief") or self._is_repo_read(posture)):
             claude_md = os.path.join(self.repo, "CLAUDE.md")
             try:
                 with open(claude_md, "r", encoding="utf-8", errors="replace") as fh:
@@ -278,7 +321,12 @@ class AntigravityClient:
     # ── argv construction ──────────────────────────────────────────────────────
 
     def _build_argv(
-        self, prompt: str, *, posture: dict, resume_uuid: Optional[str]
+        self,
+        prompt: str,
+        *,
+        posture: dict,
+        resume_uuid: Optional[str],
+        spawn_ctx: Optional[SpawnContext] = None,
     ) -> list[str]:
         argv = [self.cli_path, "-p", prompt]
         if resume_uuid:
@@ -287,7 +335,10 @@ class AntigravityClient:
         model = posture.get("model")
         if model:
             argv += ["--model", str(model)]
-        if self._is_repo_read(posture):
+        # A CLEAN spawn context withholds the repo read grant (spawn-context seam).
+        if self._is_repo_read(posture) and (
+            spawn_ctx is None or spawn_ctx.project_access
+        ):
             argv += ["--add-dir", str(self.repo)]
         add_dirs = posture.get("add_dirs")
         if add_dirs:
@@ -317,13 +368,19 @@ class AntigravityClient:
         """
         posture = self.posture if posture is None else posture
         work_dir = self._work_dir()
+        spawn_ctx = self._spawn_context(posture)
         argv = self._build_argv(
-            self._brief_prompt(prompt, posture),
+            self._brief_prompt(prompt, posture, spawn_ctx),
             posture=posture,
             resume_uuid=resume_session_id,
+            spawn_ctx=spawn_ctx,
         )
 
-        stdout, stderr, returncode = await self._spawn(argv, cwd=work_dir)
+        stdout, stderr, returncode = await self._spawn(
+            argv,
+            cwd=work_dir,
+            env_overrides=spawn_ctx.env_overrides if spawn_ctx is not None else None,
+        )
         err = stderr.decode("utf-8", errors="replace").strip()
 
         if returncode != 0:
@@ -414,10 +471,12 @@ class AntigravityClient:
     # ── internals ──────────────────────────────────────────────────────────────
 
     async def _spawn(
-        self, argv: list[str], cwd: str
+        self, argv: list[str], cwd: str, env_overrides: Optional[dict] = None
     ) -> tuple[bytes, bytes, Optional[int]]:
         """Spawn the CLI with **stdin closed** (else it hangs), enforce the timeout,
-        return (stdout, stderr, returncode). Injects the segregated home env.
+        return (stdout, stderr, returncode). Injects the segregated home env;
+        spawn-context ``env_overrides`` layer on top (idempotent for the home
+        keys — the builder derives them from the same AGY_HOME).
         """
         # Defensive: fail loud BEFORE spawning if the argv (which INCLUDES the -p
         # prompt for agy) would overflow the OS command-line limit.
@@ -428,6 +487,9 @@ class AntigravityClient:
                 f"E2BIG); agy reads the prompt from argv (-p), and brief:true inlines "
                 f"CLAUDE.md — shrink the prompt / drop brief, or an --add-dir is oversized"
             )
+        env = self._subprocess_env()
+        if env_overrides:
+            env = {**(env if env is not None else os.environ), **env_overrides}
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -435,7 +497,7 @@ class AntigravityClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                env=self._subprocess_env(),
+                env=env,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise AgyError(f"agy CLI not found at {self.cli_path!r}: {exc}") from exc

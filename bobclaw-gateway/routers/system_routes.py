@@ -18,13 +18,17 @@ router = web.RouteTableDef()
 
 @router.get("/health")
 async def health(request: web.Request) -> web.Response:
-    """Basic health check — accessible without authentication.
-
-    Deliberately minimal: no internal service URLs or config are exposed on this
-    unauthenticated endpoint (recon surface if the gateway is ever placed behind a
-    reverse proxy). The service map lives behind auth at /system/config.
-    """
-    return web.json_response({"status": "ok", "service": "bobclaw-gateway"})
+    """Basic health check — accessible without authentication."""
+    return web.json_response(
+        {
+            "status": "ok",
+            "service": "bobclaw-gateway",
+            "services": {
+                "core": config.CORE_URL,
+                "claude_pipeline": config.CLAUDE_PIPELINE_URL,
+            },
+        }
+    )
 
 
 @router.get("/system/ports")
@@ -35,7 +39,6 @@ async def system_ports(request: web.Request) -> web.Response:
             "gateway": config.PORT,
             "core": 7825,
             "claude_pipeline": 7823,
-            "canopy": 7822,
         }
     )
 
@@ -52,7 +55,6 @@ async def system_config(request: web.Request) -> web.Response:
             "refresh_token_days": config.REFRESH_TOKEN_DAYS,
             "core_url": config.CORE_URL,
             "claude_pipeline_url": config.CLAUDE_PIPELINE_URL,
-            "canopy_url": config.CANOPY_URL,
             "log_level": config.LOG_LEVEL,
             "totp_enabled": bool(config.TOTP_SECRET),
         }

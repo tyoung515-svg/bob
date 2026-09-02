@@ -75,9 +75,9 @@ Context windows are finite. When the human says **"Initiate Checkpoint,"** the d
 
 The human then starts a fresh chat context seeded from only that document. The checkpoint document becomes the new foundation.
 
-**Trigger threshold — SESSION-001 measurement:** the operator logged that the full SESSION-001 chain (all rounds, all voices, plus one additional broadcast round) consumed approximately **~30k tokens per model**. With typical context windows of 128k–200k tokens, this means a hard ceiling of roughly 4–6 equivalent sessions before context exhaustion — but quality degradation will appear long before the hard limit.
+**Trigger threshold — SESSION-001 measurement:** Travis logged that the full SESSION-001 chain (all rounds, all voices, plus one additional broadcast round) consumed approximately **~30k tokens per model**. With typical context windows of 128k–200k tokens, this means a hard ceiling of roughly 4–6 equivalent sessions before context exhaustion — but quality degradation will appear long before the hard limit.
 
-**Recommended trigger (v1.0):** Initiate Checkpoint after any session where the full chain exceeds **~25k tokens**, or when a voice begins noticeably re-summarizing ratified concepts (a behavioral signal that context is getting crowded). the operator to confirm or revise in SESSION-002.
+**Recommended trigger (v1.0):** Initiate Checkpoint after any session where the full chain exceeds **~25k tokens**, or when a voice begins noticeably re-summarizing ratified concepts (a behavioral signal that context is getting crowded). Travis to confirm or revise in SESSION-002.
 
 ---
 
@@ -108,7 +108,7 @@ For any significant prior claim, a voice in stress-testing mode asks:
 ## 4. Session Infrastructure
 
 ### `[P-01]` Full Chain Delivery Standard
-*Proposed by: Claude. Confirmed by the operator: SESSION-001.*
+*Proposed by: Claude. Confirmed by Travis: SESSION-001.*
 
 The human **always passes the complete conversation history** to each council member. This is the non-negotiable foundation. Without it, council members operate as a telephone chain rather than a deliberative body.
 
@@ -124,7 +124,7 @@ A living document maintained between sessions. Contains:
 - Key insights and position deltas from past sessions
 - Decision log (closed proposals — prevents relitigating)
 
-Location: TBD by the operator (Google Doc, Notion, or flat file loaded at session start).
+Location: TBD by Travis (Google Doc, Notion, or flat file loaded at session start).
 
 ---
 
@@ -152,7 +152,7 @@ Every council response **must end** with this block. The Synthesizer voice in ea
 | # | Question | Raised By |
 |---|---|---|
 | Q-01 | How many voices will the council have long-term? | Claude |
-| Q-02 | ~~What is the checkpointing trigger threshold?~~ **Measured: ~30k tokens/model for SESSION-001. Recommended trigger: ~25k tokens or behavioral re-summarization signal.** the operator to ratify. | Gemini |
+| Q-02 | ~~What is the checkpointing trigger threshold?~~ **Measured: ~30k tokens/model for SESSION-001. Recommended trigger: ~25k tokens or behavioral re-summarization signal.** Travis to ratify. | Gemini |
 | Q-03 | Where does the Session Memory Document live? | Claude |
 | Q-04 | Should role definitions be fixed or fluid per task? | Claude |
 | Q-05 | Conflict resolution: vote, escalate to human, designated arbiter? | Local |
@@ -164,7 +164,7 @@ Every council response **must end** with this block. The Synthesizer voice in ea
 
 | Version | Date | Change | Ratified By |
 |---|---|---|---|
-| v1.0 | 2026-03-05 | Initial ratification — SESSION-001 | Claude, Gemini, Local + the operator |
+| v1.0 | 2026-03-05 | Initial ratification — SESSION-001 | Claude, Gemini, Local + Travis |
 
 ---
 

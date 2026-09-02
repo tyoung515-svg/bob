@@ -93,6 +93,45 @@ class TestConfigValidation:
         BoBClawGatewayConfig.validate()
 
 
+class TestHostDefault:
+    """The gateway HOST default must be loopback-only (127.0.0.1), matching the
+    release repo (bob). The BOBCLAW_GATEWAY_HOST env override must still win, so
+    an operator can re-expose on 0.0.0.0 when they intend to."""
+
+    def test_host_default_is_loopback(self):
+        # No BOBCLAW_GATEWAY_HOST is set in the test env (conftest does not set
+        # it and .secrets does not carry it), so the class attribute reflects
+        # the compiled-in default.
+        assert BoBClawGatewayConfig.HOST == "127.0.0.1"
+
+    def test_host_env_override_wins(self):
+        """Setting BOBCLAW_GATEWAY_HOST overrides the safe default (env still
+        wins). Exercised in a clean subprocess that imports the real config.py
+        with the env var set — so it truly re-evaluates config.py's getenv
+        without perturbing the in-process config singleton other tests share
+        (an in-process importlib.reload of `config` disturbs the shared app)."""
+        import os
+        import subprocess
+
+        gateway_dir = Path(__file__).resolve().parents[1]
+        env = dict(os.environ)
+        env["BOBCLAW_GATEWAY_HOST"] = "0.0.0.0"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import config; print(config.BoBClawGatewayConfig.HOST)",
+            ],
+            cwd=str(gateway_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "0.0.0.0", (result.stdout, result.stderr)
+
+
 class TestUnsafeStartupBypass:
     """Integration tests for the --skip-validation gating in main()."""
 

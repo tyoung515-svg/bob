@@ -25,5 +25,5 @@ system_prompt: |
      deviations report — even if the change is defensible.
 preferred_backend: kimi_code
 allowed_tools: []
-escalation_backend: claude_api
+escalation_backend: claude_code
 ui_theme: cyan

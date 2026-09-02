@@ -1,0 +1,28 @@
+# Fixture: a valid Scout dossier — an MCP tool absorb candidate (no cost change).
+schema_version: 0
+id: mcp-fetch-server-2026-07
+title: "New MCP fetch server trending"
+summary: "A community MCP fetch server is trending; candidate for a manifest-diff proposal (SC2)."
+category: tool
+sources_ref: scout/sources_v0.yaml
+claims:
+  - id: c1-trending
+    statement: "An MCP 'fetch' server is trending on the Smithery directory."
+    evidence:
+      - source_id: mcp-registry-smithery
+        url: "https://smithery.ai/server/fetch"
+        excerpt: "fetch — retrieve and convert web content for LLM use; high install count."
+        retrieved_at: "2026-07-07T07:30:00+00:00"
+      - source_id: mcp-servers-official
+        url: "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch"
+        excerpt: "Reference fetch server listed in the official servers directory."
+    cost_impact:
+      framing: EST
+      direction: no_change
+      note: "Local MCP server; no per-call API cost."
+    maturity: beta
+    verification:
+      vclass: claim-ratchet
+      status: unverified
+      note: "Popularity noted; capability claims not yet ratcheted."
+    tags: [mcp, tool, absorb-candidate]

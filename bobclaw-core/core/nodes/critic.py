@@ -89,6 +89,7 @@ async def run_critic(
     worker_output: str,
     critic_backend: str,
     prompt_template: Optional[str] = None,
+    fallback_chain: Optional[list[str]] = None,
 ) -> tuple[str, list[str]]:
     from core.config import config
 
@@ -102,10 +103,15 @@ async def run_critic(
     # Primary critic, then a healthy stand-in on a HARD failure (timeout / HTTP error —
     # e.g. Z.AI GLM's balance-exhausted 429). A parse failure is NOT a backend failure,
     # so it does not trigger the stand-in (the backend answered, just badly).
+    # An explicit ``fallback_chain`` (e.g. a team's worker-audit escalation
+    # minimax → kimi_code → deepseek_v4) overrides the single global fallback.
     backends = [critic_backend]
-    fallback = config.CRITIC_FALLBACK_BACKEND
-    if fallback and fallback != critic_backend:
-        backends.append(fallback)
+    if fallback_chain is not None:
+        backends.extend(b for b in fallback_chain if b and b != critic_backend)
+    else:
+        fallback = config.CRITIC_FALLBACK_BACKEND
+        if fallback and fallback != critic_backend:
+            backends.append(fallback)
 
     last_reason = "critic_unavailable: no critic backend"
     for idx, backend in enumerate(backends):

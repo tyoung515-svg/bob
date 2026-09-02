@@ -3,9 +3,16 @@ Shared fixtures for bobclaw-core test suite.
 """
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+# Test baselines must win over the repo .secrets file: core.config loads
+# .secrets/bobclaw.env with override=False at import, so anything set here
+# first is immune to local env drift (e.g. a real KIMI_MODEL override breaking
+# the code-default guard in test_kimi_backend).
+os.environ.setdefault("KIMI_MODEL", "kimi-k2.7-code")
 
 
 @pytest.fixture(autouse=True)

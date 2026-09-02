@@ -227,7 +227,11 @@ async def test_check_tool_access_filters_disallowed_tools(monkeypatch, _patch_ev
 
 @pytest.mark.asyncio
 async def test_non_tool_face_path_unchanged(monkeypatch, _patch_event_log):
-    """A normal deepseek_v4_flash turn on a non-tool face stays byte-identical."""
+    """A normal deepseek_v4_flash turn on a non-tool face stays byte-identical.
+
+    Uses ``reviewer`` (``allowed_tools: []``) — ``assistant`` now carries the
+    read-only tools and takes the tool loop on deepseek_v4_flash.
+    """
     captured_calls: list = []
 
     async def _fake_stream(messages, backend, model_override=None):
@@ -244,7 +248,7 @@ async def test_non_tool_face_path_unchanged(monkeypatch, _patch_event_log):
     state = {
         "task": "Say hello",
         "backend": "deepseek_v4_flash",
-        "face_id": "assistant",
+        "face_id": "reviewer",
         "messages": [],
         "approval_response": None,
         "model_override": None,

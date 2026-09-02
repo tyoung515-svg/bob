@@ -1,49 +1,28 @@
-"""Single-writer fencing for one storage-backed collection family.
+"""MS2-C4 — single-writer write fence (OD#2/A) + BoB-memory registration helpers.
 
-The fence holds one OS-level lock for the lifetime of a BoB memory collection family. Its identity
-is the canonical storage resource plus collection prefix, so a dimension migration remains under the
-same lock. Family membership is deliberately strict: only ``<prefix>_<positive ASCII decimal>``
-collections are writable. The provider imports that exact predicate for delete/scroll selection, so
-provider selection is always a subset of fence authorization.
-
-The fence is same-machine only. Cross-machine or containerized writers that reach the same endpoint
-remain outside the OSS single-user deployment boundary; distributed exclusion requires a store-side
-lease. Zvec deployments must use one canonical instance-root spelling: UNC and drive-letter aliases are
-not equated, although case variants of the same spelling are. An absent Zvec root can still be replaced
-by a junction between identity canonicalization and post-authorization creation. v0.98 accepts this
-junction-swap race under the same non-adversarial, same-machine posture ratified for G-2. v0.99
-hardening should create/open through a stable parent directory handle and revalidate final-path identity
-before use. Registry state is not a self-ACL for BoB's family: registration preserves collection uniqueness,
-while construction fails closed if a non-BoB registry instance occupies any family collection. External
-corpora retain their registry ACL path through ``lks_adapter``.
+Additive, self-contained module for bobclaw-core (Python 3.13). Implements a fail-closed write fence that
+permits a write ONLY to a collection whose federation-registry ACL declares the fence owner as the single
+writer with a write-capable mode (single-writer-per-collection, DECISIONS-MS2 OD#2 = A). The fence *only
+reads* from the registry — it never mutates a store or a client; an unregistered / un-owned / un-ACL'd /
+garbled-ACL / non-write-mode target is REFUSED, not allowed. Closes the ``bobclaw__768``-in-LKS two-writer
+footgun: BoB writes ONLY its own agent-memory collection; corpus collections (owned by the LKS rebuild) are
+read-only to BoB (C3). Registration helpers stamp the C2 embed fingerprint + acl meta, then delegate to the
+existing ``FederationRegistry.register``/``update`` (federation.py is NOT edited). Consumed by the
+``QdrantRetrievalProvider`` optional ``write_fence`` seam (C4) and the C5/C6 cut-over.
 """
 from __future__ import annotations
 
 import copy
-import errno
-import hashlib
-import ipaddress
-import logging
-import os
-from pathlib import Path
-import re
-import subprocess
-import tempfile
 from typing import Iterable, Sequence
-from urllib.parse import urlsplit
 
-from filelock import FileLock, Timeout
-
-from core.ledger.federation import FederationRegistry
+from core.ledger.federation import FederationRegistry, FederationError
 from core.memory.exceptions import ACLViolation
-from core.memory.lks_adapter import InstanceACL
+from core.memory.lks_adapter import InstanceACL, read_instance_acl
 from core.memory.fingerprint import EmbedFingerprint, stamp_meta
-
-log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Write modes retained for federation-owned external corpus ACLs
+# Write modes that allow writes (fail-closed: unknown/read-only modes are denied)
 # ---------------------------------------------------------------------------
 
 _WRITE_MODES = frozenset({"rw", "w", "write", "read-write", "wo", "write-only"})
@@ -54,16 +33,19 @@ _WRITE_MODES = frozenset({"rw", "w", "write", "read-write", "wo", "write-only"})
 # ---------------------------------------------------------------------------
 
 class WriteFenceViolation(ACLViolation):
-    """A write refused by the single-writer fence (an ACLViolation subclass)."""
+    """A write refused by the single-writer fence (an ACLViolation subclass — fail-closed)."""
     pass
 
 
 # ---------------------------------------------------------------------------
-# Federation ACL helper (external corpora remain on this explicit ACL path)
+# Enforcement helper
 # ---------------------------------------------------------------------------
 
 def enforce_write_acl(acl: InstanceACL, writer_id: str, *, context: str = "") -> None:
-    """Raise unless an external instance ACL grants this writer write access."""
+    """Raise WriteFenceViolation unless acl.mode permits writes AND acl.writer == writer_id."""
+    # Normalize whitespace/case on BOTH sides of every comparison so trivial registry whitespace
+    # (e.g. " rw" / " bobclaw ") can never spuriously DENY a legitimate owned write (mirrors the
+    # reader/mode normalization C3's read_instance_acl already applies). A non-str/None writer fails closed.
     mode = acl.mode.strip().lower() if isinstance(acl.mode, str) else acl.mode
     if mode not in _WRITE_MODES:
         raise WriteFenceViolation(
@@ -81,265 +63,7 @@ def enforce_write_acl(acl: InstanceACL, writer_id: str, *, context: str = "") ->
             context or "instance",
             f"writer {acl.writer!r} != owner {writer_id!r}: single-writer cross-write refused",
         )
-
-
-# ---------------------------------------------------------------------------
-# Family identity and lock-directory helpers
-# ---------------------------------------------------------------------------
-
-_DEFAULT_QDRANT_PORT = 6333
-_LOCK_DIR_ENV = "BOBCLAW_WRITE_FENCE_LOCK_DIR"
-BOBCLAW_MEMORY_INSTANCE = "bobclaw-memory"
-BOBCLAW_MEMORY_COLLECTION = "bobclaw__768"
-BOBCLAW_OWNER = "bobclaw"
-LKS_OWNER = "lks"
-
-
-def is_collection_in_family(collection: str, prefix: str) -> bool:
-    """Return whether *collection* is exactly one valid member of *prefix*'s family.
-
-    The explicit ``[0-9]`` class is intentional: ``\\d`` would admit Unicode digits,
-    and dimension zero is never an emitted Qdrant collection.
-    """
-    if not isinstance(collection, str) or not isinstance(prefix, str):
-        return False
-    return re.fullmatch(
-        r"^" + re.escape(prefix) + r"_[1-9][0-9]*$", collection
-    ) is not None
-
-
-def _prefix_from_collection(collection: str) -> str:
-    """Derive a family prefix from a valid collection for legacy constructor callers."""
-    if not isinstance(collection, str) or not collection.strip():
-        raise WriteFenceViolation(str(collection), "collection must be a non-empty string")
-    match = re.fullmatch(r"(.+)_[1-9][0-9]*", collection.strip())
-    if match is None:
-        raise WriteFenceViolation(
-            collection,
-            "collection must end in a positive ASCII decimal dimension; pass collection_prefix explicitly",
-        )
-    return match.group(1)
-
-
-def canonicalize_qdrant_url(qdrant_url: str) -> str:
-    """Return the deterministic endpoint token used in the family lock identity.
-
-    No DNS is consulted. ``localhost``, all IPv4 loopback aliases, and IPv6 loopback
-    are folded to ``localhost``; non-loopback hosts retain their textual spelling.
-    """
-    if not isinstance(qdrant_url, str) or not qdrant_url.strip():
-        raise ValueError("qdrant_url must be a non-empty URL")
-
-    parsed = urlsplit(qdrant_url.strip())
-    if not parsed.scheme or not parsed.hostname:
-        raise ValueError(f"qdrant_url must include a scheme and host: {qdrant_url!r}")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("qdrant_url must not include userinfo")
-
-    scheme = parsed.scheme.lower()
-    host = parsed.hostname.lower()
-    if host == "localhost":
-        host = "localhost"
-    else:
-        try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
-            address = None
-        if address is not None and address.is_loopback:
-            host = "localhost"
-        elif ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-
-    port = parsed.port or _DEFAULT_QDRANT_PORT
-    path = parsed.path.rstrip("/")
-    suffix = path
-    if parsed.query:
-        suffix += f"?{parsed.query}"
-    return f"{scheme}://{host}:{port}{suffix}"
-
-
-def canonicalize_zvec_instance_root(instance_root: str | Path) -> str:
-    """Return the canonical absolute Zvec family-lock token.
-
-    The normalized absolute path is passed through ``realpath`` so an existing
-    junction or symlink alias shares the target's lock. For an absent first-boot
-    root, ``realpath`` remains existence-independent normalization and performs
-    no creation. UNC and drive-letter aliases are intentionally not equated.
-    """
-    if not isinstance(instance_root, (str, Path)):
-        raise ValueError("zvec instance_root must be a path string or Path")
-    raw_root = os.fspath(instance_root)
-    if not raw_root.strip():
-        raise ValueError("zvec instance_root must be a non-empty path")
-    absolute_root = os.path.normpath(os.path.abspath(raw_root))
-    return os.path.normcase(os.path.normpath(os.path.realpath(absolute_root)))
-
-
-def _resolve_lock_dir(lock_dir: str | Path | None) -> Path:
-    """Resolve the machine-global lock directory, with a test-only env override."""
-    if lock_dir is not None:
-        return Path(lock_dir).expanduser().resolve()
-
-    override = os.environ.get(_LOCK_DIR_ENV)
-    if override:
-        return Path(override).expanduser().resolve()
-
-    if os.name == "nt":
-        program_data = os.environ.get("ProgramData")
-        if not program_data:
-            raise WriteFenceViolation(
-                r"%ProgramData%\bobclaw\locks",
-                "ProgramData is not set; cannot resolve the machine-global write-lock directory",
-            )
-        return (Path(program_data) / "bobclaw" / "locks").resolve()
-
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime_dir:
-        return (Path(runtime_dir) / "bobclaw").resolve()
-    return Path("/var/lock/bobclaw").resolve()
-
-
-def _is_programdata_lock_dir(lock_dir: Path) -> bool:
-    """Return whether this is a ProgramData-backed machine-global lock directory."""
-    if os.name != "nt":
-        return False
-    program_data = os.environ.get("ProgramData")
-    if not program_data:
-        return False
-    try:
-        lock_dir.resolve().relative_to(Path(program_data).resolve())
-    except ValueError:
-        return False
-    return True
-
-
-def _set_windows_lock_dir_acl(lock_dir: Path) -> None:
-    """Grant a locale-independent explicit ACL to the new ProgramData lock directory."""
-    command = [
-        "icacls",
-        str(lock_dir),
-        "/inheritance:r",
-        "/grant:r",
-        "*S-1-5-18:(OI)(CI)F",       # LocalSystem
-        "*S-1-5-32-544:(OI)(CI)F",   # BUILTIN\\Administrators
-        "*S-1-5-32-545:(OI)(CI)M",   # BUILTIN\\Users: create/open/delete lock files
-    ]
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        raise WriteFenceViolation(
-            str(lock_dir),
-            f"could not set explicit ProgramData write-lock ACL: {exc}",
-        ) from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise WriteFenceViolation(
-            str(lock_dir),
-            f"could not set explicit ProgramData write-lock ACL: {detail or result.returncode}",
-        )
-
-
-def _prepare_lock_dir(lock_dir: Path) -> Path:
-    """Create and prove the lock directory is writable; never fall back elsewhere."""
-    created = not lock_dir.exists()
-    try:
-        lock_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:
-        raise WriteFenceViolation(
-            str(lock_dir),
-            f"write-lock directory could not be created: {exc}",
-        ) from exc
-
-    if not lock_dir.is_dir():
-        raise WriteFenceViolation(
-            str(lock_dir),
-            "write-lock path exists but is not a directory",
-        )
-
-    if created and _is_programdata_lock_dir(lock_dir):
-        _set_windows_lock_dir_acl(lock_dir)
-
-    probe_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", prefix=".bobclaw-write-probe-", dir=lock_dir, delete=False
-        ) as probe:
-            probe_path = Path(probe.name)
-    except Exception as exc:
-        raise WriteFenceViolation(
-            str(lock_dir),
-            f"write-lock directory is not writable: {exc}",
-        ) from exc
-    finally:
-        if probe_path is not None:
-            try:
-                probe_path.unlink()
-            except OSError:
-                pass
-    return lock_dir
-
-
-def _assert_lock_file_openable(lock_path: Path) -> None:
-    """Surface ACL denial before filelock can compress it into a timeout."""
-    try:
-        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT)
-    except OSError as exc:
-        if isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM):
-            raise PermissionError(exc.errno, exc.strerror, str(lock_path)) from exc
-        raise
-    else:
-        os.close(descriptor)
-
-
-def _is_permission_failure(exc: OSError) -> bool:
-    return isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM)
-
-
-# ---------------------------------------------------------------------------
-# Registry family ownership validation
-# ---------------------------------------------------------------------------
-
-def assert_registry_family_available(
-    registry: FederationRegistry, collection_prefix: str
-) -> None:
-    """Refuse external family ownership or misuse of BoB's reserved name."""
-    try:
-        records = registry.list()
-    except Exception as exc:
-        raise WriteFenceViolation(
-            collection_prefix,
-            f"could not inspect federation registry for family collisions: {exc}",
-        ) from exc
-
-    for record in records:
-        name = record.get("name")
-        collection = record.get("collection")
-        in_family = is_collection_in_family(collection, collection_prefix)
-        if name == BOBCLAW_MEMORY_INSTANCE:
-            repo = record.get("repo")
-            if repo != ".":
-                raise WriteFenceViolation(
-                    collection_prefix,
-                    f"reserved registry name {BOBCLAW_MEMORY_INSTANCE!r} has "
-                    f"foreign repo {repo!r}; expected BoB registration repo '.'",
-                )
-            if not in_family:
-                raise WriteFenceViolation(
-                    collection_prefix,
-                    f"reserved registry name {BOBCLAW_MEMORY_INSTANCE!r} owns "
-                    f"out-of-family collection {collection!r}",
-                )
-        elif in_family:
-            raise WriteFenceViolation(
-                collection_prefix,
-                f"registry collision: non-BoB instance {name!r} owns "
-                f"family collection {collection!r}",
-            )
+    # allow
 
 
 # ---------------------------------------------------------------------------
@@ -347,205 +71,70 @@ def assert_registry_family_available(
 # ---------------------------------------------------------------------------
 
 class WriteFence:
-    """Hold one OS-enforced lock for a canonical memory resource/collection family."""
+    """Refuse any write to a collection BoB does not own (single-writer-per-collection, OD#2/A)."""
 
-    def __init__(
-        self,
-        registry: FederationRegistry,
-        *,
-        qdrant_url: str | None = None,
-        zvec_instance_root: str | Path | None = None,
-        collection: str | None = None,
-        collection_prefix: str | None = None,
-        owner: str = BOBCLAW_OWNER,
-        lock_dir: str | Path | None = None,
-    ) -> None:
-        """Acquire the family lock or degrade read-only with an honest reason taxonomy.
-
-        ``collection`` remains accepted for legacy callers but must identify a valid family
-        member. New callers pass ``collection_prefix`` explicitly. A live lock holder is normal
-        ``contention``; an ACL denial is ``permission``. Both remain fenced and refuse writes.
-        """
-        if collection_prefix is None:
-            if collection is None:
-                raise WriteFenceViolation(
-                    "collection_prefix", "collection_prefix or a valid collection is required"
-                )
-            collection_prefix = _prefix_from_collection(collection)
-        if not isinstance(collection_prefix, str) or not collection_prefix.strip():
-            raise WriteFenceViolation(
-                str(collection_prefix), "collection_prefix must be a non-empty string"
-            )
-        prefix = collection_prefix.strip()
-        if collection is not None and not is_collection_in_family(collection.strip(), prefix):
-            raise WriteFenceViolation(
-                collection,
-                f"collection is outside the protected family for prefix {prefix!r}",
-            )
-
+    def __init__(self, registry: FederationRegistry, *, owner: str = "bobclaw") -> None:
+        """Bind the federation registry (read-only) and the single-writer owner identity."""
         self._registry = registry
         self._owner = owner
-        self._collection_prefix = prefix
-        if (qdrant_url is None) == (zvec_instance_root is None):
-            raise WriteFenceViolation(
-                "resource",
-                "exactly one of qdrant_url or zvec_instance_root is required",
-            )
-        zvec_root_to_create = None
-        if qdrant_url is not None:
-            try:
-                canonical_resource = canonicalize_qdrant_url(qdrant_url)
-            except ValueError as exc:
-                raise WriteFenceViolation(str(qdrant_url), str(exc)) from exc
-        else:
-            try:
-                if not isinstance(zvec_instance_root, (str, Path)):
-                    raise ValueError("zvec instance_root must be a path string or Path")
-                raw_root = os.fspath(zvec_instance_root)
-                if not raw_root.strip():
-                    raise ValueError("zvec instance_root must be a non-empty path")
-                zvec_root_to_create = os.path.abspath(os.path.expanduser(raw_root))
-                canonical_resource = canonicalize_zvec_instance_root(
-                    zvec_root_to_create
-                )
-            except ValueError as exc:
-                raise WriteFenceViolation(str(zvec_instance_root), str(exc)) from exc
-        self._resource_identity = f"{canonical_resource}|{self._collection_prefix}"
-        self._assert_no_foreign_family_collision()
-        self._lock_dir = _prepare_lock_dir(_resolve_lock_dir(lock_dir))
-        digest = hashlib.sha256(self._resource_identity.encode("utf-8")).hexdigest()
-        self._lock_path = self._lock_dir / digest
-        self._lock = FileLock(self._lock_path, timeout=0)
-        self._degraded = False
-        self._degraded_reason = ""
-        self._degraded_detail = ""
-        try:
-            _assert_lock_file_openable(self._lock_path)
-            self._lock.acquire()
-        except Timeout:
-            self._set_degraded(
-                "contention",
-                "another same-machine writer holds the exclusive write lock",
-            )
-        except OSError as exc:
-            if _is_permission_failure(exc):
-                self._set_degraded(
-                    "permission",
-                    f"permission denied opening or locking {self._lock_path!s}: {exc}",
-                )
-            else:
-                raise WriteFenceViolation(
-                    self._resource_identity,
-                    f"exclusive write lock unavailable at {self._lock_path!s}: {exc}",
-                ) from exc
-        except Exception as exc:
-            raise WriteFenceViolation(
-                self._resource_identity,
-                f"exclusive write lock unavailable at {self._lock_path!s}: {exc}",
-            ) from exc
-
-        if zvec_root_to_create is not None and self.lock_held:
-            try:
-                os.makedirs(zvec_root_to_create, exist_ok=True)
-            except OSError as exc:
-                self.close()
-                raise WriteFenceViolation(
-                    str(zvec_instance_root),
-                    f"zvec instance root could not be created: {exc}",
-                ) from exc
-
-    def _assert_no_foreign_family_collision(self) -> None:
-        """Refuse a family whose registry namespace is not exclusively BoB's."""
-        assert_registry_family_available(self._registry, self._collection_prefix)
-
-    def _set_degraded(self, reason: str, detail: str) -> None:
-        self._degraded = True
-        self._degraded_reason = reason
-        self._degraded_detail = detail
-        log.warning(
-            "Write fence degraded to read-only for resource %s: %s (%s); writes are refused",
-            self._resource_identity,
-            reason,
-            detail,
-        )
-
-    @property
-    def resource_identity(self) -> str:
-        return self._resource_identity
-
-    @property
-    def lock_path(self) -> Path:
-        return self._lock_path
-
-    @property
-    def collection_prefix(self) -> str:
-        return self._collection_prefix
-
-    @property
-    def lock_held(self) -> bool:
-        """Return whether this fence currently holds its OS lock."""
-        return bool(self._lock.is_locked)
-
-    @property
-    def degraded(self) -> bool:
-        return self._degraded
-
-    @property
-    def degraded_reason(self) -> str:
-        return self._degraded_reason
-
-    @property
-    def degraded_detail(self) -> str:
-        return self._degraded_detail
-
-    def _assert_lock_held(self, resource: str) -> None:
-        if self._degraded:
-            raise WriteFenceViolation(
-                resource,
-                f"writes refused: {self._degraded_reason} for resource {self._resource_identity}",
-            )
-        if not self._lock.is_locked:
-            raise WriteFenceViolation(
-                resource,
-                f"exclusive write lock is not held for resource {self._resource_identity}",
-            )
-
-    def close(self) -> None:
-        """Release the held family lock; safe to call more than once."""
-        if self._lock.is_locked:
-            self._lock.release()
-
-    def __enter__(self) -> "WriteFence":
-        self._assert_lock_held(self._collection_prefix)
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.close()
-
-    def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception:
-            pass
 
     def assert_writable(self, collection: str) -> None:
-        """Raise unless family membership and the held family lock permit the write."""
+        """Raise (fail-closed) unless `collection` resolves to an instance owned (writer) by self._owner."""
+        # 1. collection must be a non-empty string
         if not isinstance(collection, str) or not collection.strip():
             raise WriteFenceViolation(
-                str(collection), "collection must be a non-empty string"
+                str(collection),
+                "collection must be a non-empty string",
             )
         coll = collection.strip()
-        if not is_collection_in_family(coll, self._collection_prefix):
+
+        # 2. Registry reverse lookup — an unknown/unregistered collection is always refused
+        try:
+            record = self._registry.by_collection(coll)
+        except FederationError as exc:
             raise WriteFenceViolation(
                 coll,
-                f"collection is outside protected family {self._collection_prefix!r}",
+                "collection not registered (single-writer-per-collection: "
+                "an unowned/unknown collection is never writable)",
+            ) from exc
+
+        # 3. Read the ACL from meta. A present-but-garbled ACL is a refusal too — normalize the
+        #    read_instance_acl ACLViolation to a WriteFenceViolation so the fence's refusal type is UNIFORM
+        #    (a caller catching WriteFenceViolation catches garbled-ACL refusals too; since WriteFenceViolation
+        #    IS an ACLViolation, base-class catchers keep working). Still strictly fail-closed.
+        try:
+            acl = read_instance_acl(record.get("meta"))
+        except WriteFenceViolation:
+            raise
+        except ACLViolation as exc:
+            raise WriteFenceViolation(coll, f"garbled acl: {exc.detail}") from exc
+        except Exception as exc:
+            # Defensive fail-closed: ANY other parse error (e.g. an unexpected non-dict meta type that
+            # raises TypeError) is a REFUSAL, never an escape that would break the fail-closed invariant.
+            raise WriteFenceViolation(
+                coll, f"unparseable acl ({type(exc).__name__}): {exc}"
+            ) from exc
+
+        # 4. Refuse if no ACL is declared at all
+        if acl is None:
+            raise WriteFenceViolation(
+                coll,
+                "no acl declared for collection (fail-closed: refusing a write to an un-ACL'd collection)",
             )
-        self._assert_lock_held(coll)
+
+        # 5. Enforce the write ACL (single-writer, mode check)
+        enforce_write_acl(acl, self._owner, context=coll)
 
 
 # ---------------------------------------------------------------------------
-# Registration helpers (preserve registry collection uniqueness; no BoB self-ACL)
+# Registration helpers (the API path; reuse C2 stamp_meta + the existing registry CRUD)
 # ---------------------------------------------------------------------------
+
+BOBCLAW_MEMORY_INSTANCE = "bobclaw-memory"
+BOBCLAW_MEMORY_COLLECTION = "bobclaw__768"
+BOBCLAW_OWNER = "bobclaw"
+LKS_OWNER = "lks"
+
 
 def register_bobclaw_memory(
     registry: FederationRegistry,
@@ -553,13 +142,17 @@ def register_bobclaw_memory(
     *,
     collection: str = BOBCLAW_MEMORY_COLLECTION,
     readers: Sequence[str] = ("bobclaw",),
-    repo: str = ".",
+    repo: str = "C:/dev/projects/bobclaw",
     ledger_dir: str = "ledger",
     overwrite: bool = False,
 ) -> dict:
-    """Register BoB's current collection fingerprint and retain registry uniqueness protection."""
-    del readers  # Kept in the public signature for older callers; BoB family writes no longer self-ACL.
-    meta = stamp_meta({}, fingerprint)
+    """Register the bobclaw-memory federation instance (writer=bobclaw, mode=rw) with a C2 embed fingerprint."""
+    acl = {
+        "writer": BOBCLAW_OWNER,
+        "readers": list(readers),
+        "mode": "rw",
+    }
+    meta = stamp_meta({"acl": acl}, fingerprint)
     return registry.register(
         BOBCLAW_MEMORY_INSTANCE,
         repo,
@@ -579,13 +172,13 @@ def backfill_corpus_acl(
     readers: Sequence[str] = ("bobclaw", "lks"),
     mode: str = "ro",
 ) -> None:
-    """Stamp a read-only ACL onto each named external instance, preserving its meta."""
+    """Stamp a read-only ACL onto each named instance, PRESERVING its existing meta (note/embed)."""
     for name in names:
-        record = registry.get(name)
+        record = registry.get(name)          # raises FederationError if unknown — let it propagate
         meta = copy.deepcopy(record.get("meta") or {})
         meta["acl"] = {
             "writer": writer,
             "readers": list(readers),
             "mode": mode,
         }
-        registry.update(name, meta=meta)
+        registry.update(name, meta=meta)     # merges; preserves repo/collection/dim/ledger_dir

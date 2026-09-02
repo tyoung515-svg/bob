@@ -73,7 +73,6 @@ PLACEHOLDER_VALUES: frozenset[str] = frozenset({
     "",
     "change-me",
     "change-me-to-a-random-string",
-    "change-me-run-gen_secrets",  # the value .secrets/bobclaw.env.example ships for BOBCLAW_SECRET
     "changeme",
     "secret",
     "password",
@@ -85,15 +84,7 @@ PLACEHOLDER_VALUES: frozenset[str] = frozenset({
 
 
 def is_placeholder(value: str) -> bool:
-    """True if ``value`` is an unset/example placeholder that must be regenerated.
-
-    Exact-match against ``PLACEHOLDER_VALUES`` plus a ``change-me`` prefix guard so
-    any future ``change-me-*`` example value is caught without editing this set.
-    A placeholder that isn't recognized here is kept verbatim by gen_secrets —
-    which, for BOBCLAW_SECRET, would ship a publicly-known JWT/scope-vouch key.
-    """
-    v = value.strip()
-    return v in PLACEHOLDER_VALUES or v.startswith("change-me")
+    return value.strip() in PLACEHOLDER_VALUES
 
 
 def keys_needing_value(env: dict[str, str], keys: Iterable[str]) -> list[str]:

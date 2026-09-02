@@ -1,0 +1,21 @@
+# Alert thresholds for the W2 digest golden test. Evaluated against digest_events.yaml.
+# Firing order == this file's order; only firing rules appear in the artifact.
+#   pricing-alert : category=pricing & min_severity=alert & min_count=2
+#                   -> ev-1 + ev-4 (both pricing/alert) == 2  => FIRES [alert] : ev-1, ev-4
+#   any-notable   : min_severity=notable & min_count=1 (any category/source)
+#                   -> ev-1(alert), ev-2(notable), ev-4(alert) == 3 => FIRES [notable] : ev-1, ev-2, ev-4
+#   security-watch: category=security & min_count=1
+#                   -> no security events == 0 => does NOT fire
+- name: pricing-alert
+  category: pricing
+  min_severity: alert
+  min_count: 2
+  level: alert
+- name: any-notable
+  min_severity: notable
+  min_count: 1
+  level: notable
+- name: security-watch
+  category: security
+  min_count: 1
+  level: alert

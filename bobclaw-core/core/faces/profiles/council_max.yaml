@@ -18,5 +18,5 @@ system_prompt: |
   benefits from being stress-tested from several angles.
 preferred_backend: minimax
 allowed_tools: []
-escalation_backend: claude_api
+escalation_backend: claude_code
 ui_theme: gold

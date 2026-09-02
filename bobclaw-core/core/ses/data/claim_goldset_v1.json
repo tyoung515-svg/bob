@@ -1,0 +1,42 @@
+{
+  "_doc": "V1 claim-model frozen reference goldset (MS#4 · Slice 0). FROZEN + hash-pinned (F2): the sha256 over the canonical `claims`/`distinct` payload is checked at load so no tuning run can silently regenerate the ground truth. SYNTHETIC (models surface-form drift on the object-blind, lowercase-only baseline `claim_key`) — human-annotated production data is the quality follow-up. `gold` = canonical claims; `extracted` = an extractor's output (surface variants of the gold: predicate morphology → recoverable by Slice-1 lemma; subject drift → recoverable by Slice-3 entity-link; object-blindness → recoverable by type-tagged keys). `distinct` = known pairwise-DISTINCT claims that a canonicalizer MUST NOT merge (the precision/merge-rate gate, F3).",
+  "schema_version": "goldset-v1",
+  "sha256": "8904be1a620a6d1ba88d621cfbe3515e207779f82287a9483162fbf3fbfbadb4",
+  "gold": [
+    {"id": "g1",  "subject": "xs_power_d3400", "predicate": "reduce",    "object": "voltage_drop",   "numeric_value": null,  "raw_text": "The XS Power D3400 reduces voltage drop."},
+    {"id": "g2",  "subject": "lithium_battery", "predicate": "weigh",     "object": null,             "numeric_value": 5.4,   "raw_text": "The lithium battery weighs 5.4 kg."},
+    {"id": "g3",  "subject": "agm_battery",     "predicate": "prevent",   "object": "sulfation",      "numeric_value": null,  "raw_text": "An AGM battery prevents sulfation."},
+    {"id": "g4",  "subject": "capacitor",       "predicate": "stabilize", "object": "voltage",        "numeric_value": null,  "raw_text": "A capacitor stabilizes voltage."},
+    {"id": "g5",  "subject": "big_three",       "predicate": "improve",   "object": "current_flow",   "numeric_value": null,  "raw_text": "The big three upgrade improves current flow."},
+    {"id": "g6",  "subject": "alternator",      "predicate": "charge",    "object": "battery",        "numeric_value": null,  "raw_text": "The alternator charges the battery."},
+    {"id": "g7",  "subject": "sundown_amp",     "predicate": "require",   "object": "four_gauge_wire","numeric_value": null,  "raw_text": "The Sundown amp requires four gauge wire."},
+    {"id": "g8",  "subject": "bms",             "predicate": "protect",   "object": "cells",          "numeric_value": null,  "raw_text": "The BMS protects the cells."},
+    {"id": "g9",  "subject": "inverter",        "predicate": "convert",   "object": "dc_to_ac",       "numeric_value": null,  "raw_text": "The inverter converts DC to AC."},
+    {"id": "g10", "subject": "series_wiring",   "predicate": "increase",  "object": "voltage",        "numeric_value": null,  "raw_text": "Series wiring increases voltage."},
+    {"id": "g11", "subject": "spot_welder",     "predicate": "join",      "object": "nickel_strip",   "numeric_value": null,  "raw_text": "The spot welder joins the nickel strip."},
+    {"id": "g12", "subject": "deep_cycle",      "predicate": "withstand", "object": "many_cycles",    "numeric_value": null,  "raw_text": "A deep cycle battery withstands many cycles."}
+  ],
+  "extracted": [
+    {"id": "e2",  "subject": "lithium_battery", "predicate": "weigh",     "object": null,             "numeric_value": 5.40,  "raw_text": "weighs 5.40 kg", "drift": "none"},
+    {"id": "e4",  "subject": "capacitor",       "predicate": "stabilize", "object": "voltage",        "numeric_value": null,  "raw_text": "stabilizes voltage", "drift": "none"},
+    {"id": "e1",  "subject": "xs_power_d3400",  "predicate": "reduces",   "object": "voltage_drop",   "numeric_value": null,  "raw_text": "reduces voltage drop", "drift": "predicate"},
+    {"id": "e3",  "subject": "agm_battery",     "predicate": "prevents",  "object": "sulfation",      "numeric_value": null,  "raw_text": "prevents sulfation", "drift": "predicate"},
+    {"id": "e5",  "subject": "big_three",       "predicate": "improving", "object": "current_flow",   "numeric_value": null,  "raw_text": "improving current flow", "drift": "predicate"},
+    {"id": "e6",  "subject": "alternator",      "predicate": "charging",  "object": "battery",        "numeric_value": null,  "raw_text": "charging the battery", "drift": "predicate"},
+    {"id": "e9",  "subject": "inverter",        "predicate": "converts",  "object": "dc_to_ac",       "numeric_value": null,  "raw_text": "converts DC to AC", "drift": "predicate"},
+    {"id": "e10", "subject": "series_wiring",   "predicate": "increased", "object": "voltage",        "numeric_value": null,  "raw_text": "increased voltage", "drift": "predicate"},
+    {"id": "e7",  "subject": "d3400",           "predicate": "reduce",    "object": "voltage_drop",   "numeric_value": null,  "raw_text": "the D3400 reduce voltage drop", "drift": "subject"},
+    {"id": "e8",  "subject": "the_bms",         "predicate": "protect",   "object": "cells",          "numeric_value": null,  "raw_text": "the BMS protect cells", "drift": "subject"},
+    {"id": "e11", "subject": "amp",             "predicate": "require",   "object": "four_gauge_wire","numeric_value": null,  "raw_text": "the amp require 4ga wire", "drift": "subject"}
+  ],
+  "distinct": [
+    {"id": "d1a", "subject": "agm_battery", "predicate": "prevent", "object": "sulfation", "numeric_value": null, "raw_text": "AGM prevents sulfation"},
+    {"id": "d1b", "subject": "agm_battery", "predicate": "cause",   "object": "sulfation", "numeric_value": null, "raw_text": "AGM causes sulfation"},
+    {"id": "d2a", "subject": "lithium_battery", "predicate": "weigh", "object": null, "numeric_value": 5.4, "raw_text": "weighs 5.4 kg"},
+    {"id": "d2b", "subject": "lithium_battery", "predicate": "weigh", "object": null, "numeric_value": 6.2, "raw_text": "weighs 6.2 kg"},
+    {"id": "d3a", "subject": "capacitor", "predicate": "stabilize", "object": "voltage", "numeric_value": null, "raw_text": "stabilizes voltage"},
+    {"id": "d3b", "subject": "capacitor", "predicate": "stabilize", "object": "current", "numeric_value": null, "raw_text": "stabilizes current"},
+    {"id": "d4a", "subject": "series_wiring", "predicate": "increase", "object": "voltage", "numeric_value": null, "raw_text": "series increases voltage"},
+    {"id": "d4b", "subject": "parallel_wiring", "predicate": "increase", "object": "voltage", "numeric_value": null, "raw_text": "parallel increases capacity"}
+  ]
+}

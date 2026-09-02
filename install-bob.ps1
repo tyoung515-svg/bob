@@ -56,11 +56,11 @@ if (-not (Test-Path $py)) {
     uv venv (Join-Path $repo '.venv') --python 3.13
 }
 foreach ($svc in 'bobclaw-core','bobclaw-gateway','bobclaw-claude-pipeline') {
-    $lock = Join-Path $repo "$svc\requirements.lock"
+    $lock = Join-Path $repo "$svc\requirements.txt"
     Write-Host "  installing $svc ..." -ForegroundColor DarkGray
     uv pip install --python $py -r $lock | Out-Null
 }
-Ok "dependencies installed from requirements.lock (aiohttp pinned <3.14)"
+Ok "dependencies installed from requirements.txt (aiohttp pinned <3.14)"
 
 # ── 2. Env file + a strong database password (BEFORE the first compose up) ────
 Step 2 "Bootstrapping the env file + database password"

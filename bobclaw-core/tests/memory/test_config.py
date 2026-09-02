@@ -61,6 +61,31 @@ class TestMemoryConfigValidation:
 
 
 class TestMemoryConfigFromEnv:
+    # Every env var ``MemoryConfig.from_env()`` reads. The default-asserting
+    # tests below must prove the CODE default, not whatever the host env /
+    # ``.secrets`` happens to set: the release host sets ``MEMORY_ENABLED`` (and
+    # the launcher sets it to ``false``), which silently flipped
+    # ``test_from_env_defaults`` (``enabled`` False, not the coded True). Clear
+    # the whole family so the ambient environment can't leak in. Tests that
+    # assert OVERRIDES ``setenv`` their own values in the body, which runs AFTER
+    # this autouse fixture, so they are unaffected.
+    _FROM_ENV_KEYS = (
+        "MEMORY_ENABLED",
+        "MEMORY_DATA_DIR",
+        "MEMORY_SLOTS_FILE",
+        "MEMORY_QDRANT_COLLECTION",
+        "MEMORY_TOP_K",
+        "MEMORY_THRESHOLD",
+        "MEMORY_WIKI_DIR",
+        "MEMORY_WATCH_WIKI",
+        "MEMORY_HOP_BUDGET",
+    )
+
+    @pytest.fixture(autouse=True)
+    def _isolate_memory_env(self, monkeypatch: pytest.MonkeyPatch):
+        for key in self._FROM_ENV_KEYS:
+            monkeypatch.delenv(key, raising=False)
+
     def test_from_env_defaults(self):
         cfg = MemoryConfig.from_env()
         assert cfg.enabled is True

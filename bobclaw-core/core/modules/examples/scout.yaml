@@ -1,0 +1,29 @@
+id: scout
+name: "Scout & Absorb"
+audience: "every AI-tool user drowning in model/tool churn (non-developers included)"
+first_user: Travis
+wow_flow: "Weekly digest of new models, tools, and pricing changes, with curated recommendations."
+faces:
+  - ref: source-fetch
+    io_contract: text
+  - ref: changelog-read
+    io_contract: text
+tools:
+  - id: source-fetch
+    tier: RO
+  - id: changelog-read
+    tier: RO
+  - id: pricing-read
+    tier: RO
+pipes:
+  - research
+  - chat
+lks_namespace: scout
+verification_class: claim-ratchet
+cost_posture: local-first
+always_human:
+  - "Review weekly digest before sending"
+  - "Approve tool additions"
+dependencies:
+  - S1
+watch_subscriptions: []

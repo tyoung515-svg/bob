@@ -93,6 +93,7 @@ _HTTP_CLIENT_BACKENDS: frozenset[str] = frozenset({
     "kimi_platform",
     "claude_api",
     "deepseek_v4_flash",
+    "deepseek_v4",   # DS Pro — same DeepSeek client/health as flash, Pro model
     "glm_5_2",
     "minimax",
     "gemini_flash",
@@ -100,8 +101,9 @@ _HTTP_CLIENT_BACKENDS: frozenset[str] = frozenset({
     "gemini_deep_research",
     "claude_code",   # subprocess `claude --version`
     "agy_code",      # subprocess `agy --version`
-    "codex_code",    # subprocess `codex --version` (CLI-only; not gated on the LiteLLM proxy)
+    "codex_code",    # subprocess `codex --version` (GPT-native; no proxy dependency)
     "kimi_cli",      # subprocess `kimi --version`
+    "pi_code",       # subprocess `pi --version` (agentic GLM/DeepSeek/MiniMax harness)
 })
 _SPECIAL_BACKENDS: frozenset[str] = frozenset({"local", "opencode_serve"})
 
@@ -127,7 +129,7 @@ def _make_client(backend: str):
     if backend == "claude_api":
         from core.backends.claude import ClaudeClient
         return ClaudeClient()
-    if backend == "deepseek_v4_flash":
+    if backend in ("deepseek_v4_flash", "deepseek_v4"):
         from core.backends.deepseek import DeepSeekClient
         return DeepSeekClient()
     if backend == "glm_5_2":
@@ -151,6 +153,9 @@ def _make_client(backend: str):
     if backend == "kimi_cli":
         from core.backends.kimi_cli import KimiCliClient
         return KimiCliClient()
+    if backend == "pi_code":
+        from core.backends.pi_code import PiCodeClient
+        return PiCodeClient()
     raise KeyError(backend)  # pragma: no cover - guarded by COVERED_BACKENDS
 
 

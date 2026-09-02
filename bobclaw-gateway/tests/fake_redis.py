@@ -49,6 +49,19 @@ class FakePubSub:
             message = await self._queue.get()
             yield message
 
+    async def get_message(self, ignore_subscribe_messages: bool = False,
+                          timeout: float | None = None):
+        """Mirror redis.asyncio PubSub.get_message: return the next message, or None
+        if none arrives within ``timeout`` (the router polls this way so a redis-py 8.x
+        idle read-timeout can't kill the forward loop). The fake queue only ever holds
+        real ``{"type":"message",...}`` frames, so ignore_subscribe_messages is a no-op."""
+        try:
+            if timeout is None:
+                return await self._queue.get()
+            return await asyncio.wait_for(self._queue.get(), timeout)
+        except asyncio.TimeoutError:
+            return None
+
     async def aclose(self) -> None:
         for channel in list(self._subscribed):
             await self.unsubscribe(channel)

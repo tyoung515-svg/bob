@@ -19,6 +19,8 @@ from uuid import UUID
 from core.config import MAX_FANOUT_WIDTH_BY_BACKEND
 from core.nodes._l0_events import _append_agent_turn_event
 from core.nodes.budget_runtime import budget_config, reconcile_branches
+from core.telemetry.emit import KIND_FLEET_JOIN, emit_event
+from core.telemetry.flight import resolve_flight_id
 
 if TYPE_CHECKING:
     from core.graph import AgentState
@@ -170,6 +172,12 @@ async def _build_join(state: "AgentState") -> dict:
     budget_report = _reconcile_budget(state, state.get("build_impls") or [])
     if budget_report is not None:
         out["budget_report"] = budget_report
+    # L0.2: fleet_join for the build wave (implemented vs total contracts).
+    await emit_event(
+        KIND_FLEET_JOIN, resolve_flight_id(state),
+        {"ok": len(impls), "failed": len(contracts_list) - len(impls),
+         "total": len(contracts_list), "kind": "build"},
+    )
     return out
 
 
@@ -190,7 +198,10 @@ async def join_node(state: "AgentState") -> dict:
         cap = MAX_FANOUT_WIDTH_BY_BACKEND.get(backend, 0)
         subtasks = state.get("subtasks") or []
         if cap > 0 and (fanout_wave + 1) * cap < len(subtasks):
-            return {"fanout_wave": fanout_wave + 1}
+            # Intermediate wave: launch the next one. fanout_continue is the AUTHORITATIVE
+            # signal _route_after_join obeys (it must not re-derive from fanout_wave — see
+            # graph._route_after_join). No message / no fleet_join until the final wave.
+            return {"fanout_wave": fanout_wave + 1, "fanout_continue": True}
 
     results = sorted(state.get("worker_results", []), key=lambda r: r.get("idx", 0))
 
@@ -284,6 +295,13 @@ async def join_node(state: "AgentState") -> dict:
 
     body = "\n\n".join(sections)
 
+    # L0.2: fleet_join for the final wave (ok vs failed, per §7.2 coalesced-per-wave).
+    await emit_event(
+        KIND_FLEET_JOIN, resolve_flight_id(state),
+        {"ok": len(successes), "failed": len(all_failures), "total": len(results),
+         "kind": "chat"},
+    )
+
     # Best-effort: error only when ALL workers failed (rejected counts as failure)
     error_msg: str | None = None
     if all_failures and not successes:
@@ -297,6 +315,10 @@ async def join_node(state: "AgentState") -> dict:
     out: dict = {
         "messages": [{"role": "assistant", "content": body}],
         "error": error_msg,
+        # Final wave (or single-wave / no chunking): stop the loop. MUST be set explicitly
+        # to clear a prior intermediate wave's fanout_continue=True — a stale True would
+        # send _route_after_join back to dispatch forever.
+        "fanout_continue": False,
     }
     if budget_report is not None:
         out["budget_report"] = budget_report

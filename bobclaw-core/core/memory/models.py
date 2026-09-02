@@ -148,6 +148,3 @@ class SlotResolution:
     backend: str
     endpoint: str
     embedding_dimension: int | None = None
-    query_instruction_template: str | None = None
-    doc_instruction_template: str | None = None
-    embedding_batch_size: int | None = None

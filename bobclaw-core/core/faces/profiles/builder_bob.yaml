@@ -7,7 +7,7 @@ system_prompt: |
   You are Builder Bob, a hands-on project builder. You break problems
   into buildable pieces, write code, create files, and test your work.
   You prefer doing over discussing. Always validate your output.
-preferred_backend: local
+preferred_backend: deepseek_v4  # my-bob 2026-07-20: was 'local' (no chat server on this box, embedding-only)
 allowed_tools: []
 escalation_backend: minimax
 ui_theme: orange

@@ -168,3 +168,86 @@ class TestConversationsRoutes(unittest.TestCase):
             )
         )
         self.assertEqual(resp.status, 404)
+
+    def test_patch_conversation_individual_fields(self):
+        cases = [
+            ("face_id", "sage"),
+            ("model_preference", "gpt-5"),
+            ("backend_preference", "claude"),
+            ("profile", "work"),
+            ("locale", "fr"),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field):
+                conversation = self._pool.add_conversation(title="Patch Me", user_id="bobclaw")
+                resp = self._run(
+                    self._client.patch(
+                        f"/conversations/{conversation['id']}",
+                        json={field: value},
+                        headers=self._auth_headers(),
+                    )
+                )
+                self.assertEqual(resp.status, 200)
+                data = self._run(resp.json())
+                self.assertEqual(data[field], value)
+                self.assertEqual(self._pool.conversations[conversation["id"]][field], value)
+
+    def test_patch_conversation_multiple_fields(self):
+        conversation = self._pool.add_conversation(
+            title="Patch Me", user_id="bobclaw", face_id="sage",
+        )
+        resp = self._run(
+            self._client.patch(
+                f"/conversations/{conversation['id']}",
+                json={"profile": "work", "locale": "fr", "model_preference": "gpt-5"},
+                headers=self._auth_headers(),
+            )
+        )
+        self.assertEqual(resp.status, 200)
+        data = self._run(resp.json())
+        self.assertEqual(data["profile"], "work")
+        self.assertEqual(data["locale"], "fr")
+        self.assertEqual(data["model_preference"], "gpt-5")
+        # Untouched fields keep their values.
+        self.assertEqual(data["face_id"], "sage")
+        record = self._pool.conversations[conversation["id"]]
+        self.assertEqual(record["profile"], "work")
+        self.assertEqual(record["locale"], "fr")
+        self.assertEqual(record["model_preference"], "gpt-5")
+        self.assertEqual(record["face_id"], "sage")
+        self.assertIsNone(record["backend_preference"])
+
+    def test_patch_conversation_rejects_unknown_fields(self):
+        conversation = self._pool.add_conversation(title="Patch Me", user_id="bobclaw")
+        resp = self._run(
+            self._client.patch(
+                f"/conversations/{conversation['id']}",
+                json={"title": "Nope"},
+                headers=self._auth_headers(),
+            )
+        )
+        self.assertEqual(resp.status, 400)
+        self.assertEqual(self._pool.conversations[conversation["id"]]["title"], "Patch Me")
+
+    def test_patch_conversation_rejects_empty_body(self):
+        conversation = self._pool.add_conversation(title="Patch Me", user_id="bobclaw")
+        resp = self._run(
+            self._client.patch(
+                f"/conversations/{conversation['id']}",
+                json={},
+                headers=self._auth_headers(),
+            )
+        )
+        self.assertEqual(resp.status, 400)
+
+    def test_patch_conversation_other_user_returns_404(self):
+        other = self._pool.add_conversation(title="Other User's", user_id="intruder")
+        resp = self._run(
+            self._client.patch(
+                f"/conversations/{other['id']}",
+                json={"face_id": "hacked"},
+                headers=self._auth_headers(),
+            )
+        )
+        self.assertEqual(resp.status, 404)
+        self.assertIsNone(self._pool.conversations[other["id"]]["face_id"])

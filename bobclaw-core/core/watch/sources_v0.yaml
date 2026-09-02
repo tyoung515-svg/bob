@@ -1,0 +1,103 @@
+# Watch-pipe sources registry — schema v0 (substrate S1 / MS8-W1).
+#
+# Public sources ONLY in v0: `auth_required` must be false. Authed sources are a
+# forward dependency on S3 credential custody (MS8-CC1) — not shippable in v0.
+#
+# Recurrence: a standing watch binds to the P5 Profiles cron scheduler
+# (core/scheduler.py run_tick + scripts/profile_scheduler.py). The `schedule` block
+# below is validated by core.watch.registry.WatchSchedule and turned into a
+# scheduler profile envelope by SourcesRegistry.schedule_profile(); the daemon fires
+# core.scheduler.build_schedule_seed(profile, schedule, bucket) which reaches the
+# one-shot run_watch through the research arm. NO new recurrence machinery, NOT a
+# backend-dep (per W0-SCHEDULER-AUDIT.md).
+#
+# Offline/fixture-only (inv. 11): these URLs are never fetched by the M-lane; the
+# first live sweep is a post-merge attended smoke.
+version: 0
+
+schedule:
+  cron: "0 8 * * 1"        # weekly, Monday 08:00 UTC
+  task: "run_watch"
+  face_hint: "assistant"
+  owner: "admin"
+
+sources:
+  - id: anthropic-news
+    name: "Anthropic news / changelog"
+    kind: changelog
+    url: "https://www.anthropic.com/news"
+    provider: anthropic
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: anthropic-pricing
+    name: "Anthropic API pricing"
+    kind: pricing
+    url: "https://www.anthropic.com/pricing"
+    provider: anthropic
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: openai-pricing
+    name: "OpenAI API pricing"
+    kind: pricing
+    url: "https://openai.com/api/pricing"
+    provider: openai
+    tags: [pricing]
+    fingerprint_fields: [title, url]
+
+  - id: google-ai-updates
+    name: "Google Gemini API changelog"
+    kind: changelog
+    url: "https://ai.google.dev/gemini-api/docs/changelog"
+    provider: google
+    tags: [models, releases]
+    fingerprint_fields: [title, url]
+
+  - id: deepseek-news
+    name: "DeepSeek API news"
+    kind: changelog
+    url: "https://api-docs.deepseek.com/news"
+    provider: deepseek
+    tags: [models, pricing]
+    fingerprint_fields: [title, url]
+
+  - id: llamacpp-releases
+    name: "llama.cpp releases"
+    kind: release
+    url: "https://github.com/ggml-org/llama.cpp/releases"
+    provider: ggml
+    tags: [local, releases]
+    fingerprint_fields: [title, url]
+
+  - id: hf-trending
+    name: "Hugging Face trending models"
+    kind: registry
+    url: "https://huggingface.co/models?sort=trending"
+    provider: huggingface
+    tags: [models, registry]
+    fingerprint_fields: [title, url]
+
+  - id: mcp-servers
+    name: "MCP servers directory"
+    kind: registry
+    url: "https://github.com/modelcontextprotocol/servers"
+    provider: mcp
+    tags: [mcp, tools]
+    fingerprint_fields: [title, url]
+
+  - id: localllama
+    name: "r/LocalLLaMA"
+    kind: community
+    url: "https://www.reddit.com/r/LocalLLaMA"
+    provider: reddit
+    tags: [community]
+    fingerprint_fields: [title, url]
+
+  - id: hn-frontpage
+    name: "Hacker News front page"
+    kind: community
+    url: "https://news.ycombinator.com"
+    provider: hn
+    tags: [community]
+    fingerprint_fields: [title, url]

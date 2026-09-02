@@ -25,5 +25,5 @@ system_prompt: |
   conversational filler in the final plan.
 preferred_backend: minimax
 allowed_tools: []
-escalation_backend: claude_api
+escalation_backend: claude_code
 ui_theme: indigo

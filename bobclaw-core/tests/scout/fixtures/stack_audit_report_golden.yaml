@@ -1,0 +1,172 @@
+schema_version: 0
+window_start: '2026-06-08'
+window_end: '2026-07-07'
+window_days: 30
+generated_at: '2026-07-07T00:00:00Z'
+telemetry_source: core.telemetry.spend
+findings:
+- subscription_id: chatgpt-plus
+  provider: OpenAI
+  plan: ChatGPT Plus
+  monthly_cost:
+    framing: EST
+    usd_month: 20.0
+    known: true
+    note: ''
+  recommendation: review
+  est_savings:
+    framing: EST
+    usd_month: 0.0
+    known: false
+    note: BoB routes no backend for this subscription
+  usage:
+    calls: 0
+    active_days: 0
+    input_tokens: 0
+    output_tokens: 0
+    cached_tokens: 0
+    metered_cost:
+      framing: EST
+      usd_month: 0.0
+      known: true
+      note: ''
+    covered_backends: []
+    missing_backends: []
+  rationale: "BoB does not route any backend for this subscription \u2014 routing\
+    \ telemetry cannot measure it; assess manually."
+- subscription_id: claude-max
+  provider: Anthropic
+  plan: Claude Max 20x
+  monthly_cost:
+    framing: EST
+    usd_month: 200.0
+    known: true
+    note: ''
+  recommendation: keep
+  est_savings:
+    framing: EST
+    usd_month: 0.0
+    known: true
+    note: ''
+  usage:
+    calls: 420
+    active_days: 24
+    input_tokens: 3200000
+    output_tokens: 850000
+    cached_tokens: 1100000
+    metered_cost:
+      framing: EST
+      usd_month: 0.0
+      known: true
+      note: ''
+    covered_backends:
+    - claude_code
+    missing_backends: []
+  rationale: "Active usage (420 calls / 24 active days) \u2014 keep."
+- subscription_id: gemini-advanced
+  provider: Google
+  plan: Gemini Advanced (annual)
+  monthly_cost:
+    framing: EST
+    usd_month: 20.0
+    known: true
+    note: normalized from annual plan
+  recommendation: cancel
+  est_savings:
+    framing: EST
+    usd_month: 20.0
+    known: true
+    note: ''
+  usage:
+    calls: 0
+    active_days: 0
+    input_tokens: 0
+    output_tokens: 0
+    cached_tokens: 0
+    metered_cost:
+      framing: EST
+      usd_month: 0.0
+      known: true
+      note: ''
+    covered_backends: []
+    missing_backends:
+    - gemini_flash
+    - gemini_pro
+  rationale: "No BoB-routed calls to gemini_flash, gemini_pro over the 2026-06-08..2026-07-07\
+    \ window \u2014 appears unused (verify you don't use it outside BoB)."
+- subscription_id: kimi-membership
+  provider: Moonshot
+  plan: Kimi Allegretto 30x
+  monthly_cost:
+    framing: EST
+    usd_month: 60.0
+    known: true
+    note: ''
+  recommendation: downgrade
+  est_savings:
+    framing: EST
+    usd_month: 40.0
+    known: true
+    note: ''
+  usage:
+    calls: 5
+    active_days: 2
+    input_tokens: 69000
+    output_tokens: 21000
+    cached_tokens: 0
+    metered_cost:
+      framing: EST
+      usd_month: 0.0
+      known: true
+      note: ''
+    covered_backends:
+    - kimi_cli
+    - kimi_code
+    missing_backends: []
+  rationale: "Light usage (5 calls / 2 active days) \u2014 a cheaper ~$20.00/mo tier\
+    \ (EST) likely suffices."
+total_monthly_cost:
+  framing: EST
+  usd_month: 300.0
+  known: true
+  note: ''
+total_est_savings:
+  framing: EST
+  usd_month: 60.0
+  known: true
+  note: excludes 1 unquantified REVIEW item(s)
+unmapped_backends:
+- backend: claude_api
+  calls: 12
+  metered_cost:
+    framing: EST
+    usd_month: 4.8
+    known: true
+    note: ''
+  note: PAYG / not covered by a subscription
+- backend: deepseek_v4_flash
+  calls: 180
+  metered_cost:
+    framing: EST
+    usd_month: 2.35
+    known: true
+    note: ''
+  note: PAYG / not covered by a subscription
+- backend: local
+  calls: 300
+  metered_cost:
+    framing: EST
+    usd_month: 0.0
+    known: true
+    note: ''
+  note: "local \u2014 no metered cost"
+- backend: minimax
+  calls: 24
+  metered_cost:
+    framing: EST
+    usd_month: 1.1
+    known: true
+    note: ''
+  note: PAYG / not covered by a subscription
+notes:
+- 1+ subscription(s) not measurable via BoB routing telemetry (routed elsewhere).

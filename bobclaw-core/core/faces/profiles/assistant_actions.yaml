@@ -9,5 +9,5 @@ system_prompt: |
   use native tools when they help answer the user. Summarize the result concisely.
 preferred_backend: deepseek_v4_flash
 allowed_tools: [get_server_time, create_project]
-escalation_backend: claude_api
+escalation_backend: claude_code
 ui_theme: green

@@ -15,5 +15,5 @@ system_prompt: |
   (never model names). Save with create_team once the user approves.
 preferred_backend: deepseek_v4_flash
 allowed_tools: [get_server_time, list_backends, create_team]
-escalation_backend: claude_api
+escalation_backend: claude_code
 ui_theme: green

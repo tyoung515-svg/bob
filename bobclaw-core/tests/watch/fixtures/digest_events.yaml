@@ -1,0 +1,45 @@
+# Fixture watch events for the W2 digest emitter golden test.
+# A scout-weekly sweep's NEW items, classified with category/severity.
+# Drives: grouping (by category), alert-threshold evaluation, markdown + doc render.
+#   categories used: pricing, release, registry, community
+#   severities used: info, notable, alert  (SEVERITY_ORDER info<notable<alert)
+# Expected sections (group_by=category, labels sorted asc): community, pricing, registry, release
+- id: ev-1
+  title: "DeepSeek V4 Flash price cut 40%"
+  url: "https://api-docs.deepseek.com/news/v4-flash-pricing"
+  source: deepseek-news
+  category: pricing
+  severity: alert
+  summary: "Input/output token price reduced; EST monthly impact on fleet routing."
+- id: ev-2
+  title: "Claude Opus 4.5 released"
+  url: "https://www.anthropic.com/news/opus-4-5"
+  source: anthropic-news
+  category: release
+  severity: notable
+  summary: "New flagship; benchmark deltas pending refute-and-vote."
+- id: ev-3
+  title: "llama.cpp b9600 release"
+  url: "https://github.com/ggml-org/llama.cpp/releases/tag/b9600"
+  source: llamacpp-releases
+  category: release
+  severity: info
+- id: ev-4
+  title: "OpenAI GPT-5 pricing update"
+  url: "https://openai.com/api/pricing"
+  source: openai-pricing
+  category: pricing
+  severity: alert
+  summary: "Price change on the API tier BoB routes."
+- id: ev-5
+  title: "New MCP server directory listing"
+  url: "https://example.com/mcp/servers"
+  source: mcp-servers
+  category: registry
+  severity: info
+- id: ev-6
+  title: "r/LocalLLaMA weekly megathread"
+  url: "https://old.reddit.com/r/LocalLLaMA"
+  source: localllama
+  category: community
+  severity: info

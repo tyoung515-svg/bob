@@ -72,11 +72,11 @@ async def test_active_team_remaps_worker_and_apex():
     face = _face(preferred_backend="local", escalation_backend="claude_api", role="worker")
     teams.set_active_team("cloud-heavy")
     # worker role → cloud-heavy worker backend, NOT the face's preferred.
-    assert await teams.resolve("worker", face=face) == "glm_5_2"
+    assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"
     # apex role → cloud-heavy apex backend.
     assert await teams.resolve("apex", face=face) == "claude_code"
     # escalation now follows the team's chain head, not the face.
-    assert teams.escalation_for("worker", face=face) == "deepseek_v4_flash"
+    assert teams.escalation_for("worker", face=face) == "deepseek_v4"
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_bobclaw_team_env_selects_team(monkeypatch):
     monkeypatch.setenv("BOBCLAW_TEAM", "cloud-heavy")
     face = _face(preferred_backend="local", role="worker")
     assert teams.get_active_team() == "cloud-heavy"
-    assert await teams.resolve("worker", face=face) == "glm_5_2"
+    assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"
 
 
 @pytest.mark.asyncio
@@ -159,7 +159,7 @@ async def test_health_fallback_whole_chain_down_returns_primary(monkeypatch):
     monkeypatch.setattr(teams, "_health_probe", probe)
     face = _face(preferred_backend="local", role="worker")
     teams.set_active_team("cloud-heavy")
-    assert await teams.resolve("worker", face=face) == "glm_5_2"  # primary
+    assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"  # primary
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_probe_failure_fails_open(monkeypatch):
     monkeypatch.setattr(teams, "_health_probe", probe)
     face = _face(preferred_backend="local", role="worker")
     teams.set_active_team("cloud-heavy")
-    assert await teams.resolve("worker", face=face) == "glm_5_2"  # assumed available
+    assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"  # assumed available
 
 
 # ── want_tools prefers a tool-capable backend in the chain ──────────────────────
@@ -201,13 +201,13 @@ def test_known_teams_lists_builtins(teams_dir):
 @pytest.mark.asyncio
 async def test_demo_fleet_resolves_three_tiers():
     """The centerpiece fleet: apex→claude_api (Opus), worker→deepseek_v4_flash,
-    critic→glm_5_2 (the GLM chunk-auditor tier)."""
+    critic→minimax (the chunk-auditor tier; GLM pulled — single-lane-only)."""
     face = _face(preferred_backend="local", escalation_backend="claude_api")
     teams.set_active_team("demo-fleet")
     assert await teams.resolve("apex", face=face) == "claude_api"
     assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"
-    assert await teams.resolve("critic", face=face) == "glm_5_2"
-    assert teams.escalation_chain("worker", face=face) == ["glm_5_2", "kimi_code"]
+    assert await teams.resolve("critic", face=face) == "minimax"
+    assert teams.escalation_chain("worker", face=face) == ["deepseek_v4", "kimi_code"]
 
 
 def test_joat_surface_contains_no_model_names():

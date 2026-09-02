@@ -183,6 +183,170 @@ async def test_build_worker_no_impl_on_garbage():
     assert entry["source"] is None and entry["status"] == "no_impl"
 
 
+# ── build worker: CLI-backend model threading (pi_code / agy_code / codex_code) ──
+# Regression guard for the gap the pi-worker shakeout surfaced: the build fan-out
+# used to drop the provider/model, so a pi_code build worker ran with no model and
+# defaulted to pi's google provider. The chat fan-out already threaded it.
+
+async def test_build_worker_threads_pi_model_as_override():
+    from core.nodes.worker import worker_node
+
+    seen = {}
+
+    async def _send(messages, backend, model=None):
+        seen["backend"], seen["model"] = backend, model
+        m = re.search(r"def (\w+)\(([^)]*)\)", messages[-1]["content"])
+        return f"def {m.group(1)}({m.group(2)}):\n    return None"
+
+    with patch("core.nodes.worker._send_to_backend", _send):
+        out = await worker_node({
+            "build_contract": _C1, "subtask_idx": 0, "backend": "pi_code",
+            "pi_posture": {"model": "deepseek/deepseek-v4-flash"},
+        })
+    assert seen["backend"] == "pi_code"
+    assert seen["model"] == "deepseek/deepseek-v4-flash"   # threaded, not dropped
+    assert out["build_impls"][0]["status"] == "ok"
+
+
+async def test_build_worker_no_posture_uses_two_arg_call():
+    # No CLI posture ⇒ the 2-arg call shape — byte-identical for HTTP backends.
+    # The mock accepts ONLY 2 args, so a wrongly-passed 3rd would TypeError → "failed".
+    from core.nodes.worker import worker_node
+
+    async def _send(messages, backend):
+        m = re.search(r"def (\w+)\(([^)]*)\)", messages[-1]["content"])
+        return f"def {m.group(1)}({m.group(2)}):\n    return None"
+
+    with patch("core.nodes.worker._send_to_backend", _send):
+        out = await worker_node({"build_contract": _C1, "subtask_idx": 0,
+                                 "backend": "deepseek_v4_flash"})
+    assert out["build_impls"][0]["status"] == "ok"
+
+
+def test_build_dispatch_threads_cli_posture_into_sends():
+    from core.nodes.dispatch import _route_after_dispatch
+    sends = _route_after_dispatch({
+        "build_contracts": [_C1, _C2], "team": "demo-fleet",
+        "build_workspace": "/ws", "escalation_backend": None,
+        "pi_posture": {"model": "deepseek/deepseek-v4-flash"},
+    })
+    for s in sends:
+        assert s.arg["pi_posture"] == {"model": "deepseek/deepseek-v4-flash"}
+        assert s.arg["agy_posture"] == {} and s.arg["codex_posture"] == {}
+    # absent posture ⇒ empty dicts (HTTP-backend build dispatches unchanged)
+    sends2 = _route_after_dispatch({
+        "build_contracts": [_C1], "team": "demo-fleet",
+        "build_workspace": "/ws", "escalation_backend": None,
+    })
+    assert sends2[0].arg["pi_posture"] == {}
+
+
+# ── worker-audit tier: per-worker advisory critic on the build path ───────────
+
+def test_role_chain_returns_full_escalation_chain():
+    import core.teams as teams
+    chain = teams.role_chain("demo-fleet", "critic")
+    assert isinstance(chain, list) and len(chain) >= 1     # [primary, *escalation]
+    assert teams.role_chain(None, "critic") is None        # no team ⇒ None
+
+
+def test_build_dispatch_threads_critic_chain_into_sends():
+    import core.teams as teams
+    from core.nodes.dispatch import _route_after_dispatch
+    chain = teams.role_chain("demo-fleet", "critic")
+    sends = _route_after_dispatch({
+        "build_contracts": [_C1], "team": "demo-fleet",
+        "build_workspace": "/ws", "escalation_backend": None,
+    })
+    arg = sends[0].arg
+    assert arg["critic_backend"] == chain[0]
+    assert arg["critic_fallback_chain"] == chain[1:]
+    # no team ⇒ no critic (audit disabled, byte-identical)
+    sends2 = _route_after_dispatch({
+        "build_contracts": [_C1], "backend": "deepseek_v4_flash",
+        "build_workspace": "/ws", "escalation_backend": None,
+    })
+    assert sends2[0].arg["critic_backend"] is None
+
+
+async def test_build_worker_runs_advisory_audit():
+    from core.nodes import worker as w
+
+    async def _send(messages, backend, model=None):
+        return "def addtwo(a, b):\n    return a + b"
+
+    async def _fake_critic(subtask_text, worker_output, critic_backend,
+                           prompt_template=None, fallback_chain=None):
+        assert critic_backend == "minimax"
+        assert fallback_chain == ["kimi_code", "deepseek_v4"]
+        return ("approve", ["looks correct"])
+
+    with patch("core.nodes.worker._send_to_backend", _send), \
+         patch("core.nodes.worker.run_critic", _fake_critic):
+        out = await w.worker_node({
+            "build_contract": _C1, "subtask_idx": 0, "backend": "deepseek_v4_flash",
+            "critic_backend": "minimax",
+            "critic_fallback_chain": ["kimi_code", "deepseek_v4"],
+        })
+    entry = out["build_impls"][0]
+    assert entry["status"] == "ok" and entry["source"]        # impl kept
+    assert entry["audit_backend"] == "minimax"
+    assert entry["audit_verdict"] == "approve"
+
+
+async def test_build_worker_audit_is_advisory_reject_keeps_source():
+    from core.nodes import worker as w
+
+    async def _send(messages, backend, model=None):
+        return "def addtwo(a, b):\n    return a + b"
+
+    async def _fake_critic(**kw):
+        return ("reject", ["nitpick"])
+
+    with patch("core.nodes.worker._send_to_backend", _send), \
+         patch("core.nodes.worker.run_critic", _fake_critic):
+        out = await w.worker_node({
+            "build_contract": _C1, "subtask_idx": 0, "backend": "deepseek_v4_flash",
+            "critic_backend": "minimax",
+        })
+    entry = out["build_impls"][0]
+    # advisory: a reject verdict is RECORDED but the Docker-gate source is NOT dropped
+    assert entry["audit_verdict"] == "reject"
+    assert entry["status"] == "ok" and "def addtwo" in entry["source"]
+
+
+async def test_build_worker_no_critic_skips_audit():
+    from core.nodes import worker as w
+
+    async def _send(messages, backend, model=None):
+        return "def addtwo(a, b):\n    return a + b"
+
+    with patch("core.nodes.worker._send_to_backend", _send):
+        out = await w.worker_node({"build_contract": _C1, "subtask_idx": 0,
+                                   "backend": "deepseek_v4_flash"})
+    entry = out["build_impls"][0]
+    assert "audit_verdict" not in entry     # no critic ⇒ byte-identical (no audit fields)
+
+
+async def test_run_critic_honors_explicit_fallback_chain():
+    from core.nodes import critic as cr
+    seen = []
+
+    async def _send(messages, backend):
+        seen.append(backend)
+        if backend in ("minimax", "kimi_code"):
+            raise RuntimeError("down")                     # hard failure → escalate
+        return '{"verdict": "approve", "reasons": ["ok"]}'  # deepseek_v4 answers
+
+    with patch("core.nodes.critic._send_to_backend", _send):
+        verdict, reasons = await cr.run_critic(
+            subtask_text="t", worker_output="o", critic_backend="minimax",
+            fallback_chain=["kimi_code", "deepseek_v4"],
+        )
+    assert seen == ["minimax", "kimi_code", "deepseek_v4"]   # walked the full chain
+    assert verdict == "approve"
+
+
 async def test_build_worker_failsoft_on_exception():
     from core.nodes.worker import worker_node
 

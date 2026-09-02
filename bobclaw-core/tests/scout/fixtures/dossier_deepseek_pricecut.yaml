@@ -1,0 +1,33 @@
+# Fixture: a valid Scout dossier — a provider price cut (cheaper, quantified EST).
+# Offline fixture (inv. 11): retrieved_at values are illustrative, never live-fetched.
+schema_version: 0
+id: dsk-v4-flash-pricecut-2026-07
+title: "DeepSeek V4 Flash output price cut"
+summary: "DeepSeek trimmed V4 Flash output pricing and deepened the off-peak discount."
+category: pricing
+sources_ref: scout/sources_v0.yaml
+created_at: "2026-07-07T08:00:00+00:00"
+claims:
+  - id: c1-output-price
+    statement: "DeepSeek V4 Flash output price dropped roughly 40% vs the prior tier."
+    evidence:
+      - source_id: deepseek-pricing
+        url: "https://api-docs.deepseek.com/quick_start/pricing"
+        excerpt: "V4 Flash output: lowered per-Mtok rate; off-peak discount widened."
+        retrieved_at: "2026-07-07T07:55:00+00:00"
+      - source_id: deepseek-news
+        url: "https://api-docs.deepseek.com/news/v4-flash-pricing"
+        excerpt: "Announcing a lower V4 Flash output price effective this week."
+        retrieved_at: "2026-07-07T07:56:00+00:00"
+    cost_impact:
+      framing: EST
+      direction: cheaper
+      magnitude_usd_month: 18.0
+      note: "EST at ~30M output tok/mo of fleet-audit volume on this route."
+    maturity: ga
+    verification:
+      vclass: claim-ratchet
+      status: corroborated
+      votes: 2
+      note: "Two independent sources (pricing page + changelog) agree."
+    tags: [pricing, deepseek, cost-down]

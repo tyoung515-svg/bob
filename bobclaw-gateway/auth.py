@@ -49,15 +49,10 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def verify_password_plain(candidate: str) -> bool:
-    """Verify a candidate admin password.
-
-    Prefers the bcrypt hash (``config.BOBCLAW_PASSWORD_HASH``) so the plaintext is
-    never stored at rest. Falls back to a constant-time comparison against the
-    plaintext ``config.BOBCLAW_PASSWORD`` for backward compatibility (bcrypt already
-    runs in constant time w.r.t. the candidate).
     """
-    if config.BOBCLAW_PASSWORD_HASH:
-        return verify_password(candidate, config.BOBCLAW_PASSWORD_HASH)
+    Compare a candidate password against config.BOBCLAW_PASSWORD using a
+    constant-time comparison to mitigate timing attacks.
+    """
     return hmac.compare_digest(candidate, config.BOBCLAW_PASSWORD)
 
 
@@ -238,10 +233,10 @@ async def authenticate_ws(
 async def auth_middleware(request: web.Request, handler):
     """
     Validate JWT Bearer tokens on all routes except /auth/*, /health,
-    /ws/chat, /ws/approvals, and the root info route (/).
-    Browsers can't set an Authorization header on a WebSocket
-    upgrade, so both WS endpoints do their own Pattern-2 first-frame auth and
-    must be exempt here or the upgrade is 401'd before that runs.
+    /ws/chat, /ws/approvals, /ws/monitor, and the root info route (/).
+    Browsers can't set an Authorization header on a WebSocket upgrade, so the
+    WS endpoints do their own Pattern-2 first-frame auth and must be exempt
+    here or the upgrade is 401'd before that runs.
     Sets request["user"] to the decoded payload on success.
     """
     path = request.path
@@ -251,6 +246,7 @@ async def auth_middleware(request: web.Request, handler):
         or path.startswith("/auth/")
         or path == "/ws/chat"
         or path == "/ws/approvals"
+        or path == "/ws/monitor"
         or path == "/"
     ):
         return await handler(request)

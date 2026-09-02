@@ -9,6 +9,7 @@ This module wires the core's public HTTP surface:
     GET  /api/models/local        — discovered local model backends
     POST /api/chat                — SSE streaming chat turn (B1b)
     POST /api/chat/approval       — resume after approval (B1c)
+    GET  /api/graph/topology      — compiled orchestration DAG export (G1)
 
 State is injected via :func:`build_app` so tests can construct an
 application with stubs.  ``start.py`` is the production entry point
@@ -40,7 +41,6 @@ from core import teams, team_proposer
 from core.faces.registry import FaceRegistry
 from core.memory.bootstrap import get_memory
 from core.memory.exceptions import L1ValidationFailed, MemoryConfigError
-from core.memory.write_fence import WriteFenceViolation
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,9 @@ GRAPH_KEY: web.AppKey[Any] = web.AppKey("graph", object)
 # UUID; /api/chat/approval (B1c) will look up the thread_id to resume the
 # corresponding LangGraph execution.  Process-local for now.
 APPROVALS_KEY: web.AppKey[dict] = web.AppKey("approvals", dict)
+# Prevent concurrent replay while leaving the approval mapping intact until a
+# resumed graph reaches a terminal completion.
+APPROVALS_IN_FLIGHT_KEY: web.AppKey[set] = web.AppKey("approvals_in_flight", set)
 
 
 routes = web.RouteTableDef()
@@ -120,28 +123,8 @@ def _rough_tokens(text: str) -> int:
 
 @routes.get("/health")
 async def health(_: web.Request) -> web.Response:
-    """Liveness probe plus observable memory write-fence degradation state."""
-    payload = {"status": "ok"}
-    if config.MEMORY_ENABLED:
-        try:
-            mem = get_memory()
-        except MemoryConfigError:
-            pass
-        else:
-            fence = getattr(mem, "write_fence", None)
-            degraded = bool(getattr(fence, "degraded", False))
-            lock_held = bool(getattr(fence, "lock_held", True))
-            writes_refused = degraded or not lock_held
-            payload["memory_write_fence_degraded"] = degraded
-            payload["memory_write_fence"] = {
-                "writes_refused": writes_refused,
-                "resource": getattr(fence, "resource_identity", None),
-            }
-            if writes_refused:
-                payload["memory_write_fence"]["reason"] = (
-                    getattr(fence, "degraded_reason", "") or "lock_not_held"
-                )
-    return web.json_response(payload)
+    """Liveness probe used by docker-compose and the gateway."""
+    return web.json_response({"status": "ok"})
 
 
 @routes.get("/api/faces")
@@ -248,6 +231,58 @@ async def routing_view(request: web.Request) -> web.Response:
     return web.json_response(view)
 
 
+# ─── /api/graph/topology — orchestration DAG export (G1) ──────────────────────
+
+@routes.get("/api/graph/topology")
+async def graph_topology(request: web.Request) -> web.Response:
+    """The compiled orchestration graph as inspectable data (G1).
+
+    Read-only. Sourced from the running compiled LangGraph (``get_graph()``), never a
+    hand-maintained node list. Query params::
+
+        ?format=json     (default) nodes + edges + council-shape overlay
+        ?format=mermaid  the compiled DAG as mermaid + council fan-out overlay
+        ?format=text     a plain-text node/edge/council table
+        ?observed=<flight_id>  the observed-topology view (a documented gap — see below)
+
+    Observed topology is a documented capability gap: orchestration events are emitted
+    live but not persisted per-flight, so an after-the-fact observed view is not
+    available. ``?observed=`` returns that gap + the live-tap design, not an error.
+    """
+    from core import graph_topology as gt
+
+    graph = request.app.get(GRAPH_KEY)  # None ⇒ gt builds a fresh (identical) graph
+
+    observed = request.query.get("observed")
+    if observed is not None:
+        return web.json_response(gt.observed_topology_gap(observed or None))
+
+    fmt = request.query.get("format") or "json"
+    if fmt not in gt.VALID_FORMATS:
+        return web.json_response(
+            error_event(
+                f"Unknown format {fmt!r}; valid: {', '.join(gt.VALID_FORMATS)}",
+                code="invalid_format",
+            ),
+            status=400,
+        )
+    try:
+        if fmt == "mermaid":
+            return web.Response(text=gt.render_mermaid(graph), content_type="text/plain")
+        if fmt == "text":
+            return web.Response(text=gt.render_text(graph), content_type="text/plain")
+        return web.json_response(gt.build_topology(graph))
+    except Exception:
+        # A read-only introspection surface must never 500 with a raw trace — the
+        # graph build / mermaid render is deterministic today, but a future graph
+        # breakage should surface as a clean, logged error, not a stack dump.
+        logger.exception("graph topology export failed (format=%s)", fmt)
+        return web.json_response(
+            error_event("topology export failed", code="topology_error"),
+            status=500,
+        )
+
+
 # ─── /api/teams — JOAT team store (list / create / delete) ─────────────────────
 
 @routes.get("/api/teams")
@@ -293,6 +328,81 @@ async def delete_team_endpoint(request: web.Request) -> web.Response:
             error_event(f"team {name!r} not found", code="not_found"), status=404
         )
     return web.json_response({"status": "deleted", "name": name})
+
+
+@routes.get("/api/flights")
+async def list_flights_endpoint(request: web.Request) -> web.Response:
+    """All flights (the supervisor's registry), optional ``?status=`` filter."""
+    from core.flight import service as flight_service
+
+    status_q = request.query.get("status") or None
+    return web.json_response({"items": await flight_service.list_flights(status=status_q)})
+
+
+@routes.post("/api/flights")
+async def create_flight_endpoint(request: web.Request) -> web.Response:
+    """Create a flight from ``{flight_id, name, project?, budget_usd?, priority?}``.
+    Duplicate id / invalid field → 400."""
+    from core.flight import service as flight_service
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(error_event("invalid JSON body", code="invalid_json"), status=400)
+    body = body or {}
+    try:
+        flight = await flight_service.create_flight(
+            (body.get("flight_id") or "").strip(),
+            (body.get("name") or "").strip() or (body.get("flight_id") or ""),
+            project=body.get("project"),
+            budget_usd=body.get("budget_usd"),
+            priority=int(body.get("priority") or 0),
+        )
+    except ValueError as exc:
+        return web.json_response(error_event(str(exc), code="invalid_flight"), status=400)
+    return web.json_response(flight.to_dict(), status=201)
+
+
+@routes.get("/api/flights/{flight_id}")
+async def get_flight_endpoint(request: web.Request) -> web.Response:
+    """A flight + its live budget status (spend vs budget). 404 if unknown."""
+    from core.flight import service as flight_service
+
+    detail = await flight_service.flight_detail(request.match_info["flight_id"])
+    if detail is None:
+        return web.json_response(error_event("flight not found", code="not_found"), status=404)
+    return web.json_response(detail)
+
+
+@routes.patch("/api/flights/{flight_id}")
+async def update_flight_endpoint(request: web.Request) -> web.Response:
+    """Update mutable fields (name/project/budget_usd/priority/status). Unknown field /
+    bad status → 400; unknown flight → 404."""
+    from core.flight import service as flight_service
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(error_event("invalid JSON body", code="invalid_json"), status=400)
+    fields = {k: v for k, v in (body or {}).items()
+              if k in {"name", "project", "budget_usd", "priority", "status"}}
+    try:
+        updated = await flight_service.update_flight(request.match_info["flight_id"], **fields)
+    except ValueError as exc:
+        return web.json_response(error_event(str(exc), code="invalid_flight"), status=400)
+    if updated is None:
+        return web.json_response(error_event("flight not found", code="not_found"), status=404)
+    return web.json_response(updated)
+
+
+@routes.delete("/api/flights/{flight_id}")
+async def delete_flight_endpoint(request: web.Request) -> web.Response:
+    from core.flight import service as flight_service
+
+    removed = await flight_service.delete_flight(request.match_info["flight_id"])
+    if not removed:
+        return web.json_response(error_event("flight not found", code="not_found"), status=404)
+    return web.json_response({"status": "deleted", "flight_id": request.match_info["flight_id"]})
 
 
 @routes.get("/api/backends")
@@ -503,33 +613,6 @@ def _fact_to_summary(fact) -> dict:
     }
 
 
-def _memory_write_refusal_reason(memory: Any) -> str | None:
-    """Return why this process cannot mutate memory, or None while armed."""
-    fence = getattr(memory, "write_fence", None)
-    if fence is None:
-        return None
-    if bool(getattr(fence, "degraded", False)):
-        return getattr(fence, "degraded_reason", "") or "contention"
-    if not bool(getattr(fence, "lock_held", True)):
-        return "lock_not_held"
-    return None
-
-
-def _memory_write_locked_response(
-    memory: Any,
-    exc: WriteFenceViolation | None = None,
-    *,
-    reason: str | None = None,
-) -> web.Response:
-    """Return the stable HTTP surface for a refused family write."""
-    refusal_reason = reason or _memory_write_refusal_reason(memory)
-    refusal_reason = refusal_reason or "write_fence_violation"
-    detail = str(exc) if exc is not None else f"memory writes refused: {refusal_reason}"
-    payload = error_event(detail, code="memory_write_locked")
-    payload["reason"] = refusal_reason
-    return web.json_response(payload, status=423)
-
-
 @routes.get("/api/memory/facts")
 async def list_memory_facts(request: web.Request) -> web.Response:
     """List L1 (auto-extracted) facts for the memory browser, newest-first.
@@ -588,10 +671,6 @@ async def forget_memory_fact(request: web.Request) -> web.Response:
             status=503,
         )
 
-    refusal_reason = _memory_write_refusal_reason(mem)
-    if refusal_reason is not None:
-        return _memory_write_locked_response(mem, reason=refusal_reason)
-
     try:
         await mem.fact_store.get(fact_id)
     except L1ValidationFailed:
@@ -600,13 +679,10 @@ async def forget_memory_fact(request: web.Request) -> web.Response:
             status=404,
         )
 
-    try:
-        # 1) Qdrant vector(s) — scroll by source_fact_id payload → delete points.
-        await mem.indexer.drop_facts([fact_id])
-        # 2) SQLite row.
-        await mem.fact_store.delete(fact_id)
-    except WriteFenceViolation as exc:
-        return _memory_write_locked_response(mem, exc)
+    # 1) Qdrant vector(s) — scroll by source_fact_id payload → delete points.
+    await mem.indexer.drop_facts([fact_id])
+    # 2) SQLite row.
+    await mem.fact_store.delete(fact_id)
     return web.json_response({"status": "forgotten", "fact_id": fact_id})
 
 
@@ -677,6 +753,7 @@ async def _stream_graph_turn(
     model_override: Optional[str],
     backend_override: Optional[str],
     emit_council_events: bool = False,
+    consume_approval_id: Optional[str] = None,
 ) -> web.StreamResponse:
     """Run a graph turn and stream SSE events back to the client.
 
@@ -709,6 +786,7 @@ async def _stream_graph_turn(
     full_response: list[str] = []
     approval_emitted = False
     disconnected = False
+    stream_failed = False
 
     try:
         # stream_mode is a list → each item is a (mode, payload) tuple.
@@ -842,6 +920,7 @@ async def _stream_graph_turn(
         )
         disconnected = True
     except Exception as exc:
+        stream_failed = True
         logger.exception("chat stream failed")
         try:
             await response.write(
@@ -860,7 +939,13 @@ async def _stream_graph_turn(
     assistant_text = "".join(full_response)
     elapsed_ms = int((perf_counter() - started) * 1000)
 
-    if not approval_emitted:
+    turn_completed = not approval_emitted and not stream_failed
+    if turn_completed and consume_approval_id is not None:
+        # The graph, including checkpoint writes and terminal-node work, has
+        # completed.  Only now is replay forbidden.
+        approvals.pop(consume_approval_id, None)
+
+    if turn_completed:
         try:
             await response.write(
                 _sse_line(
@@ -1024,6 +1109,12 @@ async def chat(request: web.Request) -> web.StreamResponse:
     # client. Require a real JSON `true` (mirrors `hierarchical`) so a stray truthy value can't
     # flip it. Absent/false ⇒ U7 OFF + relay drops council frames ⇒ byte-identical.
     emit_events = payload.get("emit_events") is True
+    # Research orchestrator entry (MS2-R2 + hermes wiring): the EXPLICIT per-turn trigger
+    # _route_after_recall reads — absent, a turn can never enter research_plan, so the whole
+    # research lane (and RESEARCH_LKS_INSTANCES federated reads) stays dormant. Require a
+    # real JSON `true` (mirrors `hierarchical`/`emit_events`) so a stray truthy value can't
+    # reroute a chat turn into the fan-out arm. Absent/false ⇒ byte-identical.
+    research_request = payload.get("research") is True
     # Neck Beard P3 — scope ingress. The gateway forwards the agent token's Gate scope
     # plus an HMAC vouch it minted with the shared BOBCLAW_SECRET. Honor the scope ONLY
     # when the vouch validates (else strip → destructive sub-actions fall back to human).
@@ -1060,6 +1151,8 @@ async def chat(request: web.Request) -> web.StreamResponse:
         "locale": locale,
         "pin_authoritative": pin_authoritative,
         "hierarchical": hierarchical,
+        # MS2-R2: the research orchestrator's entry trigger (False/absent ⇒ arm unvisited).
+        "research_request": research_request,
         # MS9-W1: threaded to route_node so a council turn stamps council_spec["emit_events"].
         "emit_events": emit_events,
         "backend": backend_override or "local",
@@ -1144,8 +1237,10 @@ async def approval(request: web.Request) -> web.StreamResponse:
             status=400,
         )
 
-    # Single-use: pop the mapping so the same approval_id can't be replayed.
-    thread_id = approvals.pop(approval_id, None)
+    # Lease the approval for this request, but do not consume it until the
+    # resumed graph completes.  A checkpoint/graph/stream failure therefore
+    # leaves the same id retryable instead of burning the human decision.
+    thread_id = approvals.get(approval_id)
     if thread_id is None:
         return web.json_response(
             error_event(
@@ -1154,6 +1249,16 @@ async def approval(request: web.Request) -> web.StreamResponse:
             ),
             status=404,
         )
+    in_flight: set = request.app.setdefault(APPROVALS_IN_FLIGHT_KEY, set())
+    if approval_id in in_flight:
+        return web.json_response(
+            error_event(
+                f"Approval is already being resumed: {approval_id}",
+                code="approval_in_progress",
+            ),
+            status=409,
+        )
+    in_flight.add(approval_id)
 
     # Resume the paused turn.  The graph is compiled with
     # interrupt_before=["approval"], so ``Command(update=...)`` writes the
@@ -1164,17 +1269,23 @@ async def approval(request: web.Request) -> web.StreamResponse:
     resume_update: dict = {"approval_response": decision}
     if isinstance(edit_content, str) and edit_content.strip():
         resume_update["approval_edit_content"] = edit_content
-    return await _stream_graph_turn(
-        request=request,
-        graph=graph,
-        graph_input=Command(update=resume_update),
-        thread_id=thread_id,
-        approvals=approvals,
-        face_id="",
-        user_content="",
-        model_override=None,
-        backend_override=None,
-    )
+    try:
+        return await _stream_graph_turn(
+            request=request,
+            graph=graph,
+            graph_input=Command(update=resume_update),
+            thread_id=thread_id,
+            approvals=approvals,
+            face_id="",
+            user_content="",
+            model_override=None,
+            backend_override=None,
+            consume_approval_id=approval_id,
+        )
+    finally:
+        # On failure the mapping was never popped, so dropping the lease re-arms
+        # the same approval id for an explicit retry.
+        in_flight.discard(approval_id)
 
 
 # ─── App factory ──────────────────────────────────────────────────────────────
@@ -1197,6 +1308,7 @@ def build_app(
     app[FACES_KEY] = faces if faces is not None else FaceRegistry()
     app[ROUTER_KEY] = router if router is not None else LocalModelRouter()
     app[APPROVALS_KEY] = {}
+    app[APPROVALS_IN_FLIGHT_KEY] = set()
     if graph is not None:
         app[GRAPH_KEY] = graph
     if pg_pool is not None:

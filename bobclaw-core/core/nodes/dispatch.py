@@ -33,6 +33,8 @@ import core.teams as teams
 from core.faces.registry import get_default_registry
 from core.nodes.budget_runtime import budget_config, plan_reservations
 from core.permissions import task_requires_approval
+from core.telemetry.emit import KIND_FLEET_START, emit_event_sync
+from core.telemetry.flight import resolve_flight_id
 
 
 def _build_worker_backend(state: dict) -> str:
@@ -216,6 +218,11 @@ def _route_after_dispatch(state: dict) -> Union[list[Send], str]:
         contracts_list = state["build_contracts"]
         worker_backend = _build_worker_backend(state)
         workspace = state.get("build_workspace")
+        # Worker-audit tier: the team's critic role (e.g. minimax → kimi_code →
+        # deepseek_v4). None ⇒ no team critic ⇒ no per-worker audit (byte-identical).
+        critic_chain = teams.role_chain(state.get("team"), "critic")
+        critic_backend = critic_chain[0] if critic_chain else None
+        critic_fallback_chain = critic_chain[1:] if critic_chain else None
         args = [
             {
                 "build_contract": c,
@@ -228,12 +235,29 @@ def _route_after_dispatch(state: dict) -> Union[list[Send], str]:
                 # P3: the build blast radius (sandbox) — for the Gate-Router audit
                 # trail + a future scope-aware impl critic.
                 "scope": state.get("scope"),
+                # Worker-audit tier (advisory; Docker verify stays the hard gate).
+                "critic_backend": critic_backend,
+                "critic_fallback_chain": critic_fallback_chain,
+                # Worker posture for CLI backends that need the provider/model threaded
+                # (agy_code / codex_code / pi_code read the model here); empty ⇒ HTTP
+                # backends dispatch byte-identically. Sourced from the turn state (a
+                # team-role posture field is a follow-up).
+                "agy_posture": dict(state.get("agy_posture") or {}),
+                "codex_posture": dict(state.get("codex_posture") or {}),
+                "pi_posture": dict(state.get("pi_posture") or {}),
             }
             for i, c in enumerate(contracts_list)
         ]
         # ── MS-4 BIND-01: reserve a per-branch token sub-budget at fan-out, guarded so a
         # non-budgeted build turn is byte-identical (no key added). ──
         _attach_reservations(args, state.get("budget"))
+        # ── Flight substrate L0.1: thread the flight tag (guarded; no key when unset). ──
+        _attach_flight(args, state.get("flight_id"))
+        # ── L0.2: fleet_start wave marker at the precise launch point (build = 1 wave). ──
+        emit_event_sync(
+            KIND_FLEET_START, resolve_flight_id(state),
+            {"n_workers": len(args), "wave": 0, "backend": worker_backend, "kind": "build"},
+        )
         return [Send("worker", a) for a in args]
 
     fanout = state.get("fanout_subtasks")
@@ -253,20 +277,53 @@ def _route_after_dispatch(state: dict) -> Union[list[Send], str]:
                 "critic_backend": face.critic_backend,
                 "critic_prompt_template": face.critic_prompt_template,
                 "recalled_facts": state.get("recalled_facts") or [],
+                "recalled_chunks": state.get("recalled_chunks") or [],
                 "scope": state.get("scope"),
-                # Worker posture for backends that need it (agy_code / codex_code
-                # read the model here; empty for other faces).
+                # Worker posture for backends that need it (agy_code / codex_code /
+                # pi_code read the model here; empty for other faces).
                 "agy_posture": dict(face.agy_posture or {}),
                 "codex_posture": dict(face.codex_posture or {}),
+                "pi_posture": dict(face.pi_posture or {}),
             }
             for entry in fanout
         ]
+        # ── Research lane (hermes wiring): on a RESEARCH turn (research_tier set by
+        # research_plan; never set on plain chat fan-outs) with RESEARCH_LKS_INSTANCES
+        # configured, each Send becomes a research_subagent worker over the LKS-first
+        # retriever. Empty env / availability degrade ⇒ attach_research_specs is a no-op
+        # and the fan-out is byte-identical. ──
+        if state.get("research_tier"):
+            from core.research.wiring import attach_research_specs
+            attach_research_specs(args)
         # ── MS-4 BIND-01: reserve a per-branch token sub-budget at fan-out, guarded so a
         # non-budgeted fan-out is byte-identical (no key added). ──
         _attach_reservations(args, state.get("budget"))
+        # ── Flight substrate L0.1: thread the flight tag (guarded; no key when unset). ──
+        _attach_flight(args, state.get("flight_id"))
+        # ── L0.2: fleet_start wave marker at the precise launch point. ──
+        emit_event_sync(
+            KIND_FLEET_START, resolve_flight_id(state),
+            {"n_workers": len(args), "wave": state.get("fanout_wave") or 0,
+             "backend": backend, "kind": "chat"},
+        )
         return [Send("worker", a) for a in args]
 
     return "execute"
+
+
+def _attach_flight(args: list[dict], flight_id: Any) -> None:
+    """Flight substrate (L0.1) — thread the flight tag onto each fan-out Send.
+
+    Guarded, mirroring ``_attach_reservations``: adds ``flight_id`` to every Send
+    payload ONLY when the turn carries an explicit flight (a non-empty string), so a
+    non-flight fan-out is byte-identical (no key added — the load-bearing
+    ``test_*_fanout_byte_identical`` guarantees). A worker with no ``flight_id`` in
+    its sub-state resolves to the ambient flight at emit time
+    (``core.telemetry.flight.resolve_flight_id``)."""
+    if not (isinstance(flight_id, str) and flight_id.strip()):
+        return
+    for arg in args:
+        arg["flight_id"] = flight_id.strip()
 
 
 def _attach_reservations(args: list[dict], raw_budget: Any) -> None:

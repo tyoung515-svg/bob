@@ -15,9 +15,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
-from client_ip import client_ip
-
 from aiohttp import web
+
+from client_ip import client_ip
 
 logger = logging.getLogger("bobclaw.gateway.audit")
 

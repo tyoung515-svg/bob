@@ -89,6 +89,20 @@ def _emit_events_field(frame: dict | None) -> dict:
     return {}
 
 
+def _research_field(frame: dict | None) -> dict:
+    """The additive ``research`` opt-in to forward to core (MS2-R2 research orchestrator entry).
+
+    Returns ``{"research": True}`` ONLY when the client ``message`` frame set ``research`` to a
+    real JSON ``true`` — else ``{}`` so every ordinary chat turn forwards a BYTE-IDENTICAL
+    upstream payload. Strict ``is True`` (mirrors core's parse and ``_emit_events_field``). Core
+    sets ``research_request`` and the turn enters the research lane — which reads the federated
+    LKS instances (e.g. hermes-corpus) when ``RESEARCH_LKS_INSTANCES`` is configured there.
+    """
+    if (frame or {}).get("research") is True:
+        return {"research": True}
+    return {}
+
+
 def _is_pin_authoritative(token_claims: dict | None, face_id) -> bool:
     """Headless contract: an AGENT token's explicit face is authoritative — core then
     skips the intent heuristic (which can never select an explicitly-pinned face like
@@ -267,7 +281,7 @@ async def _stream_chat_to_client(ws, conversation_id: str, payload: dict, conv_s
     conv_row = None
     if pool is not None:
         conv_row = await pool.fetchrow(
-            "SELECT c.face_id, c.model_preference, c.backend_preference, "
+            "SELECT c.face_id, c.model_preference, c.backend_preference, c.profile, c.locale, "
             "p.name AS project_name, p.description AS project_description, "
             "p.instructions AS project_instructions "
             "FROM conversations c LEFT JOIN projects p ON c.project_id = p.id "
@@ -301,8 +315,8 @@ async def _stream_chat_to_client(ws, conversation_id: str, payload: dict, conv_s
         "face_id": payload.get("face_id") or conv_session.get("face_id") or (conv_row["face_id"] if conv_row else None),
         "model": payload.get("model") or conv_session.get("model") or (conv_row["model_preference"] if conv_row else None),
         "backend": conv_session.get("backend") or (conv_row["backend_preference"] if conv_row else None),
-        "profile": payload.get("profile") or conv_session.get("profile"),
-        "locale": payload.get("locale") or conv_session.get("locale") or "en",  # absent => "en"
+        "profile": payload.get("profile") or conv_session.get("profile") or (conv_row["profile"] if conv_row else None),
+        "locale": payload.get("locale") or conv_session.get("locale") or (conv_row["locale"] if conv_row else None) or "en",  # absent => "en"
         "project_instructions": project_context,
         "history": history or [],
         "user_id": user_id,
@@ -328,6 +342,10 @@ async def _stream_chat_to_client(ws, conversation_id: str, payload: dict, conv_s
     # MS9-W1 — forward the additive council-theater opt-in (no key added for an ordinary chat
     # turn ⇒ byte-identical upstream). Only the Council screen's start-turn sets it.
     upstream_payload.update(_emit_events_field(payload))
+
+    # MS2-R2 — forward the additive research opt-in (no key added for an ordinary chat
+    # turn ⇒ byte-identical upstream). The turn enters core's research orchestrator.
+    upstream_payload.update(_research_field(payload))
 
     try:
         # A CoCouncil restart turn (two claude_code grounding spawns + an extra
@@ -418,17 +436,20 @@ async def _stream_chat_to_client(ws, conversation_id: str, payload: dict, conv_s
         pass
 
     assistant_message = "".join(assistant_parts)
-    saved = await _save_message(
-        pool,
-        conversation_id,
-        "assistant",
-        assistant_message,
-        {
-            "tokens_in": (completion or {}).get("tokens_in", 0),
-            "tokens_out": (completion or {}).get("tokens_out", 0),
-        },
-    )
+    saved = None
     if not superseded:
+        # A superseded turn's truncated assistant message is NOT persisted —
+        # only a natural completion or a manual stop_generation saves a row.
+        saved = await _save_message(
+            pool,
+            conversation_id,
+            "assistant",
+            assistant_message,
+            {
+                "tokens_in": (completion or {}).get("tokens_in", 0),
+                "tokens_out": (completion or {}).get("tokens_out", 0),
+            },
+        )
         elapsed_ms = int((perf_counter() - started) * 1000)
         await ws.send_json(
             {
@@ -454,12 +475,26 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
     session_state = get_user_session(request.app, user_id)
     pool = request.app[POSTGRES_POOL_KEY]
 
-    def _cleanup_stream_task(task: asyncio.Task) -> None:
-        """Called when a stream task finishes (naturally or by cancellation)."""
-        session_state.pop("active_stream", None)
-        exc = task.exception()
-        if exc is not None and not isinstance(exc, asyncio.CancelledError):
-            logger.exception("Stream task failed unexpectedly")
+    def _make_cleanup_stream_task(conv_session: dict, conversation_id: str):
+        """Build a done-callback bound to one conversation's stream state."""
+
+        def _cleanup_stream_task(task: asyncio.Task) -> None:
+            """Called when a stream task finishes (naturally or by cancellation)."""
+            # Identity check: only the conversation's CURRENT active stream may
+            # clear the state — a superseded task's late callback must not erase
+            # its replacement (nor release the user's concurrency slot).
+            if conv_session.get("active_stream") is task:
+                conv_session.pop("active_stream", None)
+                active_streams = session_state.get("active_streams")
+                if active_streams is not None:
+                    active_streams.discard(conversation_id)
+            # task.exception() raises CancelledError on a cancelled task.
+            if not task.cancelled():
+                exc = task.exception()
+                if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                    logger.exception("Stream task failed unexpectedly")
+
+        return _cleanup_stream_task
 
     async def _handle_message(data: dict) -> bool:
         message_type = data.get("type")
@@ -507,9 +542,9 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
             return True
 
         if message_type == "switch_profile":
-            # Pin a saved profile (HOW layer) to this conversation. Session-only
-            # (no DB column yet) — empty clears it. The next turn's upstream payload
-            # reads conv_session["profile"], so a council-shaped profile runs.
+            # Pin a saved profile (HOW layer) to this conversation — empty
+            # clears it. The next turn's upstream payload reads
+            # conv_session["profile"], so a council-shaped profile runs.
             profile = str(data.get("profile") or "").strip()
             conversation_id = str(data.get("conversation_id") or "").strip()
             if not conversation_id:
@@ -520,13 +555,18 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
                 return True
             conv_session = get_conversation_session(request.app, user_id, conversation_id)
             conv_session["profile"] = profile or None
+            if pool is not None:
+                await pool.execute(
+                    "UPDATE conversations SET profile = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3",
+                    conversation_id, profile or None, user_id,
+                )
             await ws.send_json({"type": "profile_switched", "profile": profile or None})
             return True
 
         if message_type == "switch_locale":
-            # Pin a locale to this conversation. Session-only (no DB column yet) —
-            # empty clears it (defaults to "en" upstream). The next turn's upstream
-            # payload reads conv_session["locale"].
+            # Pin a locale to this conversation — empty clears it (defaults to
+            # "en" upstream). The next turn's upstream payload reads
+            # conv_session["locale"].
             locale = str(data.get("locale") or "").strip()
             conversation_id = str(data.get("conversation_id") or "").strip()
             if not conversation_id:
@@ -537,6 +577,11 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
                 return True
             conv_session = get_conversation_session(request.app, user_id, conversation_id)
             conv_session["locale"] = locale or None
+            if pool is not None:
+                await pool.execute(
+                    "UPDATE conversations SET locale = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3",
+                    conversation_id, locale or None, user_id,
+                )
             await ws.send_json({"type": "locale_switched", "locale": locale or None})
             return True
 
@@ -587,19 +632,36 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
             if not await _verify_conversation_access(pool, conversation_id, user_id):
                 await _send_ws_error(ws, "Conversation not found or access denied", "not_found")
                 return True
-            history = await _get_conversation_history(
-                pool, conversation_id,
-                limit=config.HISTORY_MESSAGE_COUNT,
-                max_chars=config.HISTORY_MAX_CHARS,
-            )
-            await _save_message(pool, conversation_id, "user", content)
+            active_streams = session_state.setdefault("active_streams", set())
+            if (
+                conversation_id not in active_streams
+                and len(active_streams) >= config.MAX_CONCURRENT_STREAMS_PER_USER
+            ):
+                await _send_ws_error(ws, "Too many concurrent conversations", "concurrency_limit")
+                return True
+            # Reserve the slot IMMEDIATELY (idempotent add): the history fetch and
+            # message save below await, and a second connection passing the same
+            # check before our add() would exceed the cap (audit 1A finding).
+            reserved = conversation_id not in active_streams
+            active_streams.add(conversation_id)
+            try:
+                history = await _get_conversation_history(
+                    pool, conversation_id,
+                    limit=config.HISTORY_MESSAGE_COUNT,
+                    max_chars=config.HISTORY_MAX_CHARS,
+                )
+                await _save_message(pool, conversation_id, "user", content)
+            except Exception:
+                if reserved:
+                    active_streams.discard(conversation_id)
+                raise
             conv_session = get_conversation_session(request.app, user_id, conversation_id)
             if data.get("face_id"):
                 conv_session["face_id"] = data["face_id"]
             if data.get("model"):
                 conv_session["model"] = data["model"]
-            # Cancel any existing stream before starting a new one
-            existing = session_state.get("active_stream")
+            # Cancel any existing stream in this conversation before starting a new one
+            existing = conv_session.get("active_stream")
             if existing is not None and not existing.done():
                 setattr(existing, "_superseded", True)
                 existing.cancel()
@@ -607,8 +669,8 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
             task = asyncio.create_task(
                 _stream_chat_to_client(ws, conversation_id, data, conv_session, pool, user_id, history, payload)
             )
-            task.add_done_callback(_cleanup_stream_task)
-            session_state["active_stream"] = task
+            task.add_done_callback(_make_cleanup_stream_task(conv_session, conversation_id))
+            conv_session["active_stream"] = task
             return True
 
         if message_type == "approval_response":
@@ -643,7 +705,15 @@ async def chat_socket(request: web.Request) -> web.StreamResponse:
             return True
 
         if message_type == "stop_generation":
-            active = session_state.get("active_stream")
+            conversation_id = str(data.get("conversation_id") or "").strip()
+            if not conversation_id:
+                await _send_ws_error(ws, "conversation_id is required", "invalid_conversation")
+                return True
+            if not await _verify_conversation_access(pool, conversation_id, user_id):
+                await _send_ws_error(ws, "Conversation not found or access denied", "not_found")
+                return True
+            conv_session = get_conversation_session(request.app, user_id, conversation_id)
+            active = conv_session.get("active_stream")
             if active is not None and not active.done():
                 active.cancel()
                 await ws.send_json({"type": "generation_stopped", "code": "stopped"})

@@ -53,6 +53,7 @@ from core.council.events import (
 from core.council.protocol import _PROTOCOLS_SUMMARY_TEMPLATE, load_protocols
 from core.nodes.budget_runtime import measure_spend
 from core.nodes.execute import _send_to_backend
+from core.spawn_context import spawn_descriptor
 from core.telemetry.emit import KIND_COUNCIL_SEAT, emit_event
 from core.telemetry.flight import resolve_flight_id
 
@@ -67,22 +68,31 @@ _COUNCIL_SYSTEM_BASE = (
 
 # ── Backend / cost seam (the key P1b rewire) ─────────────────────────────────
 
-def make_backend_fn(backend: str) -> BackendFn:
+def make_backend_fn(
+    backend: str, spawn_ctx_descriptor: Optional[dict] = None
+) -> BackendFn:
     """Adapt a Bob backend name to the engine's ``BackendFn`` seam.
 
     The engine calls backends as ``async (system: str, user_msg: str) -> str``.
     Bob's seam is ``_send_to_backend(messages: list[dict], backend: str) -> str``
     (the same async injection point ``critic.py`` and ``worker.py`` use), so
     tests patching ``_send_to_backend`` mock the council with zero network.
+
+    ``spawn_ctx_descriptor`` (spawn-context intake 2026-07-18): when given, the
+    send runs inside a :func:`spawn_descriptor` scope so a CLI-subprocess
+    backend behind the seam spawns with that position/role framing (e.g. the
+    sequential council's voices) instead of ambient repo context. Non-CLI
+    backends never read it — inert for them.
     """
     async def _fn(system: str, user_msg: str) -> str:
-        return await _send_to_backend(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_msg},
-            ],
-            backend,
-        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ]
+        if spawn_ctx_descriptor:
+            with spawn_descriptor(spawn_ctx_descriptor):
+                return await _send_to_backend(messages, backend)
+        return await _send_to_backend(messages, backend)
 
     return _fn
 
@@ -295,6 +305,10 @@ def panel_dispatch_node(state: dict) -> dict:
 
     spec["resolved_seats"] = resolved
     spec["panel_task"] = _build_panel_task(topic, context, reseed_context)
+    # Raw topic (not the protocol-wrapped panel prompt) for each seat's
+    # spawn-context task framing — the rendered context file cites the actual
+    # deliberation question, bounded, without duplicating the whole prompt.
+    spec["topic"] = topic
 
     # U7 (opt-in): mark the start of this panel round so the theater can render
     # "round N began · seats=[...]" BEFORE any seat completes (the existing
@@ -343,6 +357,7 @@ def _route_after_panel(state: dict) -> Union[list[Send], str]:
                 "fallback_chain": seat["fallback_chain"],
                 "role_prompt": seat.get("role_prompt", ""),
                 "task": task,
+                "topic": spec.get("topic", ""),
                 "seat_idx": seat["idx"],
                 "panel_round": panel_round,
                 "flight_id": flight_id,
@@ -396,25 +411,39 @@ async def panel_worker_node(sub_state: dict) -> dict:
         extra={"backend": primary},
     )
 
+    # Spawn-context (intake 2026-07-18): publish this seat's deliberation
+    # identity for any CLI-subprocess backend in the chain. The rendered
+    # context file states the seat's posture and forbids discussing the host
+    # system — the exact leak that made a claude_code framer seat deliberate
+    # about the host's routing (my-bob, 2026-07-18). The seam signature stays
+    # untouched (test-pinned); the descriptor rides a coroutine-local scope.
+    seat_descriptor = {
+        "position": "council_seat",
+        "role": posture,
+        "template": "council_seat",
+        "task": sub_state.get("topic") or "",
+    }
+
     text = ""
     used_backend = primary
     last_error: Optional[Exception] = None
-    for candidate in [primary, *fallback_chain]:
-        try:
-            text = await asyncio.wait_for(
-                _send_to_backend(messages, candidate),
-                timeout=WORKER_TIMEOUT_SECONDS,
-            )
-            used_backend = candidate
-            last_error = None
-            break
-        except Exception as exc:  # noqa: BLE001 — walk the fallback chain on any error
-            last_error = exc
-            logger.warning(
-                "council seat %d (%s) backend %r failed: %s",
-                seat_idx, posture, candidate, exc,
-            )
-            continue
+    with spawn_descriptor(seat_descriptor):
+        for candidate in [primary, *fallback_chain]:
+            try:
+                text = await asyncio.wait_for(
+                    _send_to_backend(messages, candidate),
+                    timeout=WORKER_TIMEOUT_SECONDS,
+                )
+                used_backend = candidate
+                last_error = None
+                break
+            except Exception as exc:  # noqa: BLE001 — walk the fallback chain on any error
+                last_error = exc
+                logger.warning(
+                    "council seat %d (%s) backend %r failed: %s",
+                    seat_idx, posture, candidate, exc,
+                )
+                continue
 
     # COST-2 (MS5-C1): a post-hoc token estimate of this seat's REAL I/O (request
     # messages + response text). No provider `usage` on the send seam (COST-1), so

@@ -58,7 +58,8 @@ BUILTIN_TEAMS: dict[str, dict[str, dict]] = {
     # tool-capable cloud worker, critic kept local.
     "cloud-heavy": {
         "apex": {"backend": "claude_code", "escalation_chain": ["claude_api"]},
-        "worker": {"backend": "glm_5_2", "escalation_chain": ["deepseek_v4_flash", "kimi_code"]},
+        # GLM is single-lane-only (never a fan-out worker) — see [[glm-single-lane-only]].
+        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["deepseek_v4", "kimi_code"]},
         "critic": {"backend": _LOCAL_BACKEND, "escalation_chain": ["minimax"]},
     },
     # Local-first fleet: everything that can run local does; cloud is escalation.
@@ -68,23 +69,27 @@ BUILTIN_TEAMS: dict[str, dict[str, dict]] = {
         "critic": {"backend": _LOCAL_BACKEND, "escalation_chain": ["minimax"]},
     },
     # Centerpiece demo fleet (100-agent run): apex = Claude Opus (claude_api),
-    # worker = DeepSeek-Flash (the 100 concurrent workers), critic = GLM-5.2 (the
+    # worker = DeepSeek-Flash (the 100 concurrent workers), critic = MiniMax (the
     # 1:10 chunk-auditor/manager tier). The routing-view under this team renders
     # the three live tiers. NOTE the critic role here is the chunk-AUDITOR fleet,
     # not the per-worker 1:1 critic node (that's a separate reduce stage).
+    # GLM pulled from the critic + worker-escalation (fan-out spots) — single-lane-only,
+    # see [[glm-single-lane-only]]; MiniMax is the parallel-safe auditor (cap 10 ⊇ 1:10).
     "demo-fleet": {
         "apex": {"backend": "claude_api", "escalation_chain": ["claude_code"]},
-        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_2", "kimi_code"]},
-        "critic": {"backend": "glm_5_2", "escalation_chain": ["minimax"]},
+        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["deepseek_v4", "kimi_code"]},
+        "critic": {"backend": "minimax", "escalation_chain": ["deepseek_v4"]},
     },
     # Hierarchical-managers fleet (STEERING NB-W1 topology): the top manager +
     # mini-managers are Kimi via its OWN CLI (apex=kimi_cli), bulk workers are
-    # DeepSeek-Flash, the first final audit + section critics are GLM. Escalates to
+    # DeepSeek-Flash, the first final audit + section critics are MiniMax. Escalates to
     # kimi_code (HTTP membership) then claude_api if the Kimi CLI is unavailable.
+    # GLM pulled from the section-critic + worker-escalation (fan-out) — single-lane-only,
+    # see [[glm-single-lane-only]].
     "hier-fleet": {
         "apex": {"backend": "kimi_cli", "escalation_chain": ["kimi_code", "claude_api"]},
-        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_2"]},
-        "critic": {"backend": "glm_5_2", "escalation_chain": ["minimax"]},
+        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["deepseek_v4"]},
+        "critic": {"backend": "minimax", "escalation_chain": ["deepseek_v4"]},
     },
 }
 
@@ -660,6 +665,18 @@ def role_backend(team: Optional[str], role: Role) -> Optional[str]:
     effective_team = team or get_active_team()
     primary = _primary_slot(_team_role_cfg(effective_team, role))
     return primary["backend"] if primary else None
+
+
+def role_chain(team: Optional[str], role: Role) -> Optional[list[str]]:
+    """The full backend chain a team binds to *role* — ``[primary, *escalation]`` —
+    or None (no team / role unmapped). Face-free public read, no health-walk (like
+    :func:`role_backend`). Used by the build pipeline to thread the worker-audit
+    tier's escalation chain (e.g. critic = ``minimax → kimi_code → deepseek_v4``)."""
+    effective_team = team or get_active_team()
+    primary = _primary_slot(_team_role_cfg(effective_team, role))
+    if primary is None:
+        return None
+    return [primary["backend"], *primary["escalation_chain"]]
 
 
 def escalation_for(

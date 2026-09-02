@@ -377,6 +377,27 @@ class LedgerReportStore:
         )
 
 
+class InMemoryReportStore:
+    """A per-turn EPHEMERAL evolving report (plain list; no ledger, no IO).
+
+    The live chat fan-out seam (``core.research.wiring``) hands each research Send its own instance:
+    the evolving report only needs to outlive the ONE ``run_iterresearch`` loop that owns it — a chat
+    turn has no git repo to ledger into, and durability there belongs to the conversation store, not
+    the research lane. ``LedgerReportStore`` remains the durable choice for DAG/forest callers.
+    """
+
+    def __init__(self) -> None:
+        self._fragments: list[str] = []
+
+    async def read_report(self) -> str:
+        """Concatenate the appended fragments (the same join shape as the ledger store)."""
+        return "\n\n".join(f for f in self._fragments if f.strip())
+
+    async def append_fragment(self, artifact: RoundArtifact) -> None:
+        """Append ONE round's report fragment; empty fragments are kept out of the report by read."""
+        self._fragments.append(str(artifact.report_fragment or ""))
+
+
 # ── The IterResearch loop (the new primitive) ──────────────────────────────
 
 async def run_iterresearch(
@@ -555,6 +576,7 @@ __all__ = [
     "CondensedReturn",
     "ReportStore",
     "LedgerReportStore",
+    "InMemoryReportStore",
     "build_lean_workspace",
     "condense_tool_turn",
     "enforce_return_ceiling",

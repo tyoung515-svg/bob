@@ -24,12 +24,12 @@ instead? Use **[`UPGRADE.md`](UPGRADE.md)**.)
 
 ```powershell
 uv venv .venv --python 3.13
-uv pip install --python .venv\Scripts\python.exe -r bobclaw-core\requirements.lock
-uv pip install --python .venv\Scripts\python.exe -r bobclaw-gateway\requirements.lock
-uv pip install --python .venv\Scripts\python.exe -r bobclaw-claude-pipeline\requirements.lock
+uv pip install --python .venv\Scripts\python.exe -r bobclaw-core\requirements.txt
+uv pip install --python .venv\Scripts\python.exe -r bobclaw-gateway\requirements.txt
+uv pip install --python .venv\Scripts\python.exe -r bobclaw-claude-pipeline\requirements.txt
 ```
 
-Use the `requirements.lock` files (fully pinned, `aiohttp<3.14`), not `requirements.txt`.
+The `requirements.txt` files pin the important floors (`aiohttp<3.14`); there is no separate lockfile in this release.
 
 ## 2. Env file + database password (BEFORE the first `compose up`)
 

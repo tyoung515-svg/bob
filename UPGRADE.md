@@ -16,9 +16,9 @@ The sequence is always the same; per-version migration notes are below.
    ```
 4. **Re-sync dependencies from the pinned locks** (idempotent):
    ```powershell
-   uv pip install --python .venv\Scripts\python.exe -r bobclaw-core\requirements.lock
-   uv pip install --python .venv\Scripts\python.exe -r bobclaw-gateway\requirements.lock
-   uv pip install --python .venv\Scripts\python.exe -r bobclaw-claude-pipeline\requirements.lock
+   uv pip install --python .venv\Scripts\python.exe -r bobclaw-core\requirements.txt
+   uv pip install --python .venv\Scripts\python.exe -r bobclaw-gateway\requirements.txt
+   uv pip install --python .venv\Scripts\python.exe -r bobclaw-claude-pipeline\requirements.txt
    ```
 5. **Apply the migration notes** for the versions you crossed (below).
 6. **Verify:** `pwsh ./run_baseline_tests.ps1` — must end `BASELINE GREEN`.

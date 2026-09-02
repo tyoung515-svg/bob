@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from core.claim.v2.provenance import require_provenance
 from core.ledger.types import (
     RETRY_LIMIT,
     EXHAUSTED_TAG,
@@ -54,6 +55,11 @@ def on_entailment_failure(entry: dict, new_source: str, reason=None) -> dict:
     The input entry is deep-copied to avoid mutation. Returns a dict with keys
     'entry' (updated copy) and 'directive' (dict with action and metadata).
     """
+    # F6 (V1 claim-model v2): a claim that opts into the v2 schema MUST carry
+    # claim_schema_version + claim_path before it can enter the retry-gate — else
+    # EXHAUSTED_SEARCH could be set on a never-properly-typed claim. Legacy numeric-v1
+    # entries carry no v2 marker and pass through unchanged (additive invariant).
+    require_provenance(entry)
     # Deep copy to prevent mutation of caller's dict
     updated = deepcopy(entry)
 
