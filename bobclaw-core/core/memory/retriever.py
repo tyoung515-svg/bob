@@ -182,7 +182,24 @@ class MemoryRetriever:
         if "include_deprecated" in provider_filters:
             include_deprecated = provider_filters.pop("include_deprecated")
 
-        query_vec = (await self._embedder.embed([query]))[0]
+        try:
+            query_vec = (await self._embedder.embed([query]))[0]
+        except EmbedderUnavailable:
+            if not getattr(self._slot_resolver, 'keyword_fallback', False):
+                raise
+            from core.memory.keyword import search
+            # Only the runtime's lane-local SQLite store opts into this path.
+            if not hasattr(self._fact_store, '_db_path'):
+                raise
+            hits = await search(self._fact_store._db_path, query, top_k=top_k,
+                                filters=filters, t0=self._t0_recall_enabled)
+            result = []
+            for hit in hits:
+                chunk, _ = await self._classify_hit(hit, hit.score, include_deprecated)
+                if chunk is not None:
+                    result.append(chunk)
+            self._query_log.append({'mode': 'keyword-only', 'result_count': len(result)})
+            return result
 
         if hop_budget == 2:
             return await self._search_hop2(
@@ -241,6 +258,23 @@ class MemoryRetriever:
             # gated T0 hits so their presence cannot suppress legacy L1 facts.
             return None, "t0_disabled"
         source_fact_id: str | None = hit.payload.get("source_fact_id")
+        if hit.payload.get("projection_task") == "project_verbatim":
+            # T0 points predate note retirement and have no source_fact_id.
+            # Resolve their immutable event pointer at read time, including old
+            # vectors and keyword hits. Do not delete evidence or trust stale
+            # vector metadata. This also protects automatic Prior context.
+            event_id = hit.payload.get("source_event_id")
+            if not event_id and str(hit.payload.get("source_path", "")).startswith("event://"):
+                event_id = hit.payload["source_path"][8:]
+            if event_id:
+                notes = await self._fact_store.query({"source_event_id": event_id,
+                                                     "generation_method": "face_memory_save:v1"})
+                if notes:
+                    # Even include_deprecated cannot resurface a retired note
+                    # as conversation history. The memory browser is its read path.
+                    if any(f.confidence.rank == "deprecated" for f in notes):
+                        return None, "deprecated"
+                    source_fact_id = notes[0].fact_id
         boosted = rrf_score
         if source_fact_id:
             try:

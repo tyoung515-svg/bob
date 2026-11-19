@@ -18,7 +18,7 @@ class OllamaClient:
 
     def __init__(self, base_url: Optional[str] = None) -> None:
         self.base_url = (base_url or config.OLLAMA_URL).rstrip("/")
-        self._timeout = aiohttp.ClientTimeout(total=120, connect=5)
+        self._timeout = aiohttp.ClientTimeout(total=180, connect=5)
         self._discover_timeout = aiohttp.ClientTimeout(total=2)
 
     # ── health & model discovery ───────────────────────────────────────────────

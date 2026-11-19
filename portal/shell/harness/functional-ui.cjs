@@ -1,0 +1,18 @@
+const fs=require('node:fs'),assert=require('node:assert/strict'),ts=require('typescript'),Module=require('node:module');
+const {JSDOM}=require('jsdom');const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});
+for(const name of ['window','document','HTMLElement','Event','MouseEvent'])global[name]=dom.window[name];global.IS_REACT_ACT_ENVIRONMENT=true;
+const React=require('react'),{act}=React,{createRoot}=require('react-dom/client');
+const calls=[];let fixture={session:{id:'fixture',messages:[],receipts:[],events:[],project:null,pending:{id:'approval-fixture',digest:'sha256:fixture',path:'notes.txt',diff:'--- notes.txt\n+++ notes.txt\n-old\n+new\n'}},saved:[],data_root:'/fixture-private-store'};
+const code=ts.transpileModule(fs.readFileSync('src/FunctionalApp.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+const mod=new Module(process.cwd()+'/src/functional-test.cjs',module);mod.filename=process.cwd()+"/src/functional-test.cjs";mod.paths=module.paths;const original=mod.require.bind(mod);
+mod.require=(name)=>name==='@tauri-apps/api/core'?{invoke:async(cmd,args)=>{calls.push({cmd,args});return cmd==="app_begin"?"fixture-request-token":cmd==="app_snapshot"?fixture.session:fixture;}}:original(name);mod._compile(code,mod.filename);
+(async()=>{const root=createRoot(document.getElementById('root'));await act(async()=>root.render(React.createElement(mod.exports.default)));
+ const button=(text)=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
+ assert.ok(button('Attach project'),'selected-project attachment must be in real app');
+ assert.ok(button('Open saved session'),'saved session resume must be in real app');
+ assert.equal(document.querySelector('[aria-label="Exact file diff"]').textContent,fixture.session.pending.diff);
+ await act(async()=>button('Allow this write once').click());
+ const approval=calls.find(c=>c.cmd==='app_resolve');assert.deepEqual(approval.args,{id:'approval-fixture',digest:'sha256:fixture',allow:true,token:'fixture-request-token'});
+ await act(async()=>button('Deny this write').click());assert.ok(calls.some(c=>c.cmd==='app_resolve'&&c.args.allow===false));
+ await act(async()=>root.unmount());console.log('functional UI fixture harness: 4 checks PASS (not live model acceptance)');
+})().catch(e=>{console.error(e);process.exitCode=1});

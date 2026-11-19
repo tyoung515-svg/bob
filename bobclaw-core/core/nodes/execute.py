@@ -13,39 +13,50 @@ tracked in SPRINT_PLAN.md once we drop Python 3.10 support.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import uuid
 import logging
+from time import perf_counter
 from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Optional
 
 import aiohttp
 import redis.asyncio as aioredis
 
 from core.backends._cost import check_cap, parse_usage, track_cost, usd_for
-from core.backends._lc_openai import TOOL_CAPABLE_BACKENDS, build_chat_openai
+from core.backends._lc_openai import TOOL_CAPABLE_BACKENDS, build_chat_openai, tool_backend
 from core.backends.local_router import LocalModelRouter
 from core.config import config
+from core.roster import get_roster
+from core.lane_config import configured_mode, get_lane, require_backend, require_state, LaneConfigurationError
 from core.nodes._l0_events import _append_agent_turn_event
 from core.permissions import check_tool_access, requires_approval, task_requires_approval
 from core.telemetry.spend import bind_flight_from_state, record_current_flight_spend
 from core.tools.projects import _current_conversation_id, _current_user_id
+from core.tools.memory_tools import (
+    memory_tool_conversation_id,
+    memory_tool_face_id,
+    memory_tool_user_id,
+)
 from core.tools.registry import NATIVE_TOOLS, get_all_tools
 
 if TYPE_CHECKING:
     from core.graph import AgentState
 
 logger = logging.getLogger(__name__)
+_execute_fallbacks = get_roster().defaults.execute_fallbacks
 
 # ── Locale response directive (i18n S0) ───────────────────────────────────────
 # The ONE place the response-language directive text lives. Module-level so tests can
-# import and assert the exact bytes (guards drift). Injected front-most in execute_node
-# when state["locale"] is a known non-"en" locale.
+# import and assert the exact bytes (guards drift). Injected before other context
+# in execute_node for known non-"en" locales; gated face identity/card precede it.
 LOCALE_DIRECTIVE = {
     "zh-Hans": "只用简体中文回答。无论用户消息或上下文使用何种语言，你的全部回复都必须是简体中文。",
     "zh-Hant": "只用繁體中文回答。無論使用者訊息或上下文使用何種語言，你的全部回覆都必須是繁體中文。",
 }
 
 def locale_directive_message(locale) -> Optional[dict]:
-    """The front-most system directive for a response locale, or None to inject nothing.
+    """The locale directive ahead of existing context, or None to inject nothing.
     None / "en" / unknown / non-string => None (byte-identical English path). The SINGLE
     source of the locale-injection predicate; execute_node and the tests both call this."""
     if isinstance(locale, str) and locale != "en" and locale in LOCALE_DIRECTIVE:
@@ -390,7 +401,7 @@ def _resolve_cc_edit(
             "messages": [
                 {"role": "system", "content": f"Code edit could not be applied: {exc}"}
             ],
-            "error": str(exc),
+            "error": (str(exc) or type(exc).__name__),
         }
     return {
         **base,
@@ -407,7 +418,8 @@ _router = LocalModelRouter()
 _build_tool_model: Callable[[str], "ChatOpenAI"] = build_chat_openai
 
 # Hard ceiling on the number of tool-call round-trips per turn.
-_MAX_TOOL_ITERATIONS: int = 5
+_MAX_TOOL_ITERATIONS: int = 5  # kept for older imports; the live bound is
+                                 # config.TOOL_LOOP_MAX_ROUNDS (default 25)
 
 # ── Escalation pins (Redis-backed) ─────────────────────────────────────────
 # Shared across all bobclaw-core workers via Redis key TTL.
@@ -480,17 +492,42 @@ async def _check_escalation_pin(backend: str) -> str | None:
 
 # ── Tool-loop helpers (P0) ─────────────────────────────────────────────────────
 
+_TOOL_PREVIEW_CHARS = 400
+
+
+def _tool_preview(value) -> str:
+    """A bounded, human-readable preview of a tool argument or result."""
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    text = (text or "").strip().replace("\r", "")
+    return text if len(text) <= _TOOL_PREVIEW_CHARS else text[:_TOOL_PREVIEW_CHARS] + "…"
+
+
+def _emit_tool_activity(writer, **payload) -> None:
+    """Publish one tool-loop frame on the graph's custom stream.
+
+    The portal renders these as a live activity trail (S1, 2026-10-27). Emission is
+    best-effort: a writer fault must never fail the turn, because the tool result
+    still has to reach the model.
+    """
+    if writer is None:
+        return
+    try:
+        writer({"type": "tool_activity", **payload})
+    except Exception:
+        logger.debug("tool activity writer raised; continuing", exc_info=True)
+
+
 def _is_tool_enabled(face_id: str, backend: str) -> bool:
     """Return True when the active face/back-end pair should use the tool loop.
 
     The loop is opt-in: it fires only when
-      1. the backend is wired through the ChatOpenAI wrapper, and
+      1. the backend has a validated tool adapter (including worker Claude), and
       2. the face's allowed_tools contain at least one registered native tool
          or an explicit MCP tool ID (``mcp__*``).
     Existing faces use abstract labels ("search", "files", ...) that do not
     match native or MCP tool IDs, so they continue down the normal non-tool path.
     """
-    if backend not in TOOL_CAPABLE_BACKENDS:
+    if not tool_backend(backend):
         return False
     try:
         from core.faces.registry import get_default_registry
@@ -534,11 +571,49 @@ def _dict_messages_to_lc(messages: list[dict]) -> list:
     return out
 
 
+def _finish_tool_reply(content, backend, writer, fallback):
+    # Some providers return structured content, including reasoning-only blocks.
+    # Only visible text belongs in the saved/displayed assistant reply.
+    if isinstance(content, list):
+        content = "".join(block.get("text", "") for block in content
+                          if isinstance(block, dict) and block.get("type") in {"text", "output_text"}
+                          and isinstance(block.get("text"), str))
+    if not isinstance(content, str) or not content.strip():
+        content = fallback
+    if writer is not None:
+        try:
+            writer({"type": "token", "content": content, "backend": backend, "model": None})
+        except Exception:
+            logger.debug("tool-loop stream writer raised; continuing", exc_info=True)
+    return content
+
+
+class ToolLoopReply(str):
+    def __new__(cls, content, step_extensions=0):
+        reply = super().__new__(cls, content)
+        reply.step_extensions = step_extensions
+        return reply
+
+
+class ToolRoundLimitReply(ToolLoopReply):
+    """Visible partial reply with a machine-readable reason for stopping."""
+    stopped_reason = "tool_round_limit"
+
+
+class ProviderStoppedReply(ToolLoopReply):
+    def __new__(cls, content, failure, step_extensions=0):
+        reply = super().__new__(cls, content, step_extensions)
+        reply.stopped_reason = failure.code
+        return reply
+
+
 async def _run_tool_loop(
     messages: list[dict],
     backend: str,
     face_id: str,
     writer,
+    model_override=None,
+    allow_step_questions=False,
 ) -> str:
     """Bounded tool-calling loop for a tool-enabled face.
 
@@ -551,56 +626,291 @@ async def _run_tool_loop(
     from core.faces.registry import get_default_registry
 
     registry = get_default_registry()
+    from core.execution.workflow_context import current as workflow_current
+    workflow = workflow_current.get()
     allowed = registry.get_allowed_tools(face_id)
     permitted = [t for t in allowed if check_tool_access(face_id, t)]
     tools = await get_all_tools(permitted)
-    if not tools:
+    if workflow: tools = workflow.filter_tools(tools)
+    if not tools and not workflow and backend != 'claude_code':
         raise RuntimeError(f"No bound tools for face '{face_id}'")
 
+    from core.faces.prompt import interactive_messages
+    messages = (workflow.messages(messages, tools) if workflow else
+                interactive_messages(messages, face_id, backend, tools))
+    summaries = workflow.skill_summaries(registry) if workflow else registry.list_skills(face_id)
+    if summaries:
+        messages = [*messages, {"role": "system", "content":
+                    "Available skill summaries (load with skill_view): " + json.dumps(summaries)}]
     tools_by_name = {t.name: t for t in tools}
-    model = _build_tool_model(backend).bind_tools(tools)
+    cli_turn = backend == 'claude_code' and tool_backend(backend)
+    if cli_turn:
+        from core.backends.claude_turn import ClaudeTurn
+        from core.lane_config import get_lane
+        model = ClaudeTurn(model=model_override or get_lane().backends[backend].model, tools=tools, writer=writer)
+    else:
+        base_model = _build_tool_model(backend, model_override=model_override) if model_override else _build_tool_model(backend)
+        model = base_model.bind_tools(tools) if tools else base_model
+    # Same call-time guard as _stream_and_collect: the final backend is known here.
+    from core.context import enforce_backend_limits
+
+    require_backend(backend, model_override) if model_override else require_backend(backend)
+    fitted_messages = enforce_backend_limits(messages, backend)
+    if workflow and fitted_messages != messages:
+        from core.execution.models import ExecutionError
+        raise ExecutionError('workflow_input_too_large',413,'The frozen stage evidence does not fit this model. Narrow the task before starting a new run.')
+    messages = fitted_messages
     lc_messages = _dict_messages_to_lc(messages)
 
-    for _ in range(_MAX_TOOL_ITERATIONS):
-        response = await model.ainvoke(lc_messages)
-        tool_calls = getattr(response, "tool_calls", None) or []
-        if not tool_calls:
-            content = response.content or ""
-            if writer is not None and content:
-                try:
-                    writer(
-                        {
-                            "type": "token",
-                            "content": content,
-                            "backend": backend,
-                            "model": None,
-                        }
-                    )
-                except Exception:
-                    logger.debug("tool-loop stream writer raised; continuing", exc_info=True)
-            return content
+    # One grant per turn: web_search records the hosts it surfaces and web_fetch
+    # may read them for the rest of THIS turn only (see core/tools/web.py).
+    from core.tools.web import begin_turn, end_turn
 
-        # Execute the requested tools manually and feed the results back.
-        tool_msgs = []
-        for tc in tool_calls:
-            name, args, cid = tc["name"], tc.get("args", {}), tc.get("id", "")
-            tool = tools_by_name.get(name)
-            if tool is None:
-                content = f"Error: tool '{name}' is not available"
-            else:
+    search_turn = f"{face_id}:{uuid.uuid4().hex}"
+    search_token = begin_turn(search_turn)
+    from core.builder.service import turn_id as builder_turn
+    builder_token = builder_turn.set(uuid.uuid4().hex)
+    from core.tools.conv_tools import begin_history_turn, history_turn
+    history_token = begin_history_turn()
+    round_limit = registry.get_face(face_id).tool_loop_max_rounds or config.TOOL_LOOP_MAX_ROUNDS
+    if workflow:
+        round_limit = min(round_limit, workflow.round_limit)
+    builder_receipts = []
+    visible_parts = []
+    completed_steps = []
+    step_extensions = 0
+    rounds = 0
+    round_limit = max(1, int(round_limit))
+    try:
+        while True:
+            if rounds >= round_limit * (step_extensions + 1) and not (cli_turn and model.more_tools_in_round):
+                if workflow or writer is None or not allow_step_questions or step_extensions >= 3:
+                    break
+                from core.tools.ask import bind_writer, unbind_writer, request_step_extension, can_request_step_extension
+                token = bind_writer(writer)
+                # Publish progress even if the model has emitted no prose, so
+                # the gateway stores a pre-question row before the owner's answer.
                 try:
-                    content = str(await tool.ainvoke(args))
-                except Exception as exc:
-                    content = f"Error executing '{name}': {exc}"
-            tool_msgs.append(
-                ToolMessage(content=content, tool_call_id=cid, name=name)
-            )
-        lc_messages.append(response)
-        lc_messages.extend(tool_msgs)
+                    if not can_request_step_extension():
+                        break
+                    progress = f"I have used {rounds} steps on this reply and I am not finished.\n\n"
+                    visible_parts.append(_finish_tool_reply(progress, backend, writer, ''))
+                    started = perf_counter()
+                    granted = await request_step_extension(rounds)
+                    # The broker resumes its existing active-work clock on this
+                    # same question-completion signal, including on timeout.
+                    _emit_tool_activity(writer, phase="result", tool="ask_operator", ok=True,
+                        elapsed_ms=int((perf_counter() - started) * 1000),
+                        preview="The owner granted more steps." if granted else "The step question closed without an extension.")
+                finally:
+                    unbind_writer(token)
+                if not granted:
+                    break
+                step_extensions += 1
+            continuing_tool_reply = bool(cli_turn and model.more_tools_in_round)
+            try:
+                if continuing_tool_reply:
+                    # A CLI assistant message can contain several tool calls.
+                    # Their bridge requests belong to the already charged round.
+                    response = await model.ainvoke(lc_messages)
+                    if workflow:
+                        workflow.turn_messages = lc_messages
+                        workflow.last_response = response
+                elif workflow:
+                    response = await workflow.model_call(model, lc_messages)
+                    rounds += 1
+                else:
+                    from core.execution.provider_retry import model_call
 
-    # Iteration cap hit while the model still wanted to call tools.
-    # Return whatever the last response contained so the turn terminates.
-    return response.content or ""
+                    async def dispatch():
+                        nonlocal rounds
+                        rounds += 1  # A retry consumes the same turn call/step allowance.
+                        return await model.ainvoke(lc_messages)
+
+                    response = await model_call(dispatch, writer=writer,
+                        can_retry=lambda: rounds < round_limit * (step_extensions + 1))
+            except Exception as exc:
+                from core.backends.provider_failure import describe_failure
+                failure = describe_failure(exc)
+                if failure is None:
+                    raise
+                if workflow:
+                    if cli_turn:
+                        from core.execution.models import ExecutionError
+                        raise ExecutionError(failure.code, failure.status or 502, failure.sentence) from None
+                    raise
+                # No tool from this failed call has run. Keep earlier visible text
+                # and the ordinary tool activity trail, without replaying effects.
+                from collections import Counter
+                facts = []
+                if cli_turn and model.text:
+                    # The CLI already streamed this text; add only the separator.
+                    visible_parts.append(model.text + '\n\n')
+                    model.text = ''
+                    if writer:
+                        writer({'type': 'token', 'content': '\n\n', 'backend': backend, 'model': model.actual})
+                for ok, label in ((True, 'Completed tool steps'), (False, 'Tool steps that failed')):
+                    counts = Counter(name.replace('_', ' ') for name, success in completed_steps if success == ok)
+                    if counts:
+                        facts.append(label + ': ' + ', '.join(f'{name} ({count})' for name, count in counts.items()) + '.')
+                notice = ' '.join([*facts, failure.sentence, 'Reply "continue" to carry on from the saved progress.'])
+                return ProviderStoppedReply(''.join(visible_parts) + _finish_tool_reply(
+                    notice, backend, writer, notice), failure, step_extensions)
+            if workflow and not continuing_tool_reply:
+                workflow.begin_tool_reply()
+            if backend == 'openai_codex' and writer:
+                metadata = response.response_metadata or {}
+                writer({'type': 'model_observation', 'backend': backend,
+                    'model': metadata.get('requested_model') or model_override,
+                    'provider_reported_model': metadata.get('model_name'), 'billing': 'subscription'})
+                writer({'type': 'model_usage', 'backend': backend,
+                    **(response.usage_metadata or {}), 'available': response.usage_metadata is not None,
+                    'model': metadata.get('model_name'), 'billing': 'subscription'})
+            tool_calls = getattr(response, "tool_calls", None) or []
+            if not tool_calls:
+                if workflow:
+                    from core.builder.summary import assistant_text
+                    workflow.final_text = assistant_text(response.content)
+                fallback = "The model returned no visible answer. Please retry or inspect the tool activity."
+                content = response.content
+                if face_id == 'builder':
+                    from core.builder.summary import summary, assistant_text
+                    content = assistant_text(content)
+                    fallback = summary(builder_receipts) or fallback
+                return ToolLoopReply(''.join(visible_parts) + _finish_tool_reply(content, backend,
+                    None if cli_turn and content else writer, fallback), step_extensions)
+
+            # Providers may put the plan and a question tool call in one round.
+            # Publish visible text BEFORE invoking tools (which may park the turn).
+            from core.builder.summary import assistant_text
+            preface = assistant_text(response.content)
+            if preface:
+                if cli_turn and writer:
+                    writer({'type': 'token', 'content': '\n\n', 'backend': backend, 'model': model.actual})
+                visible_parts.append(_finish_tool_reply(preface + '\n\n', backend, None if cli_turn else writer, ''))
+            # Execute the requested tools manually and feed the results back.
+            tool_msgs = []
+            for tc in tool_calls:
+                name, args, cid = tc["name"], tc.get("args", {}), tc.get("id", "")
+                if cli_turn:
+                    model.tool_started(name, args, cid)
+                    if workflow and workflow.repairing:
+                        workflow.repair_tool_calls = True
+                if workflow:
+                    from core.execution.agent_turn import ToolRefusal
+                    try:
+                        await workflow.before_tool(name, args)
+                    except ToolRefusal as exc:
+                        content = await workflow.refuse(name, exc, args)
+                        tool_msgs.append(ToolMessage(content=content, tool_call_id=cid, name=name))
+                        if cli_turn: model.accept_result(cid, content)
+                        continue
+                tool = tools_by_name.get(name)
+                if cli_turn:
+                    if not check_tool_access(face_id, name) or name not in registry.get_allowed_tools(face_id):
+                        tool = None
+                _emit_tool_activity(writer, phase="start", tool=name, args=_tool_preview(args))
+                started = perf_counter()
+                ok = True
+                if tool is None:
+                    ok = False
+                    content = f"Error: tool '{name}' is not available"
+                else:
+                    # S2: bind the turn's writer so a tool can publish a mid-turn
+                    # question (ask_operator) and wait for the operator's answer.
+                    from core.tools.ask import bind_writer, unbind_writer
+                    from core.tools.registry import _skill_face_id
+                    skill_token = _skill_face_id.set(face_id)
+                    token = bind_writer(writer)
+                    try:
+                        content = str(await tool.ainvoke(args))
+                    except Exception as exc:
+                        if workflow:
+                            from core.execution.models import ExecutionError
+                            from core.execution.agent_turn import TOOL_REFUSALS, ToolStopped
+                            if not isinstance(exc,ExecutionError) or exc.code not in TOOL_REFUSALS:
+                                if isinstance(exc,ExecutionError):
+                                    raise ToolStopped(name,exc.code,exc.status) from None
+                                raise
+                            content = await workflow.refuse(name,exc,args)
+                            tool_msgs.append(ToolMessage(content=content, tool_call_id=cid, name=name))
+                            if cli_turn: model.accept_result(cid, content)
+                            continue
+                        ok = False
+                        content = f"Error executing '{name}': {exc}"
+                    finally:
+                        unbind_writer(token)
+                        _skill_face_id.reset(skill_token)
+                if workflow:
+                    try:
+                        await workflow.tool_result(name, content)
+                    except ToolRefusal as exc:
+                        content = await workflow.refuse(name,exc,args)
+                        ok = False
+                    else:
+                        workflow.tool_succeeded()
+                _emit_tool_activity(
+                    writer,
+                    phase="result",
+                    tool=name,
+                    ok=ok,
+                    elapsed_ms=int((perf_counter() - started) * 1000),
+                    preview=_tool_preview(content),
+                )
+                if cli_turn: model.accept_result(cid, content)
+                completed_steps.append((name, ok))
+                tool_msgs.append(
+                    ToolMessage(content=content, tool_call_id=cid, name=name)
+                )
+                if face_id == 'builder':
+                    builder_receipts.append((name, content))
+                    try:
+                        result = json.loads(content)
+                        end_builder_turn = result.get('end_turn') is True
+                    except (ValueError, AttributeError):
+                        end_builder_turn = False
+                    if end_builder_turn:
+                        from core.builder.summary import summary, assistant_text
+                        report = assistant_text(result.get('report')) if name == 'task_finish' else ''
+                        if workflow:
+                            workflow.final_text = report or summary(builder_receipts)
+                        return ToolLoopReply(''.join(visible_parts) + _finish_tool_reply(
+                            report, backend, writer, summary(builder_receipts)), step_extensions)
+            if workflow and not (cli_turn and model.more_tools_in_round):
+                workflow.finish_tool_reply()
+            lc_messages.append(response)
+            lc_messages.extend(tool_msgs)
+    except asyncio.CancelledError:
+        if cli_turn and model.interrupted_tool_error is not None:
+            asyncio.current_task().uncancel()
+            if workflow:
+                from core.backends.provider_failure import describe_failure
+                from core.execution.models import ExecutionError
+                failure = describe_failure(model.interrupted_tool_error)
+                if failure:
+                    raise ExecutionError(failure.code, failure.status or 502, failure.sentence) from None
+            raise model.interrupted_tool_error from None
+        raise
+    finally:
+        if cli_turn:
+            await asyncio.shield(model.close())
+        builder_turn.reset(builder_token)
+        end_turn(search_turn, search_token)
+        history_turn.reset(history_token)
+
+    # The final tool-only response precedes the final results; it is not an
+    # answer. Report bounded facts without another model call or more tools.
+    if workflow:
+        from core.execution.models import ExecutionError
+        if workflow.last_refusal and workflow.refusals:
+            raise ExecutionError('tool_refusal_limit',409,workflow.refusal_reason())
+        raise ExecutionError('tool_round_limit', 409)
+    # The model's visible progress text has already been streamed above. Keep it
+    # in history, followed by an explicit unfinished notice, without raw results
+    # or another model call beyond the existing limit.
+    notice = ('I reached the limit of steps for one reply before finishing. '
+              'Reply "continue" to carry on.')
+    return ToolRoundLimitReply(''.join(visible_parts) + _finish_tool_reply(notice, backend, writer, notice), step_extensions)
 
 
 # ── Backend transport ────────────────────────────────────────────────────────
@@ -686,6 +996,11 @@ async def _default_send_to_backend(
     (``decompose._default_call_llm``) pass None. Two-arg call sites still
     work because the parameter has a default value.
     """
+    require_backend(backend, model_override)
+    if backend == "openai_codex":
+        from core.backends.openai_codex import OpenAICodexClient
+        raw = await OpenAICodexClient().chat(messages, model=model_override)
+        return raw["choices"][0]["message"]["content"]
     if backend == "kimi_code":
         from core.backends.kimi import KimiClient
 
@@ -750,6 +1065,11 @@ async def _default_send_to_backend(
         )
         return raw["choices"][0]["message"]["content"]
 
+    if backend == "qwen_cloud":
+        from core.backends.qwen_cloud import QwenCloudClient
+        raw = await QwenCloudClient().chat(messages=messages, model=model_override)
+        return raw["choices"][0]["message"]["content"]
+
     if backend == "qwen_research":
         # MS2-R0: the self-hostable Qwen research floor (local llama.cpp, OpenAI-compat). Thread the
         # per-request model override through (the worker face's model alias / the served gguf id).
@@ -759,7 +1079,7 @@ async def _default_send_to_backend(
         raw = await client.chat(messages=messages, model=model_override)
         return raw["choices"][0]["message"]["content"]
 
-    if backend == "glm_5_2":
+    if backend == "glm_5_3":
         # FU1: serial-GLM cross-flight mutex (inert unless FLIGHT_ENFORCE_ENABLED). On
         # contention, D1 back-off escalates to a parallel-safe backend instead of blocking.
         from core.flight.enforcement import acquire_or_escalate, release
@@ -771,9 +1091,22 @@ async def _default_send_to_backend(
 
         client = GLMClient()
         try:
-            raw = await client.chat(messages=messages, model=None)
+            raw = await client.chat(messages=messages, model=model_override)
         finally:
             await release(backend, holder)
+        return raw["choices"][0]["message"]["content"]
+
+    if backend == "glm_5_3_flash_or":
+        # GLM 5.3 Flash through OpenRouter — PAYG, parallel-safe, no Z.AI serial-1 slot.
+        from core.backends.glm import GLMClient
+
+        client = GLMClient(
+            base_url=config.OPENROUTER_BASE_URL, api_key=config.OPENROUTER_API_KEY,
+            vault_provider=None,
+        )
+        raw = await client.chat(
+            messages=messages, model=model_override or config.OPENROUTER_GLM_FLASH_MODEL
+        )
         return raw["choices"][0]["message"]["content"]
 
     if backend == "minimax":
@@ -809,6 +1142,10 @@ async def _default_send_to_backend(
         # invokes opencode_serve without state context, in which case "any
         # workspace" is a reasonable default.
         return await _pool.dispatch(messages, workspace_dir=None)
+
+    if backend == "claude_code" and tool_backend(backend):
+        from core.backends.claude_turn import text_stream
+        return ''.join([delta async for delta in text_stream(messages, model_override)])
 
     if backend == "claude_code":
         from core.backends.claude_code import ClaudeCodeClient
@@ -846,7 +1183,7 @@ async def _default_send_to_backend(
         from core.backends.codex_code import CodexCodeClient
 
         # Stateless path = the fan-out worker (worker-codex). The worker face's
-        # litellm model name (glm-5.2 / deepseek-v4-flash / qwen3.7-max) is threaded
+        # litellm model name (glm-5.3 / deepseek-v4-flash / qwen3.7-max) is threaded
         # as model_override so the worker runs its configured provider via the local
         # LiteLLM proxy; absent ⇒ the codex base-config default. A unique uuid cwd is
         # minted per client → fan-out safe. (posture-aware planner = the state-aware
@@ -855,7 +1192,7 @@ async def _default_send_to_backend(
         result = await client.chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture=_cli_spawn_posture(model_override),
+            posture=_codex_lane_posture(model_override),
         )
         return result["text"]
 
@@ -999,6 +1336,12 @@ async def _default_stream_to_backend(
     ``decompose``/fan-out keep calling ``_send_to_backend`` directly (full
     string), so their planning/worker output is never surfaced token-by-token.
     """
+    require_backend(backend, model_override)
+    if backend == "openai_codex":
+        from core.backends.openai_codex import OpenAICodexClient
+        async for delta in OpenAICodexClient().stream_chat(messages, model=model_override, writer=_get_stream_writer()):
+            yield delta
+        return
     if backend == "claude_api":
         from core.backends.claude import ClaudeClient
 
@@ -1027,6 +1370,12 @@ async def _default_stream_to_backend(
             yield delta
         return
 
+    if backend == "qwen_cloud":
+        from core.backends.qwen_cloud import QwenCloudClient
+        async for delta in QwenCloudClient().stream_chat(messages, model=model_override):
+            yield delta
+        return
+
     if backend == "qwen_research":
         from core.backends.qwen_research import QwenResearchClient
 
@@ -1034,7 +1383,7 @@ async def _default_stream_to_backend(
             yield delta
         return
 
-    if backend == "glm_5_2":
+    if backend == "glm_5_3":
         # FU1: serial-GLM cross-flight mutex (inert unless FLIGHT_ENFORCE_ENABLED). On
         # contention, D1 back-off streams from a parallel-safe backend instead of blocking.
         from core.flight.enforcement import acquire_or_escalate, release
@@ -1047,10 +1396,23 @@ async def _default_stream_to_backend(
         from core.backends.glm import GLMClient
 
         try:
-            async for delta in GLMClient().stream_chat(messages, model=None):
+            async for delta in GLMClient().stream_chat(messages, model=model_override):
                 yield delta
         finally:
             await release(backend, holder)
+        return
+
+    if backend == "glm_5_3_flash_or":
+        from core.backends.glm import GLMClient
+
+        client = GLMClient(
+            base_url=config.OPENROUTER_BASE_URL, api_key=config.OPENROUTER_API_KEY,
+            vault_provider=None,
+        )
+        async for delta in client.stream_chat(
+            messages, model=model_override or config.OPENROUTER_GLM_FLASH_MODEL
+        ):
+            yield delta
         return
 
     if backend == "kimi_code":
@@ -1084,6 +1446,12 @@ async def _default_stream_to_backend(
         async for delta in GeminiClient().stream_chat(
             messages, model=model_map[backend]
         ):
+            yield delta
+        return
+
+    if backend == "claude_code" and tool_backend(backend):
+        from core.backends.claude_turn import text_stream
+        async for delta in text_stream(messages, model_override):
             yield delta
         return
 
@@ -1124,7 +1492,7 @@ async def _default_stream_to_backend(
         async for delta in CodexCodeClient().stream_chat(
             prompt=_messages_to_prompt(messages),
             resume_session_id=None,
-            posture=_cli_spawn_posture(model_override),
+            posture=_codex_lane_posture(model_override),
         ):
             yield delta
         return
@@ -1210,8 +1578,45 @@ async def _stream_and_collect(
     writer,
 ) -> str:
     """Drive ``_stream_to_backend``, emit each delta via *writer*, return full text."""
+    # The final backend is known here (after routing and any 429 fallback): trim the prior-conversation
+    # block if this backend has a hard prompt cap (a tested local model, an argv-limited CLI).
+    from core.context import enforce_backend_limits
+
+    require_backend(backend, model_override)
+    messages = enforce_backend_limits(messages, backend)
     parts: list[str] = []
-    async for delta in _stream_to_backend(messages, backend, model_override):
+
+    async def deltas():
+        if backend == 'openai_codex':
+            # Codex buffers until response.completed: nothing has been published
+            # and no client tool can have executed when a call fails.
+            from core.execution.call_guard import required
+            from core.execution.provider_retry import model_call
+
+            async def collect():
+                return [d async for d in _stream_to_backend(messages, backend, model_override)]
+
+            import asyncio
+            from time import monotonic
+            deadline = monotonic() + 180
+
+            async def remaining():
+                return deadline - monotonic()
+
+            try:
+                async with asyncio.timeout(180):
+                    buffered = await model_call(collect, writer=writer, remaining=remaining,
+                                                can_retry=lambda: not required.get())
+            except TimeoutError:
+                from core.backends.openai_codex import provider_failure
+                raise provider_failure(event_type='transport.turn_timeout', fallback='model_provider_error') from None
+            for delta in buffered:
+                yield delta
+        else:
+            async for delta in _stream_to_backend(messages, backend, model_override):
+                yield delta
+
+    async for delta in deltas():
         if not delta:
             continue
         parts.append(delta)
@@ -1228,13 +1633,22 @@ async def _stream_and_collect(
             except Exception:
                 # A stream-writer failure must never abort generation.
                 logger.debug("stream writer raised; continuing", exc_info=True)
-    return "".join(parts)
+    response = "".join(parts)
+    if not response.strip():
+        raise ValueError("empty_response: backend stream returned no usable text")
+    return response
 
 
 async def execute_node(state: "AgentState") -> dict:
     """LangGraph node: call the backend and accumulate the response."""
+    state = {**state, 'turn_id': uuid.uuid4().hex}
     task = state.get("task", "")
     backend = state.get("backend", "local")
+    if configured_mode():
+        try:
+            require_state(state)
+        except LaneConfigurationError as exc:
+            return await _execution_failure(state, exc)
     messages = list(state.get("messages", []))
     approval_response = state.get("approval_response")
 
@@ -1297,8 +1711,17 @@ async def execute_node(state: "AgentState") -> dict:
     memory_lines = [f.body.get("text", "") for f in recalled]
     memory_lines.extend(chunk.content for chunk in recalled_chunks)
     if memory_lines:
-        bullets = "\n".join(f"- {text}" for text in memory_lines[:5])
-        messages.insert(0, {"role": "system", "content": f"Prior context:\n{bullets}"})
+        from core.prompt_memory import prior_context
+        messages.insert(0, {"role": "system", "content": prior_context(memory_lines)})
+
+    # Only an owner-scoped boolean about the starter, never the owner file.
+    if state.get('face_id') == 'assistant' and not state.get('agent_service_single_turn'):
+        from core.starter_memory import starter_empty_for_owner
+        starter_empty = starter_empty_for_owner(state.get('user_id'))
+        if starter_empty is not None:
+            messages.insert(0, {'role': 'system', 'content':
+                'Owner starter headings empty: ' + str(starter_empty).lower() +
+                '. Offer onboarding only when welcome, once per conversation; honor any decline in history.'})
 
     # ── Project context splice (server-side projects) ────────────────────────
     # The conversation's project instructions, resolved by the gateway. Inserted
@@ -1318,7 +1741,7 @@ async def execute_node(state: "AgentState") -> dict:
     )
     if _page_context_card is not None:
         messages.insert(0, _page_context_card)
-    # This is the ONE locale injection point, front-most, covering both the HTTP join
+    # This is the ONE locale injection point, before existing context, covering the HTTP join
     # and the subprocess _messages_to_prompt (both concatenate role:"system" messages in order).
     # locale_directive_message() is the single source of the guard (None => English, never raises).
     _locale_directive = locale_directive_message(state.get("locale"))
@@ -1326,15 +1749,88 @@ async def execute_node(state: "AgentState") -> dict:
         messages.insert(0, _locale_directive)
 
     # ── Opt-in LangChain tool-calling loop (P0) ──────────────────────────────
+    if state.get("agent_service_single_turn"):
+        # One exact model call, no tools, TTL pins, hidden decomposition or fallback.
+        try:
+            if not configured_mode() and backend == "qwen_research" and state.get("model_override") == "qwen3.8-flash-next-iq3_xxs":
+                from core.backends.local_strata import LocalStrataClient
+                response = await LocalStrataClient().chat(messages)
+                writer = _get_stream_writer()
+                if writer is not None:
+                    writer({"type": "token", "content": response,
+                            "backend": backend, "model": state["model_override"]})
+            elif not configured_mode() and backend == "claude_alternate" and state.get("model_override") in ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"):
+                # Second PC — a DIFFERENT ACCOUNT with its own subscription. Opt-in
+                # seat only: the client pins HOST, so choose_host() is never consulted
+                # and this can never draw on the primary account (or vice versa).
+                from core.backends.claude_pc import (
+                    ClaudeAlternateHaikuClient, ClaudeAlternateSonnetClient, ClaudeAlternateOpusClient)
+                _alternate_model = state["model_override"]
+                _alternate_client = (ClaudeAlternateOpusClient() if _alternate_model == "claude-opus-5-5"
+                                else ClaudeAlternateSonnetClient() if _alternate_model == "claude-sonnet-5-5"
+                                else ClaudeAlternateHaikuClient())
+                # Reasoning effort is per-turn; the client validates it against a
+                # fixed set before it can reach a shell string.
+                _alternate_client.EFFORT = (state.get("model_effort") or "").strip().lower()
+                response = await _alternate_client.chat(_messages_to_prompt(messages))
+                writer = _get_stream_writer()
+                if writer is not None:
+                    writer({"type": "token", "content": response,
+                            "backend": backend, "model": _alternate_model})
+            elif not configured_mode() and backend == "claude_code" and state.get("model_override") in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"):
+                from core.backends.claude_pc import ClaudePCClient, ClaudePCSonnetClient, ClaudePCHaikuClient
+                _pc_model = state["model_override"]
+                _pc_client = (ClaudePCSonnetClient() if _pc_model == "claude-sonnet-5-5"
+                              else ClaudePCHaikuClient() if _pc_model == "claude-haiku-5-5"
+                              else ClaudePCClient())
+                response = await _pc_client.chat(_messages_to_prompt(messages))
+                writer = _get_stream_writer()
+                if writer is not None:
+                    writer({"type": "token", "content": response,
+                            "backend": backend, "model": _pc_model})
+            else:
+                response = await _stream_and_collect(
+                    messages, backend, state.get("model_override"), _get_stream_writer()
+                )
+            await _append_agent_turn_event(state, assistant_response=response)
+            return {"messages": [{"role": "assistant", "content": response}],
+                    "approval_required": False, "error": None}
+        except Exception as exc:
+            return await _execution_failure(state, exc)
+
     # Only fires for a tool-enabled face on a tool-capable backend. Every other
     # face/backend combination falls through to the existing transport below.
-    if _is_tool_enabled(state.get("face_id", "assistant"), backend):
+    if (_is_tool_enabled(state.get("face_id", "assistant"), backend)
+            or backend == 'claude_code' and tool_backend(backend)):
         writer = _get_stream_writer()
+        from core.execution.chat_context import bind as bind_work, current as work_current
+        work_token = bind_work(state)
+        from core.tools.workflow_context import bind as bind_workflow, current as workflow_current
+        workflow_token = bind_workflow(state)
+        from core.execution.pc_context import bind as bind_pc, current as pc_current
+        pc_token = bind_pc(state)
         user_token = _current_user_id.set(state.get("user_id"))
         conv_token = _current_conversation_id.set(state.get("conversation_id"))
+        from core.execution.chat_records import request_id as chat_request_id
+        # Older clients may omit a request id. Give an askable owner turn an
+        # internal correlation id; the platform question carries it to the
+        # gateway before any split history rows are saved.
+        question_request_id = state.get("request_id")
+        if (not question_request_id and state.get('step_questions_allowed') is True
+                and writer is not None and state.get('user_id') and state.get('conversation_id')):
+            question_request_id = uuid.uuid4().hex
+        request_token = chat_request_id.set(question_request_id)
+        # Provenance for the face-callable memory tools (F2, 2026-10-01).
+        m_face_token = memory_tool_face_id.set(state.get("face_id", ""))
+        m_user_token = memory_tool_user_id.set(state.get("user_id"))
+        m_conv_token = memory_tool_conversation_id.set(
+            state.get("conversation_id") or ""
+        )
         try:
             response = await _run_tool_loop(
-                messages, backend, state.get("face_id", "assistant"), writer
+                messages, backend, state.get("face_id", "assistant"), writer,
+                model_override=state.get('model_override'),
+                allow_step_questions=state.get('step_questions_allowed') is True,
             )
             await _append_agent_turn_event(state, assistant_response=response)
             return {
@@ -1342,20 +1838,27 @@ async def execute_node(state: "AgentState") -> dict:
                 "approval_required": False,
                 "approval_response": None,
                 "error": None,
+                **({"stopped_reason": response.stopped_reason} if isinstance(response, (ToolRoundLimitReply, ProviderStoppedReply)) else {}),
+                "step_extensions": getattr(response, "step_extensions", 0),
             }
         except Exception as exc:
-            response_text = f"Execution error: {exc}"
-            await _append_agent_turn_event(
-                state, assistant_response=response_text, error_msg=str(exc)
-            )
-            return {
-                "messages": [{"role": "assistant", "content": response_text}],
-                "error": str(exc),
-                "approval_required": False,
-            }
+            return await _execution_failure(state, exc)
         finally:
             _current_user_id.reset(user_token)
+            work_current.reset(work_token)
+            workflow_current.reset(workflow_token)
+            pc_current.reset(pc_token)
             _current_conversation_id.reset(conv_token)
+            chat_request_id.reset(request_token)
+            memory_tool_face_id.reset(m_face_token)
+            memory_tool_user_id.reset(m_user_token)
+            memory_tool_conversation_id.reset(m_conv_token)
+
+    # Stateless service calls returned above. Tool calls assemble their card from
+    # the actual bound schemas inside _run_tool_loop; other interactive transports
+    # bind no native tools. Neither block is returned as a state/history delta.
+    from core.faces.prompt import interactive_messages
+    messages = interactive_messages(messages, state.get("face_id") or "assistant", backend)
 
     # ── Workspace-aware OpenCode dispatch ────────────────────────────────────
     if backend == "opencode_serve":
@@ -1377,10 +1880,12 @@ async def execute_node(state: "AgentState") -> dict:
                 "approval_response": None,
                 "error": None,
             }
-        except NoOpenCodeAvailable:
+        except NoOpenCodeAvailable as exc:
             # No registered instance for this workspace — retarget to the
             # face's escalation_backend and fall through to standard send.
-            backend = state.get("escalation_backend") or "kimi_platform"
+            if configured_mode() and not _eligible_fallback(state):
+                return await _execution_failure(state, exc)
+            backend = state.get("escalation_backend") or _execute_fallbacks.opencode_unavailable
 
     # ── State-aware Claude Code dispatch (planning tier) ─────────────────────
     # CC needs per-call state the stateless transport can't see: the resume
@@ -1436,7 +1941,9 @@ async def execute_node(state: "AgentState") -> dict:
             # claude_code threw a throttle classification → fall through to the face's
             # escalation backend (= claude_api after Decision 1), mirroring the
             # opencode NoOpenCodeAvailable retarget + the kimi 429 path.
-            backend = state.get("escalation_backend") or "claude_api"
+            if configured_mode() and not _eligible_fallback(state):
+                return await _execution_failure(state, exc)
+            backend = state.get("escalation_backend") or _execute_fallbacks.claude_throttled
             # Was SILENT — log it so a "why didn't my edit apply" is diagnosable.
             logger.warning("claude_code throttled (%s); escalating to %s", exc, backend)
             # The proposed EDIT is a file on disk (proposed_*.diff), independent of the
@@ -1541,10 +2048,12 @@ async def execute_node(state: "AgentState") -> dict:
                         })
                     except Exception:
                         logger.debug("agy stream writer raised; continuing", exc_info=True)
-        except AgyThrottled:
+        except AgyThrottled as exc:
             # Subscription quota spent → fall through to the face's escalation
             # backend (= gemini_pro, the metered REST twin).
-            backend = state.get("escalation_backend") or "gemini_pro"
+            if configured_mode() and not _eligible_fallback(state):
+                return await _execution_failure(state, exc)
+            backend = state.get("escalation_backend") or _execute_fallbacks.agy_throttled
         except AgyError as exc:
             # Non-throttle failure (timeout, missing binary, or a capture race
             # that survived the retry). Degrade gracefully like the generic /
@@ -1556,7 +2065,7 @@ async def execute_node(state: "AgentState") -> dict:
                 "messages": [{"role": "assistant", "content": msg}],
                 "approval_required": False,
                 "approval_response": None,
-                "error": str(exc),
+                "error": (str(exc) or type(exc).__name__),
             }
         else:
             agy_uuid = client.last_session_id or result.get("session_id")
@@ -1592,6 +2101,11 @@ async def execute_node(state: "AgentState") -> dict:
                 posture = dict(face.codex_posture or {})
             except Exception:
                 posture = {}
+        if configured_mode():
+            posture = {**posture, "profile": get_lane().values.get("CODEX_PROFILE", "gpt")}
+            configured_model = get_lane().require("codex_code").model
+            if configured_model:
+                posture.setdefault("model", configured_model)
         posture = _face_spawn_posture(posture, state)  # face spawn_context: block
         conversation_id = (state.get("conversation_id") or "").strip()
         resume_id = state.get("codex_resume_session_id")
@@ -1621,10 +2135,12 @@ async def execute_node(state: "AgentState") -> dict:
                         })
                     except Exception:
                         logger.debug("codex stream writer raised; continuing", exc_info=True)
-        except CodexThrottled:
+        except CodexThrottled as exc:
             # Provider 429 via litellm → fall through to the face's escalation
             # backend (= opencode_serve: codex above opencode, opencode fallback).
-            backend = state.get("escalation_backend") or "opencode_serve"
+            if configured_mode() and not _eligible_fallback(state):
+                return await _execution_failure(state, exc)
+            backend = state.get("escalation_backend") or _execute_fallbacks.codex_throttled
             logger.warning("codex_code throttled; escalating to %s", backend)
         except CodexError as exc:
             # Non-throttle failure (timeout, missing binary, proxy down). Degrade
@@ -1636,7 +2152,7 @@ async def execute_node(state: "AgentState") -> dict:
                 "messages": [{"role": "assistant", "content": msg}],
                 "approval_required": False,
                 "approval_response": None,
-                "error": str(exc),
+                "error": (str(exc) or type(exc).__name__),
             }
         else:
             thread_id = client.last_session_id or result.get("session_id")
@@ -1674,7 +2190,7 @@ async def execute_node(state: "AgentState") -> dict:
     model_override = state.get("model_override")
     writer = _get_stream_writer()
     try:
-        pin = await _check_escalation_pin(backend)
+        pin = None if configured_mode() else await _check_escalation_pin(backend)
         effective_backend = pin or backend
         response = await _stream_and_collect(
             messages, effective_backend, model_override, writer
@@ -1688,7 +2204,9 @@ async def execute_node(state: "AgentState") -> dict:
         }
     except aiohttp.ClientResponseError as exc:
         if exc.status == 429 and backend == "kimi_code":
-            escalation = state.get("escalation_backend") or "kimi_platform"
+            if configured_mode() and not _eligible_fallback(state):
+                return await _execution_failure(state, exc)
+            escalation = state.get("escalation_backend") or _execute_fallbacks.kimi_429
             await _pin_escalation("kimi_code", escalation, ttl_seconds=_PIN_TTL_SECONDS)
             response = await _stream_and_collect(
                 messages, escalation, model_override, writer
@@ -1697,29 +2215,107 @@ async def execute_node(state: "AgentState") -> dict:
             return {
                 "messages": [{"role": "assistant", "content": response}],
                 "approval_required": False,
-                "approval_response": None,
+                "approval_response": None,  # clear after use
                 "error": None,
             }
-        response_text = f"Execution error: {exc}"
-        await _append_agent_turn_event(
-            state, assistant_response=response_text, error_msg=str(exc),
-        )
-        return {
-            "messages": [
-                {"role": "assistant", "content": response_text}
-            ],
-            "error": str(exc),
-            "approval_required": False,
-        }
+        if exc.status == 429 and backend == "pi_code":
+            # pi CLI hit the Z.AI serial-1 ceiling (PiThrottled surfaces as a 429
+            # ClientResponseError from the escalated send below). Escalate to the
+            # face's direct-HTTP twin (e.g. glm_5_3) with a TTL pin, mirroring
+            # the kimi_code path above.
+            if configured_mode() and not _eligible_fallback(state):
+                return await _execution_failure(state, exc)
+            escalation = state.get("escalation_backend") or _execute_fallbacks.pi_429
+            await _pin_escalation("pi_code", escalation, ttl_seconds=_PIN_TTL_SECONDS)
+            response = await _stream_and_collect(
+                messages, escalation, model_override, writer
+            )
+            await _append_agent_turn_event(state, assistant_response=response)
+            return {
+                "messages": [{"role": "assistant", "content": response}],
+                "approval_required": False,
+                "approval_response": None,  # clear after use
+                "error": None,
+            }
+        return await _execution_failure(state, exc)
     except Exception as exc:
-        response_text = f"Execution error: {exc}"
-        await _append_agent_turn_event(
-            state, assistant_response=response_text, error_msg=str(exc),
-        )
-        return {
-            "messages": [
-                {"role": "assistant", "content": response_text}
-            ],
-            "error": str(exc),
-            "approval_required": False,
-        }
+        # pi CLI unavailable (binary missing / spawn failed — PiError): retarget
+        # to the face's direct-HTTP twin (e.g. glm_5_3), mirroring the
+        # NoOpenCodeAvailable retarget. Without this, a pi-pinned face on a host
+        # without the pi CLI is hard-down (state_error) even though its cloud
+        # escalation twin is fully configured.
+        try:
+            from core.backends.pi_code import PiError
+            is_pi_error = isinstance(exc, PiError)
+        except Exception:
+            is_pi_error = False
+        if backend == "pi_code" and is_pi_error:
+            if configured_mode() and not _eligible_fallback(state):
+                return await _execution_failure(state, exc)
+            escalation = state.get("escalation_backend") or _execute_fallbacks.pi_error
+            logger.warning(
+                "pi_code unavailable (%s); escalating to %s", exc, escalation,
+            )
+            try:
+                response = await _stream_and_collect(
+                    messages, escalation, model_override, writer
+                )
+                await _append_agent_turn_event(state, assistant_response=response)
+                return {
+                    "messages": [{"role": "assistant", "content": response}],
+                    "approval_required": False,
+                    "approval_response": None,
+                    "error": None,
+                }
+            except Exception as esc_exc:
+                return await _execution_failure(state, esc_exc)
+        return await _execution_failure(state, exc)
+
+
+async def _execution_failure(state: dict, exc: Exception) -> dict:
+    tid = state.get('turn_id') or uuid.uuid4().hex
+    state = {**state, 'turn_id': tid}
+    from core.backends.provider_failure import describe_failure
+    failure = describe_failure(exc)
+    if failure is not None:
+        failure.log()
+        message = failure.sentence
+        await _append_agent_turn_event(state, assistant_response=message, error_msg=failure.code)
+        return {"messages": [{"role": "assistant", "content": message}],
+                "error": failure.code, "error_type": failure.code, "turn_id": tid,
+                "stopped_reason": failure.code,
+                "approval_required": False, "approval_response": None}
+    error = type(exc).__name__
+    # Preserve stack frames without exception arguments, chains or message contents.
+    safe = RuntimeError(error)
+    logger.exception('Execution failed conversation_id=%s turn_id=%s face=%s backend=%s',
+                     state.get('conversation_id'), tid, state.get('face_id'), state.get('backend'),
+                     exc_info=(type(safe), safe, exc.__traceback__))
+    face = 'Builder' if state.get('face_id') == 'builder' else 'Execution'
+    message = f'{face} hit an internal error ({error}) — turn {tid}; details in the server log.'
+    await _append_agent_turn_event(state, assistant_response=message, error_msg=error)
+    return {"messages": [{"role": "assistant", "content": message}],
+            "error": error, "error_type": error, "turn_id": tid,
+            "approval_required": False, "approval_response": None}
+
+
+def _eligible_fallback(state: dict) -> bool:
+    fallback = state.get("escalation_backend")
+    if not fallback:
+        return False
+    try:
+        require_backend(fallback)
+        return True
+    except LaneConfigurationError:
+        return False
+
+
+def _codex_lane_posture(model_override: Optional[str] = None) -> dict:
+    posture = _cli_spawn_posture(model_override)
+    if configured_mode():
+        lane = get_lane()
+        posture["profile"] = lane.values.get("CODEX_PROFILE", "gpt")
+        model = model_override or lane.require("codex_code").model
+        if model:
+            posture["model"] = model
+    return posture

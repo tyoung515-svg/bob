@@ -1,0 +1,8 @@
+[
+  {"action":"enter","name":"Message","value":"Synthetic offline transport probe. No provider call is permitted."},
+  {"action":"click","name":"Send message"},
+  {"action":"wait_text","value":"relay unavailable"},
+  {"action":"assert_no_receipts"},
+  {"action":"assert_ssh_attempts","count":1},
+  {"action":"capture"}
+]

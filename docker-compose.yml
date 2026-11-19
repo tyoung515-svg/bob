@@ -2,8 +2,8 @@
 # reachable from another host on the network. BoB's own services (core, gateway,
 # pipeline) run as host processes and connect over loopback; they are NOT in this
 # compose file. POSTGRES_PASSWORD is read from the environment (the setup flow
-# generates a strong value into .secrets/bobclaw.env) and falls back to a weak
-# dev default only when unset. See SECURITY.md.
+# generates a strong value into .secrets/bobclaw.env) and is required. There is no
+# password fallback. See SECURITY.md.
 #
 # The project name is pinned (not derived from the checkout directory) so a
 # re-cloned or renamed checkout keeps its containers and volumes. Running TWO
@@ -24,7 +24,7 @@ services:
       - "127.0.0.1:${BOBCLAW_PG_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: bobclaw
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bobclaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the private environment file}
       POSTGRES_DB: bobclaw
     volumes:
       - pgdata:/var/lib/postgresql/data

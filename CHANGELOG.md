@@ -3,6 +3,64 @@
 All notable changes to BoB are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+## [0.99.1]
+
+The Windows app preview. Curated public cut from the development line.
+
+**New**
+
+- **Windows installer and desktop app** (`portal/`). The installer carries BoB's
+  runtime and sets it up in its own WSL 2 distribution; Docker Desktop is not needed
+  on this route. First-run setup creates your lane, enrolls an authenticator and can
+  install a local embedder.
+- **Seven agents** in the app: Assistant, Planner, Researcher, Builder, Reviewer,
+  Fixer and Orchestrator, with several conversations open at once and a provider and
+  model chosen per conversation.
+- **Sign-in from inside the app** for ChatGPT and Claude subscriptions, and API keys
+  for OpenAI, Anthropic, DeepSeek, Google, GLM, Kimi and Qwen. `COMPLIANCE.md` says
+  exactly how each route works, including what the installer bundles.
+- **Builder with approvals.** You set how freely it works: Suggest, Approve or Auto,
+  plus a time-limited mode with no questions that has to be confirmed. Its work runs in
+  an isolated worker whose network access is limited to an allowlist, and reaching into
+  the Windows PC needs a grant from you first.
+- **Lanes.** One person's login, conversations, memory, workspace and sign-ins, kept
+  apart from other lanes on the same install.
+- **Library, Tasks, Projects and Memory screens.** The Library holds the apps,
+  workflows and tools you keep. Workflows and unattended runs are a **preview**: a run
+  may stop before it finishes.
+- **Runtime image** (`deploy/runtime/`): core, gateway, broker, workers, Postgres,
+  Redis, Qdrant and the embedder server as one WSL distribution, with in-place update
+  from the app, a backup before each update and a return to the previous runtime if
+  an update fails.
+- **Install from source that reaches sign-in.** `scripts/install-from-source.sh`
+  installs BoB on a fresh Ubuntu 24.04 server, with native datastores or with Docker
+  for the datastores, and checks each step up to a first sign-in. `scripts/migrate.py`
+  applies `init.sql` and every migration with the same journal the runtime image uses.
+
+**Changed**
+
+- `AGENTS-SETUP.md` and `UPGRADE.md` are rewritten for the current tree. The guide for
+  the earlier host-process Windows setup is gone, and `install-bob.ps1` now points to
+  the installer.
+- Deployment settings no longer have built-in defaults. `BOB_FAMILY_ROOT`,
+  `BOB_DEFAULT_OWNER`, `BOB_MEMORY_OWNERS`, the lane settings and the broker's token
+  file must be set by whoever deploys; `.secrets/bobclaw.env.example` lists them.
+- The database has no fallback password. `POSTGRES_URL` and `POSTGRES_PASSWORD` must
+  be set, and `docker-compose.yml` refuses to start Postgres without one.
+- The gateway reads the login password from `BOBCLAW_PASSWORD`.
+  `BOBCLAW_PASSWORD_HASH` is not read.
+- `COMPLIANCE.md` is rewritten: the installer bundles the Codex CLI and Claude Code,
+  and ChatGPT-subscription turns go directly to OpenAI's Codex service.
+
+**Known limits**
+
+- Workflows are a preview, and work you put on the calendar does not start by itself.
+- On a Windows PC, BoB runs while the desktop app is open.
+- The installer is not signed, so Windows asks before running it.
+- A from-source install has one lane and no isolated workers, subscription sign-in or
+  in-app recovery; those are provisioned by the runtime image only.
+- The earlier Kotlin app in `bobclaw-app/` does not work with this release.
+
 ## [0.99.0]
 
 The memory + bridge release. Curated public cut from the development line.

@@ -1,46 +1,13 @@
-"""
-BoBClaw Core — Codex CLI subprocess backend (``codex_code``)
+"""Codex CLI backend with legacy and packaged worker execution modes.
 
-Drives the genuine ``codex`` CLI (``codex exec``) as a headless one-shot
-subprocess. **GPT-ONLY** (Travis 2026-07-03): codex runs GPT under the native
-ChatGPT-login ``openai`` provider (the ``gpt`` / ``gpt-mini`` profiles) — NO
-LiteLLM proxy. GLM / DeepSeek / MiniMax agentic work moved to the ``pi_code``
-backend; codex's old multi-vendor proxy path is retired. NOT an HTTP/OpenAI-compat
-client here — transport is ``asyncio.create_subprocess_exec`` (the ``claude_code``
-/ ``agy_code`` shape).
-
-``_build_argv`` enforces GPT-only: an explicit ``profile`` → ``-p <profile>``; a
-GPT model id → ``-p gpt -m <model>`` (native); an UNSET posture defaults to the
-``gpt`` profile (never the shared ~/.codex litellm base default). A non-GPT model
-id still emits the legacy ``-c model_provider=litellm`` route, but no face uses it.
-
-Kimi is deliberately NOT exposed here — it has its own ``kimi_cli`` backend
-(Travis: "Kimi stays in its own CLI").
-
-Contract — EMPIRICALLY DERIVED against codex-cli 0.142.3 (2026-06-29; the locked
-facts the code depends on, like the agy contract):
-
-* **Prompt on STDIN.** ``codex exec`` with no positional prompt reads it from
-  stdin ("Reading prompt from stdin..."). Unlike agy (stdin MUST be closed),
-  codex READS stdin — we feed it via ``communicate(input=...)``.
-* **Reply via ``-o <file>``.** ``--output-last-message`` writes the agent's final
-  message to a file (deterministic; empty on failure). We also parse ``--json``
-  as a fallback / for the thread id + errors.
-* **Events on ``--json``** (NDJSON to stdout): ``thread.started{thread_id}`` (the
-  RESUME key), ``item.completed{item:{type:"agent_message",text}}``,
-  ``turn.completed{usage}``; on failure ``{type:"error",message}`` +
-  ``turn.failed{error:{message}}`` (message embeds the provider error JSON with a
-  ``code`` like 400/429).
-* **Provider via ``-p <profile>``** (``gpt`` = GPT-5.6 generation | ``gpt-mini`` = the mini variant),
-  native ChatGPT login; or ``-p gpt -m <gpt-model>`` to pin a specific GPT model.
-* **Errors / throttle** = non-zero exit + the ``error`` / ``turn.failed`` message;
-  a 429 / rate marker raises ``CodexThrottled`` (→ escalation), else ``CodexError``.
-* **No proxy dependency** — ``health_check`` is just ``codex --version`` (the old
-  LiteLLM ``:4000`` liveness gate was retired with the GPT-only cut).
-
-Streaming is message-level (one block) — codex exec buffers the whole reply.
+Legacy retains CLI output files, spawn briefing and its stripped child environment.
+In worker mode the installed profile selects the executable and clean environment;
+bounded NDJSON supplies replies and health checks cross the same boundary.
 """
 from __future__ import annotations
+
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
 
 import asyncio
 import json
@@ -137,6 +104,13 @@ class CodexCodeClient:
     ``conversation_id`` (keys the per-conversation scratch cwd).
     """
 
+    _STRIP_FROM_CHILD = (
+        "BOBCLAW_SECRET",
+        "BOBCLAW_PASSWORD",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+    )
+
     def __init__(
         self,
         cli_path: Optional[str] = None,
@@ -159,7 +133,16 @@ class CodexCodeClient:
 
     def _work_dir(self) -> str:
         work = os.path.join(config.CODEX_SCRATCH_ROOT, self.conversation_id or "_default")
-        os.makedirs(work, exist_ok=True)
+        if execution_mode() == "legacy":
+            os.makedirs(work, exist_ok=True)
+        else:
+            if os.name == 'nt':
+                os.makedirs(work, mode=0o770, exist_ok=True)  # shape-only Windows tests
+            else:
+                from core.worker.auth_file import directory
+                from pathlib import Path
+                with directory(Path(work), create=True):
+                    pass
         return work
 
     @staticmethod
@@ -167,45 +150,6 @@ class CodexCodeClient:
         return str(posture.get("mode") or "").lower() == "scratch_write" or bool(
             posture.get("read_repo")
         )
-
-    # ── spawn-context seam (intake 2026-07-18) ──────────────────────────────────
-
-    def _spawn_context(self, posture: dict) -> Optional[SpawnContext]:
-        """Build the SpawnContext when the posture carries a descriptor.
-
-        The scratch dir is the client's OWN ``_work_dir()`` (the ``-C`` working
-        root and where the ``-o`` reply file lands); the builder renders
-        AGENTS.md into it and hands back the env overrides.
-        """
-        descriptor = posture.get("spawn_context")
-        if not isinstance(descriptor, dict) or not descriptor:
-            return None
-        return resolve_spawn_context(
-            "codex_code",
-            posture,
-            scratch_dir=self._work_dir(),
-            conversation_id=self.conversation_id,
-        )
-
-    # F9: host secrets the codex CLI never needs — the gateway<->core vouch key and the
-    # metered Anthropic auth (codex talks to the LOCAL LiteLLM proxy, not Anthropic). The
-    # previous code inherited the FULL os.environ, leaking these into the codex subprocess.
-    _STRIP_FROM_CHILD = (
-        "BOBCLAW_SECRET",
-        "BOBCLAW_PASSWORD",
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-    )
-
-    def _subprocess_env(self) -> dict:
-        """Env for the codex child: the parent env MINUS host secrets it has no need for
-        (F9), pointed at a segregated CODEX_HOME when configured. Always returns a dict so
-        the child never silently inherits the full environment."""
-        env = {k: v for k, v in os.environ.items() if k not in self._STRIP_FROM_CHILD}
-        home = (config.CODEX_HOME or "").strip()
-        if home and os.path.isdir(home):
-            env["CODEX_HOME"] = home
-        return env
 
     # ── prompt briefing ─────────────────────────────────────────────────────────
 
@@ -218,21 +162,24 @@ class CodexCodeClient:
         the ~30 KB briefing is safe (no argv overflow). A CLEAN spawn context
         (descriptor present, ``project_access`` False) suppresses the charter
         inline — that briefing is the leak the spawn-context seam closes."""
-        parts: list[str] = []
-        clean_spawn = spawn_ctx is not None and not spawn_ctx.project_access
-        if not clean_spawn and (posture.get("brief") or self._is_scratch_write(posture)):
-            claude_md = os.path.join(self.repo, "CLAUDE.md")
-            try:
-                with open(claude_md, "r", encoding="utf-8", errors="replace") as fh:
-                    briefing = fh.read().strip()
-            except OSError:
-                briefing = ""
-            if briefing:
-                parts.append(
-                    f'<project-briefing source="CLAUDE.md">\n{briefing}\n</project-briefing>'
-                )
-        parts.append(prompt)
-        return "\n\n".join(parts)
+        if execution_mode() == "legacy":
+            parts: list[str] = []
+            clean_spawn = spawn_ctx is not None and not spawn_ctx.project_access
+            if not clean_spawn and (posture.get("brief") or self._is_scratch_write(posture)):
+                claude_md = os.path.join(self.repo, "CLAUDE.md")
+                try:
+                    with open(claude_md, "r", encoding="utf-8", errors="replace") as fh:
+                        briefing = fh.read().strip()
+                except OSError:
+                    briefing = ""
+                if briefing:
+                    parts.append(
+                        f'<project-briefing source="CLAUDE.md">\n{briefing}\n</project-briefing>'
+                    )
+            parts.append(prompt)
+            return "\n\n".join(parts)
+        else:
+            return prompt
 
     # ── argv construction ──────────────────────────────────────────────────────
 
@@ -242,13 +189,14 @@ class CodexCodeClient:
         spawn_ctx: Optional[SpawnContext] = None,
     ) -> list[str]:
         # Common flags accepted by BOTH `exec` and `exec resume`.
-        common = ["--json", "-o", outfile, "--skip-git-repo-check"]
-
-        # `codex exec resume <id>` takes a LIMITED flag set (no -p/-m/-s/-C/--color/
-        # --add-dir — empirically verified): the resumed session retains its original
-        # provider / sandbox / working root. The new prompt rides stdin.
+        if execution_mode() == "legacy":
+            common = ["--json", "-o", outfile, "--skip-git-repo-check"]
+        else:
+            common = ["--json", "--skip-git-repo-check"]
         if resume_thread:
-            return [self.cli_path, "exec", "resume", str(resume_thread), *common]
+            model = posture.get('model')
+            return [self.cli_path, "exec", "resume", str(resume_thread), *common,
+                    *(['-m', str(model)] if model else [])]
 
         argv = [self.cli_path, "exec", *common]
 
@@ -300,14 +248,6 @@ class CodexCodeClient:
             argv += [str(a) for a in extra]
         return argv
 
-    @staticmethod
-    def _read_outfile(outfile: str) -> str:
-        try:
-            with open(outfile, "r", encoding="utf-8", errors="replace") as fh:
-                return fh.read().strip()
-        except OSError:
-            return ""
-
     # ── non-stream chat ────────────────────────────────────────────────────────
 
     async def chat(
@@ -326,9 +266,22 @@ class CodexCodeClient:
         Raises ``CodexThrottled`` on a 429/rate failure, ``CodexError`` on any
         other failure (non-zero exit, no reply, missing binary, timeout).
         """
-        posture = self.posture if posture is None else posture
+        posture = dict(self.posture if posture is None else posture)
+        from core.lane_config import configured_mode, get_lane
+        if configured_mode():
+            lane = get_lane()
+            selected = lane.backends.get('codex_code')
+            if selected and selected.model and not posture.get('model'):
+                posture['model'] = selected.model
+            if selected and 'openai_codex' in lane.backends and not posture.get('profile'):
+                # Account-visible aliases need not start with "gpt". Keep every
+                # subscription choice on the lane's native OpenAI profile.
+                posture['profile'] = lane.values.get('CODEX_PROFILE') or 'gpt'
         work_dir = self._work_dir()
-        spawn_ctx = self._spawn_context(posture)
+        if execution_mode() == "legacy":
+            spawn_ctx = self._spawn_context(posture)
+        else:
+            spawn_ctx = None
         outfile = os.path.join(work_dir, f"codex_out_{os.urandom(6).hex()}.txt")
         argv = self._build_argv(
             posture=posture, outfile=outfile, work_dir=work_dir,
@@ -336,20 +289,26 @@ class CodexCodeClient:
             spawn_ctx=spawn_ctx,
         )
         briefed = self._brief_prompt(prompt, posture, spawn_ctx)
-
-        try:
+        if execution_mode() == "legacy":
+            try:
+                stdout, stderr, rc = await self._spawn(
+                    argv, cwd=work_dir, stdin_data=briefed,
+                    env_overrides=spawn_ctx.env_overrides if spawn_ctx is not None else None,
+                )
+                events = _parse_events(stdout.decode("utf-8", errors="replace"))
+                reply = self._read_outfile(outfile) or events.get("reply") or ""
+            finally:
+                try:
+                    os.remove(outfile)
+                except OSError:
+                    pass
+        else:
             stdout, stderr, rc = await self._spawn(
                 argv, cwd=work_dir, stdin_data=briefed,
                 env_overrides=spawn_ctx.env_overrides if spawn_ctx is not None else None,
             )
             events = _parse_events(stdout.decode("utf-8", errors="replace"))
-            reply = self._read_outfile(outfile) or events.get("reply") or ""
-        finally:
-            try:
-                os.remove(outfile)
-            except OSError:
-                pass
-
+            reply = events.get("reply") or ""
         thread_id = events.get("thread_id") or resume_session_id
         if thread_id:
             self.last_session_id = thread_id
@@ -399,30 +358,35 @@ class CodexCodeClient:
         down, forcing false failover to opencode). A turn-time 429 still raises
         ``CodexThrottled`` → the face's escalation backend.
         """
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                self.cli_path, "--version",
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.repo,
-                env=self._subprocess_env(),
-            )
-        except (FileNotFoundError, NotADirectoryError, OSError):
-            return False
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except asyncio.TimeoutError:
+        if execution_mode() == "legacy":
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            return False
-        if proc.returncode != 0 or not stdout.decode("utf-8", errors="replace").strip():
-            return False
-        return True
-
-    # ── internals ──────────────────────────────────────────────────────────────
+                proc = await asyncio.create_subprocess_exec(
+                    self.cli_path, "--version",
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.repo,
+                    env=self._subprocess_env(),
+                )
+            except (FileNotFoundError, NotADirectoryError, OSError):
+                return False
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                return False
+            if proc.returncode != 0 or not stdout.decode("utf-8", errors="replace").strip():
+                return False
+            return True
+        else:
+            try:
+                receipt = await worker_client.execute_async("codex", args=["--version"], timeout=10)
+                return receipt["returncode"] == 0 and bool(receipt["stdout"].strip())
+            except (OSError, RuntimeError):
+                return False
 
     async def _spawn(
         self, argv: list[str], cwd: str, stdin_data: Optional[str] = None,
@@ -436,34 +400,85 @@ class CodexCodeClient:
         CODEX_HOME — the builder derives it from the same config). Raises
         ``CodexError`` on a missing binary or timeout (the child is killed first).
         """
-        input_bytes = stdin_data.encode("utf-8") if stdin_data is not None else None
-        env = self._subprocess_env()
-        if env_overrides:
-            env.update(env_overrides)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE if input_bytes is not None else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-            )
-        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
-            raise CodexError(f"codex CLI not found at {self.cli_path!r}: {exc}") from exc
+        if execution_mode() == "legacy":
+            input_bytes = stdin_data.encode("utf-8") if stdin_data is not None else None
+            env = self._subprocess_env()
+            if env_overrides:
+                env.update(env_overrides)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE if input_bytes is not None else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                )
+            except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+                raise CodexError(f"codex CLI not found at {self.cli_path!r}: {exc}") from exc
 
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(input=input_bytes), timeout=self.timeout
+                )
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    pass
+                raise CodexError(f"codex exec timed out after {self.timeout}s")
+            return stdout, stderr, proc.returncode
+        else:
+            try:
+                receipt = await worker_client.execute_async("codex", cwd=cwd, args=argv[1:],
+                    input=stdin_data or "", timeout=self.timeout)
+            except (OSError, RuntimeError) as exc:
+                raise CodexError(str(exc)) from exc
+            if receipt.get("killed"):
+                raise CodexError("codex job terminated: " + str(receipt.get("reason")))
+            return receipt["stdout"], receipt["stderr"], receipt["returncode"]
+
+    @staticmethod
+    def _read_outfile(outfile: str) -> str:
+        if execution_mode() != "legacy":
+            raise worker_client.WorkerUnavailable("unavailable: legacy execution helper")
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=input_bytes), timeout=self.timeout
-            )
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except (asyncio.TimeoutError, ProcessLookupError):
-                pass
-            raise CodexError(f"codex exec timed out after {self.timeout}s")
-        return stdout, stderr, proc.returncode
+            with open(outfile, "r", encoding="utf-8", errors="replace") as fh:
+                return fh.read().strip()
+        except OSError:
+            return ""
+
+    def _subprocess_env(self) -> dict:
+        """Env for the codex child: the parent env MINUS host secrets it has no need for
+        (F9), pointed at a segregated CODEX_HOME when configured. Always returns a dict so
+        the child never silently inherits the full environment."""
+        if execution_mode() != "legacy":
+            raise worker_client.WorkerUnavailable("unavailable: legacy execution helper")
+        env = {k: v for k, v in os.environ.items() if k not in self._STRIP_FROM_CHILD}
+        home = (config.CODEX_HOME or "").strip()
+        if home and os.path.isdir(home):
+            env["CODEX_HOME"] = home
+        return env
+
+    def _spawn_context(self, posture: dict) -> Optional[SpawnContext]:
+        """Build the SpawnContext when the posture carries a descriptor.
+
+        The scratch dir is the client's OWN ``_work_dir()`` (the ``-C`` working
+        root and where the ``-o`` reply file lands); the builder renders
+        AGENTS.md into it and hands back the env overrides.
+        """
+        if execution_mode() != "legacy":
+            raise worker_client.WorkerUnavailable("unavailable: legacy execution helper")
+        descriptor = posture.get("spawn_context")
+        if not isinstance(descriptor, dict) or not descriptor:
+            return None
+        return resolve_spawn_context(
+            "codex_code",
+            posture,
+            scratch_dir=self._work_dir(),
+            conversation_id=self.conversation_id,
+        )

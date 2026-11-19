@@ -37,8 +37,17 @@ async def init_sqlite(path: str = SQLITE_PATH) -> aiosqlite.Connection:
     global _sqlite_db
 
     conn = await aiosqlite.connect(path)
-    conn.row_factory = aiosqlite.Row
+    try:
+        await _init_sqlite_schema(conn)
+    except BaseException:
+        await conn.close()
+        raise
+    _sqlite_db = conn
+    return conn
 
+
+async def _init_sqlite_schema(conn: aiosqlite.Connection) -> None:
+    conn.row_factory = aiosqlite.Row
     await conn.executescript("""
         CREATE TABLE IF NOT EXISTS refresh_tokens (
             token_id   TEXT PRIMARY KEY,
@@ -65,8 +74,14 @@ async def init_sqlite(path: str = SQLITE_PATH) -> aiosqlite.Connection:
         );
     """)
     await conn.commit()
-    _sqlite_db = conn
-    return conn
+
+
+async def close_sqlite() -> None:
+    """Stop aiosqlite's connection thread, including after partial startup."""
+    global _sqlite_db
+    conn, _sqlite_db = _sqlite_db, None
+    if conn is not None:
+        await conn.close()
 
 
 def get_sqlite() -> aiosqlite.Connection:
@@ -102,8 +117,19 @@ async def init_postgres() -> asyncpg.Pool:
     global _pg_pool
 
     pool = await asyncpg.create_pool(config.POSTGRES_URL, min_size=2, max_size=10)
-    async with pool.acquire() as conn:
-        await conn.execute(_read_init_sql())
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Shared by every core lane using this database. Take this BEFORE
+                # any schema relation locks; transaction end releases it on error.
+                await conn.execute('SELECT pg_advisory_xact_lock($1::bigint)',
+                                   0x424F42534348454D, timeout=120)
+                await conn.execute(_read_init_sql(), timeout=120)
+    except BaseException:
+        # This pool has not been published. Do not leave live connections behind
+        # or wait indefinitely for close() on a failed/cancelled startup.
+        pool.terminate()
+        raise
     _pg_pool = pool
     return pool
 

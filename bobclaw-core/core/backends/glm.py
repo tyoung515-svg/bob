@@ -50,11 +50,23 @@ class GLMClient:
         self,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
+        vault_provider: Optional[str] = 'glm',
     ) -> None:
         self.base_url = (base_url or config.ZAI_BASE_URL).rstrip("/")
         self.api_key = api_key or config.ZAI_API_KEY
-        self._timeout = aiohttp.ClientTimeout(total=120, connect=5)
+        self._vault_provider = vault_provider
+        self._timeout = aiohttp.ClientTimeout(total=180, connect=5)
         self._discover_timeout = aiohttp.ClientTimeout(total=5)
+
+    @property
+    def api_key(self):
+        from core.settings_client import provider_key
+        return (provider_key(self._vault_provider, self._api_key)
+                if self._vault_provider else self._api_key)
+
+    @api_key.setter
+    def api_key(self, value):
+        self._api_key = value
 
     # ── health & model discovery ───────────────────────────────────────────────
 

@@ -142,12 +142,12 @@ async def test_critic_high_risk_pinned_local(monkeypatch):
 async def test_health_fallback_walks_chain(monkeypatch):
     """Primary unhealthy → resolve returns the first healthy escalation hop."""
     async def probe(backend: str) -> bool:
-        return backend != "glm_5_2"  # cloud-heavy worker primary is "down"
+        return backend != "glm_5_3"  # cloud-heavy worker primary is "down"
 
     monkeypatch.setattr(teams, "_health_probe", probe)
     face = _face(preferred_backend="local", role="worker")
     teams.set_active_team("cloud-heavy")
-    # chain = [glm_5_2(down), deepseek_v4_flash, kimi_code] → first healthy.
+    # chain = [glm_5_3(down), deepseek_v4_flash, kimi_code] → first healthy.
     assert await teams.resolve("worker", face=face) == "deepseek_v4_flash"
 
 
@@ -222,7 +222,7 @@ def test_joat_surface_contains_no_model_names():
     import core.faces.registry as _registry
 
     targets = [Path(teams.__file__), Path(_registry.__file__)]
-    targets += sorted((Path(_registry.__file__).parent / "profiles").glob("*.yaml"))
+    targets += sorted((_registry.get_roster().profiles_path).glob("*.yaml"))
     violations: list[str] = []
     for path in targets:
         lower = path.read_text(encoding="utf-8").lower()
@@ -245,7 +245,7 @@ def teams_dir(tmp_path):
 def _sample_roles() -> dict:
     return {
         "apex": {"backend": "claude_api", "escalation_chain": ["claude_code"]},
-        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_2"]},
+        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_3"]},
         "critic": {"backend": "local"},
     }
 
@@ -272,7 +272,7 @@ async def test_resolve_uses_a_custom_team(teams_dir):
     # Default team → passthrough; custom pin → the team's worker backend.
     assert await teams.resolve("worker", face=face) == "local"
     assert await teams.resolve("worker", face=face, team="my-fleet") == "deepseek_v4_flash"
-    assert teams.escalation_chain("worker", face=face, team="my-fleet") == ["glm_5_2"]
+    assert teams.escalation_chain("worker", face=face, team="my-fleet") == ["glm_5_3"]
 
 
 def test_create_team_rejects_unknown_backend(teams_dir):
@@ -333,8 +333,8 @@ async def test_create_team_supports_multiple_slots_per_role(teams_dir):
     PRIMARY slot (per-subtask selection across the roster is a follow-up)."""
     roles = {
         "worker": [
-            {"name": "bulk", "backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_2"]},
-            {"name": "tool", "backend": "glm_5_2", "escalation_chain": []},
+            {"name": "bulk", "backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_3"]},
+            {"name": "tool", "backend": "glm_5_3", "escalation_chain": []},
         ],
     }
     created = teams.create_team("roster", roles)
@@ -345,7 +345,7 @@ async def test_create_team_supports_multiple_slots_per_role(teams_dir):
 
     face = _face(preferred_backend="local", role="worker")
     assert await teams.resolve("worker", face=face, team="roster") == "deepseek_v4_flash"
-    assert teams.escalation_chain("worker", face=face, team="roster") == ["glm_5_2"]
+    assert teams.escalation_chain("worker", face=face, team="roster") == ["glm_5_3"]
 
 
 def test_legacy_single_dict_team_file_still_loads(teams_dir):

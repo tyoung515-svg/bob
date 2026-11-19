@@ -1,0 +1,18 @@
+{
+  "//": "E10 reducer harness build: compiles ONLY the pure reducer + wire types (no React, no DOM) to CommonJS so `node harness/run.cjs` can drive the real reducer headlessly. The app build stays tsconfig.json.",
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["ES2021"],
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": ".harness-build",
+    "rootDir": "src",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/reducer.ts", "src/protocol.ts", "src/portal/portal-state.ts", "src/portal/quick-replies.ts"]
+}

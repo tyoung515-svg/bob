@@ -1,0 +1,19 @@
+[Unit]
+Description=Bob packaged CPU embedding server
+After=network.target
+# Generated selection.conf adds the selected model file condition.
+ConditionPathExists=/etc/bob/embedder.env
+
+[Service]
+User=bob-embedder
+Group=bob-embedder
+UMask=0077
+WorkingDirectory=/var/lib/bob/models
+EnvironmentFile=/etc/bob/embedder.env
+ExecStartPre=/bin/sh -c 'test -n "$${EMBEDDER_PATH}" && test -n "$${EMBEDDER_ALIAS}" || { echo "embedder: EMBEDDER_PATH and EMBEDDER_ALIAS are required; run bob-embedder select --model 4b" >&2; exit 1; }'
+ExecStart=/usr/local/bin/llama-server --model ${EMBEDDER_PATH} --alias ${EMBEDDER_ALIAS} --embeddings --pooling last -c 2048 --host 127.0.0.1 --port 58081
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

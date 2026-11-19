@@ -1,0 +1,447 @@
+{
+  "premade-plan-build-review-fix": {
+    "schema": "workflow/v1",
+    "name": "Plan → Build → Review → Fix",
+    "summary": "Plan one bounded task, implement, independently review, fix and check; finish at your gate.",
+    "agents": {
+      "planner": {
+        "face_id": "orchestrator",
+        "binding_id": null
+      },
+      "builder": {
+        "face_id": "builder",
+        "binding_id": null
+      },
+      "reviewer": {
+        "face_id": "reviewer",
+        "binding_id": null
+      }
+    },
+    "inputs": {
+      "task": {
+        "type": "string",
+        "required": true
+      },
+      "evidence_ids": {
+        "type": "evidence_ids",
+        "required": false
+      },
+      "acceptance": {
+        "type": "string",
+        "required": false
+      }
+    },
+    "workspace": {
+      "required": true
+    },
+    "authority": {
+      "workspace_ops": [
+        "read",
+        "write",
+        "edit",
+        "check"
+      ],
+      "checks": []
+    },
+    "budget": {
+      "calls": 100,
+      "active_seconds": 7200,
+      "job_seconds": 3600,
+      "max_job_attempts": 100
+    },
+    "review_policy": "different_model",
+    "stages": [
+      {
+        "id": "plan",
+        "kind": "agent",
+        "depends_on": [],
+        "inputs": {
+          "task": {
+            "input": "task"
+          },
+          "evidence": {
+            "input": "evidence_ids"
+          },
+          "acceptance": {
+            "input": "acceptance"
+          }
+        },
+        "agent": "planner",
+        "access": "read",
+        "brief": "Plan one implementation with acceptance criteria and risks. Preserve original source IDs.",
+        "output": "text",
+        "skills": []
+      },
+      {
+        "id": "work",
+        "kind": "repair",
+        "depends_on": [
+          "plan"
+        ],
+        "inputs": {
+          "plan": {
+            "stage": "plan",
+            "output": "text"
+          },
+          "task": {
+            "input": "task"
+          },
+          "acceptance": {
+            "input": "acceptance"
+          }
+        },
+        "build": {
+          "agent": "builder",
+          "brief": "Implement the approved plan in the granted workspace and report concrete edits.",
+          "skills": []
+        },
+        "review": {
+          "agent": "reviewer",
+          "brief": "Review the frozen implementation against the plan and original acceptance; return verdict JSON with evidence.",
+          "skills": []
+        },
+        "fix": {
+          "agent": "builder",
+          "brief": "Resolve the review findings or failed checks; preserve protected tests and report the changes.",
+          "skills": []
+        },
+        "check_ids": [],
+        "max_fixes": 3
+      },
+      {
+        "id": "owner",
+        "kind": "gate",
+        "depends_on": [
+          "work"
+        ],
+        "prompt": "Review the implementation and receipts. Approve completion?"
+      },
+      {
+        "id": "report",
+        "kind": "report",
+        "depends_on": [
+          "owner"
+        ]
+      }
+    ]
+  },
+  "premade-council-build": {
+    "schema": "workflow/v1",
+    "name": "Council, then build",
+    "summary": "Two independent proposals, synthesis, then implementation and a separate model review.",
+    "agents": {
+      "architect": {
+        "face_id": "orchestrator",
+        "binding_id": null
+      },
+      "critic": {
+        "face_id": "reviewer",
+        "binding_id": null
+      },
+      "chair": {
+        "face_id": "orchestrator",
+        "binding_id": null
+      },
+      "builder": {
+        "face_id": "builder",
+        "binding_id": null
+      },
+      "reviewer": {
+        "face_id": "reviewer",
+        "binding_id": null
+      }
+    },
+    "inputs": {
+      "task": {
+        "type": "string",
+        "required": true
+      },
+      "evidence_ids": {
+        "type": "evidence_ids",
+        "required": false
+      },
+      "acceptance": {
+        "type": "string",
+        "required": false
+      }
+    },
+    "workspace": {
+      "required": true
+    },
+    "authority": {
+      "workspace_ops": [
+        "read",
+        "write",
+        "edit",
+        "check"
+      ],
+      "checks": []
+    },
+    "budget": {
+      "calls": 150,
+      "active_seconds": 10800,
+      "job_seconds": 5400,
+      "max_job_attempts": 150
+    },
+    "review_policy": "different_family",
+    "distinct_models": [
+      [
+        "architect",
+        "critic"
+      ]
+    ],
+    "stages": [
+      {
+        "id": "architecture",
+        "kind": "agent",
+        "depends_on": [],
+        "inputs": {
+          "task": {
+            "input": "task"
+          },
+          "evidence": {
+            "input": "evidence_ids"
+          },
+          "acceptance": {
+            "input": "acceptance"
+          }
+        },
+        "agent": "architect",
+        "access": "read",
+        "brief": "Independently propose an architecture with tradeoffs, acceptance and source IDs.",
+        "output": "text",
+        "skills": []
+      },
+      {
+        "id": "risks",
+        "kind": "agent",
+        "depends_on": [],
+        "inputs": {
+          "task": {
+            "input": "task"
+          },
+          "evidence": {
+            "input": "evidence_ids"
+          },
+          "acceptance": {
+            "input": "acceptance"
+          }
+        },
+        "agent": "critic",
+        "access": "read",
+        "brief": "Independently identify failure cases and cheaper alternatives, preserving source IDs.",
+        "output": "text",
+        "skills": []
+      },
+      {
+        "id": "decision",
+        "kind": "agent",
+        "depends_on": [
+          "architecture",
+          "risks"
+        ],
+        "inputs": {
+          "architecture": {
+            "stage": "architecture",
+            "output": "text"
+          },
+          "risks": {
+            "stage": "risks",
+            "output": "text"
+          },
+          "acceptance": {
+            "input": "acceptance"
+          }
+        },
+        "agent": "chair",
+        "access": "read",
+        "brief": "Synthesize one bounded plan; retain dissent and identify unresolved owner questions before building.",
+        "output": "text",
+        "skills": []
+      },
+      {
+        "id": "work",
+        "kind": "repair",
+        "depends_on": [
+          "decision"
+        ],
+        "inputs": {
+          "plan": {
+            "stage": "decision",
+            "output": "text"
+          },
+          "acceptance": {
+            "input": "acceptance"
+          }
+        },
+        "build": {
+          "agent": "builder",
+          "brief": "Implement the synthesized plan inside the granted workspace.",
+          "skills": []
+        },
+        "review": {
+          "agent": "reviewer",
+          "brief": "Review the frozen implementation against the decision and original criteria; return verdict JSON.",
+          "skills": []
+        },
+        "fix": {
+          "agent": "builder",
+          "brief": "Fix evidenced findings or failed checks without widening the plan.",
+          "skills": []
+        },
+        "check_ids": [],
+        "max_fixes": 3
+      },
+      {
+        "id": "owner",
+        "kind": "gate",
+        "depends_on": [
+          "work"
+        ],
+        "prompt": "Review council decisions, dissent, implementation and test receipts. Approve completion?"
+      },
+      {
+        "id": "report",
+        "kind": "report",
+        "depends_on": [
+          "owner"
+        ]
+      }
+    ]
+  },
+  "premade-sprint-board": {
+    "schema": "workflow/v1",
+    "name": "Sprint board (unattended run)",
+    "summary": "Plan dependency-ordered units; build, review, fix and check each; stop at your final gate.",
+    "agents": {
+      "planner": {
+        "face_id": "orchestrator",
+        "binding_id": null
+      },
+      "builder": {
+        "face_id": "builder",
+        "binding_id": null
+      },
+      "reviewer": {
+        "face_id": "reviewer",
+        "binding_id": null
+      }
+    },
+    "inputs": {
+      "task": {
+        "type": "string",
+        "required": true
+      },
+      "evidence_ids": {
+        "type": "evidence_ids",
+        "required": false
+      },
+      "acceptance": {
+        "type": "string",
+        "required": false
+      }
+    },
+    "workspace": {
+      "required": true
+    },
+    "authority": {
+      "workspace_ops": [
+        "read",
+        "write",
+        "edit",
+        "check"
+      ],
+      "checks": []
+    },
+    "budget": {
+      "calls": 2000,
+      "active_seconds": 86400,
+      "job_seconds": 72000,
+      "max_job_attempts": 2000
+    },
+    "review_policy": "different_model",
+    "stages": [
+      {
+        "id": "board",
+        "kind": "agent",
+        "depends_on": [],
+        "inputs": {
+          "task": {
+            "input": "task"
+          },
+          "evidence": {
+            "input": "evidence_ids"
+          },
+          "acceptance": {
+            "input": "acceptance"
+          }
+        },
+        "agent": "planner",
+        "access": "read",
+        "brief": "Return units JSON, at most 16 units, dependency ordered, each with a bounded brief and acceptance. Preserve original evidence and stop on real design questions.",
+        "output": "units",
+        "skills": []
+      },
+      {
+        "id": "units",
+        "kind": "foreach",
+        "depends_on": [
+          "board"
+        ],
+        "source": {
+          "stage": "board",
+          "output": "units"
+        },
+        "max_units": 16,
+        "width": 2,
+        "body": [
+          {
+            "id": "work",
+            "kind": "repair",
+            "depends_on": [],
+            "inputs": {
+              "unit": {
+                "item": true
+              },
+              "acceptance": {
+                "input": "acceptance"
+              }
+            },
+            "build": {
+              "agent": "builder",
+              "brief": "Build this unit only; preserve prior accepted units and their tests.",
+              "skills": []
+            },
+            "review": {
+              "agent": "reviewer",
+              "brief": "Review this unit's frozen diff and cumulative snapshot against its acceptance and predecessor receipts; return verdict JSON.",
+              "skills": []
+            },
+            "fix": {
+              "agent": "builder",
+              "brief": "Fix only evidenced unit findings/check failures, preserving accepted predecessors.",
+              "skills": []
+            },
+            "check_ids": [],
+            "max_fixes": 3
+          }
+        ]
+      },
+      {
+        "id": "owner",
+        "kind": "gate",
+        "depends_on": [
+          "units"
+        ],
+        "prompt": "Review every unit verdict and the composed check receipts. Approve completion? This does not merge or publish."
+      },
+      {
+        "id": "report",
+        "kind": "report",
+        "depends_on": [
+          "owner"
+        ]
+      }
+    ]
+  }
+}

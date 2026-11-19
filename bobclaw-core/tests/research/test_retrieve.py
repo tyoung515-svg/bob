@@ -492,7 +492,7 @@ class TestRetrieve:
             claim=claim,
             retrieve=ret,
             actor_backend="deepseek_v4_flash",
-            critic_backend="glm_5_2",
+            critic_backend="glm_5_3",
             send=send_stub,
             max_attempts=8,
         )
@@ -522,7 +522,7 @@ class TestRetrieve:
         claim = Claim(subject="s", predicate="p", numeric_value=5, cited_source_id="x")
         out = await run_entailment_gate(
             claim=claim, retrieve=ret, actor_backend="deepseek_v4_flash",
-            critic_backend="glm_5_2", send=send_stub, max_attempts=8,
+            critic_backend="glm_5_3", send=send_stub, max_attempts=8,
         )
         assert out.exhausted is True
         tried = out.entry["tried_sources"]

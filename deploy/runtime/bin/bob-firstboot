@@ -1,0 +1,21 @@
+#!/opt/bob/.venv/bin/python
+import subprocess
+import sys
+import argparse
+
+sys.path.insert(0, '/usr/local/lib/bob_runtime')
+from firstboot import main
+
+try:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--migrate-workers', action='store_true',
+                        help='queue the versioned migration after firstboot completes')
+    args = parser.parse_args()
+    result = main()
+    if not result and args.migrate_workers:
+        # Do not synchronously start lane services while firstboot is still an
+        # ordering dependency. The separate unit also runs after an old marker.
+        subprocess.run(['systemctl', '--no-block', 'start', 'bob-migrate-workers.service'], check=True)
+    raise SystemExit(result)
+except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+    sys.exit(f'bob-firstboot: {exc}')

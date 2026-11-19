@@ -1,0 +1,21 @@
+[Unit]
+AssertPathExists=/etc/systemd/system/bob-claude-turn@%i.socket.d/identity.conf
+Description=Bob private Claude turn socket (%i)
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+Requires=bob-worker-policy@%i.service
+After=bob-worker-policy@%i.service
+BindsTo=bob-worker-policy@%i.service
+
+[Socket]
+ListenStream=/run/bob-workers/%i/claude-turn.sock
+SocketMode=0600
+SocketUser=bob-unprovisioned
+DirectoryMode=0711
+RemoveOnStop=yes
+Accept=no
+Service=bob-claude-turn@%i.service
+
+[Install]
+WantedBy=multi-user.target

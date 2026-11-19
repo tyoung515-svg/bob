@@ -252,7 +252,7 @@ def test_id_rejects_path_traversal(built, evil_id):
 def test_no_writes_outside_artifact_dir(candidate, base, tmp_path, monkeypatch):
     core_dir = Path(pm.__file__).resolve().parent.parent          # .../bobclaw-core/core
     examples_dir = core_dir / "modules" / "examples"              # where manifests live
-    faces_dir = core_dir / "faces" / "profiles"                   # where face YAML lives
+    faces_dir = core_dir.parent.parent / "bobclaw-core" / "tests" / "fixtures" / "deployment" / "faces"                   # where face YAML lives
     examples_before = _snapshot(examples_dir)
     faces_before = _snapshot(faces_dir)
 

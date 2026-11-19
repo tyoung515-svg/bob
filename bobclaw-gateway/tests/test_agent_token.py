@@ -279,13 +279,32 @@ class TestAgentTokenMint(unittest.TestCase):
 
     def test_minted_token_is_denied_on_admin_route_through_real_app(self):
         """End-to-end: a freshly minted agent token is correctly marked and the
-        real middleware denies it on an admin router (here /faces) with 403,
-        before the handler/proxy ever runs."""
+        real middleware denies it on a genuinely admin router (here
+        /approvals — NOT /faces, which since the 2026-09-30 MCP action tools
+        is an allowed read route for agent tokens) with 403, before the
+        handler/proxy ever runs."""
         admin = create_access_token("admin")
         resp = self._post(headers={"Authorization": f"Bearer {admin}"}, body={"scope": _SCOPE})
         token = self._run(resp.json())["access_token"]
-        denied = self._run(self._client.get("/faces", headers={"Authorization": f"Bearer {token}"}))
+        denied = self._run(self._client.get("/approvals", headers={"Authorization": f"Bearer {token}"}))
         self.assertEqual(denied.status, 403)
+
+    def test_minted_token_allowed_on_read_routes(self):
+        """2026-09-30 MCP action tools: the minted agent token may reach the
+        GET-only read routes (faces/models/system) that feed the MCP server's
+        list_faces / list_backends / get_server_time / check_model_slugs."""
+        admin = create_access_token("admin")
+        resp = self._post(headers={"Authorization": f"Bearer {admin}"}, body={"scope": _SCOPE})
+        token = self._run(resp.json())["access_token"]
+        for path in ("/faces", "/models/available", "/backends/catalog", "/system/ports"):
+            with self.subTest(path=path):
+                allowed = self._run(
+                    self._client.get(path, headers={"Authorization": f"Bearer {token}"})
+                )
+                # 403 would mean the middleware denied the route; anything else
+                # (200, 404 upstream, 502 core-down) still proves the middleware
+                # let it through — the property under test.
+                self.assertNotEqual(allowed.status, 403)
 
 
 # ---------------------------------------------------------------------------

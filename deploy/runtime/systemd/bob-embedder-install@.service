@@ -1,0 +1,15 @@
+[Unit]
+Description=Install Bob packaged embedder (%i)
+After=network-online.target bob-qdrant.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0022
+ExecStart=/usr/local/bin/bob-embedder fetch --model %i
+TimeoutStartSec=35min
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes

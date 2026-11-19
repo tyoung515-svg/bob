@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+export PYTHONPATH=/opt/bob/bobclaw-core:/opt/bob/deploy/runtime/lib
+exec /opt/bob/.venv/bin/python -I -c 'import sys; sys.path[:0] = ["/opt/bob/bobclaw-core", "/opt/bob/deploy/runtime/lib"]; from settings import main; main()' "$@"

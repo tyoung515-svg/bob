@@ -1,7 +1,7 @@
 id: research-forest
 name: "Research Forest"
-audience: "Travis first; any BoB user with standing questions"
-first_user: Travis
+audience: "The operator first; any BoB user with standing questions"
+first_user: operator
 wow_flow: "seed a program -> watch it observe for days -> first delta-triggered epoch proposes hypotheses"
 faces:
   - ref: researcher

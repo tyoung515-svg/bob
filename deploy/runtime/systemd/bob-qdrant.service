@@ -1,0 +1,15 @@
+[Unit]
+Description=Bob Qdrant (loopback 6353/6354)
+After=network.target
+
+[Service]
+User=bob-qdrant
+Group=bob-qdrant
+UMask=0077
+WorkingDirectory=/var/lib/bob/qdrant
+ExecStart=/usr/local/bin/qdrant --config-path /etc/bob/qdrant.yaml
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

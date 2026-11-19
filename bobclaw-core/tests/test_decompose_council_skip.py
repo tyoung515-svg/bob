@@ -74,7 +74,7 @@ async def test_empty_council_spec_still_skips(llm_spy):
 @pytest.mark.asyncio
 async def test_no_council_spec_still_decomposes(llm_spy):
     """No council_spec ⇒ ordinary decomposition, unchanged."""
-    state = {"task": COMPLEX_TASK, "backend": "local", "face_id": "assistant"}
+    state = {"task": COMPLEX_TASK, "backend": "local", "face_id": "researcher"}
     result = await decompose_node(state)
 
     llm_spy.assert_awaited_once()
@@ -87,7 +87,7 @@ async def test_none_council_spec_still_decomposes(llm_spy):
     state = {
         "task": COMPLEX_TASK,
         "backend": "local",
-        "face_id": "assistant",
+        "face_id": "researcher",
         "council_spec": None,
     }
     result = await decompose_node(state)
@@ -105,7 +105,7 @@ async def test_resume_with_subtasks_is_idempotent(llm_spy):
     state = {
         "task": COMPLEX_TASK,
         "backend": "local",
-        "face_id": "assistant",
+        "face_id": "researcher",
         "subtasks": ["prior-1", "prior-2"],
     }
     result = await decompose_node(state)

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "transports": {
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+    "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+    "KIMI_BASE_URL": "https://api.moonshot.ai/v1",
+    "ZAI_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+    "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+    "MINIMAX_BASE_URL": "https://api.minimax.io/v1",
+    "KIMI_PLATFORM_BASE_URL": "https://api.moonshot.cn/v1",
+    "QWEN_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+  },
+  "providers": {
+    "openai": {"backend": "codex_code", "model_env": "CODEX_MODEL", "model": null},
+    "anthropic": {"backend": "claude_api", "key_env": "ANTHROPIC_API_KEY", "model_env": "ANTHROPIC_MODEL", "model": "claude-sonnet-5-5"},
+    "deepseek": {"backend": "deepseek_v4_flash", "key_env": "DEEPSEEK_API_KEY", "model_env": "DEEPSEEK_MODEL", "model": "deepseek-v4-flash",
+      "model_identity": "deepseek/deepseek-v4-flash", "family": "deepseek",
+      "reported_model_names": ["deepseek-flash"],
+      "reported_model_names_comment": "DeepSeek reported deepseek-flash for deepseek-v4-flash on 2026-11-17."},
+    "google": {"backend": "gemini_flash", "key_env": "GOOGLE_API_KEY", "model_env": "GEMINI_FLASH_MODEL", "model": "gemini-3-flash-preview"},
+    "glm": {"backend": "glm_5_3", "key_env": "ZAI_API_KEY", "model_env": "ZAI_MODEL", "model": "glm-5.3"},
+    "kimi": {"backend": "kimi_code", "key_env": "KIMI_API_KEY", "model_env": "KIMI_MODEL", "model": "kimi-k2.7-code"},
+    "qwen": {"backend": "qwen_cloud", "key_env": "DASHSCOPE_API_KEY", "model_env": "QWEN_MODEL", "model": "qwen-plus"}
+  }
+}

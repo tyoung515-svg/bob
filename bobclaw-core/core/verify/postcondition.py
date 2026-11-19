@@ -57,9 +57,11 @@ FAMILY_BY_BACKEND: dict[str, str] = {
     "kimi_cli": "kimi",
     "deepseek_v4_flash": "deepseek",
     "deepseek_v4": "deepseek",
-    "glm_5_2": "glm",
+    "glm_5_3": "glm",
+    "glm_5_3_flash_or": "glm",  # same weights as glm_5_3 — a different GATE, not a different family
     "minimax": "minimax",
     "codex_code": "codex",
+    "openai_codex": "codex",  # same ChatGPT model family through HTTP
     "opencode_serve": "opencode",
     "local": "local",
     # MS2-G4: the GUI grounding head (Holo-3.1, served on local llama.cpp) is its OWN family, so when
@@ -74,12 +76,13 @@ FAMILY_BY_BACKEND: dict[str, str] = {
     # critic ≠ refuter). Purely additive — every existing lookup is unchanged, so the no-Qwen path is
     # byte-identical.
     "qwen_research": "qwen",
+    "qwen_cloud": "qwen",
 }
 
 # Ordered, real-backend preference spanning SIX families — so a cross-family critic is ALWAYS
 # resolvable for any single-family actor (cheap-first).
 DEFAULT_CRITIC_PREFERENCE: tuple[str, ...] = (
-    "glm_5_2",
+    "glm_5_3",
     "deepseek_v4_flash",
     "minimax",
     "kimi_code",
@@ -125,10 +128,13 @@ def decorrelated_critic_backend(
     if candidates:
         pool.extend(candidates)
 
-    pool.extend(DEFAULT_CRITIC_PREFERENCE)
+    from core.lane_config import configured_mode, require_backend
+    if not configured_mode():
+        pool.extend(DEFAULT_CRITIC_PREFERENCE)
 
     for candidate in pool:
         if candidate and family_of(candidate) != actor_family:
+            require_backend(candidate)
             return candidate
 
     raise PostConditionError(
@@ -308,6 +314,8 @@ async def verify_post_condition(
 
     send_fn = send or _default_send
     try:
+        from core.lane_config import require_backend
+        require_backend(crit)
         raw = await send_fn(messages, crit)
     except asyncio.CancelledError:  # noqa: BLE001 — cancellation must not auto-pass
         return PostConditionResult(

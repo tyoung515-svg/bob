@@ -1,0 +1,43 @@
+{
+  "name": "bob-slice-shell",
+  "private": true,
+  "version": "0.99.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "gen:protocol": "cargo run -q --manifest-path ../engine/Cargo.toml --bin bob-wiregen -- --out src/protocol.ts",
+    "check:protocol": "cargo run -q --manifest-path ../engine/Cargo.toml --bin bob-wiregen -- --check --out src/protocol.ts",
+    "preview": "vite preview",
+    "pretest:harness": "node -r ./harness/workbench-ui-register.cjs harness/s10-approval-scope-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/c6-builder-outcomes.cjs && node -r ./harness/workbench-ui-register.cjs harness/c7-native-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/c7d-activity-ui.cjs",
+    "test:harness": "tsc --noEmit -p tsconfig.harness.json && node -r ./harness/workbench-ui-register.cjs harness/run.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-turn.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-turn-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-runs-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/durable-runs-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/loop-runs-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-approvals-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/workspace-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/checked-edits-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-quick-replies.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-connect-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-first-run-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-models-escape-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/portal-configured-models-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/model-routing-entry-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/owner-reads-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/owner-controls-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/ladder-flags-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/settings-controls-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/password-change-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/factor-recovery-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/day-one-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/builder-modes-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/builder-workspace-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/builder-network-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/embedder-setup-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/setup-truth-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/runtime-upgrade-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/windows-setup-fixes-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/s11-stream-poll-layout.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl2-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl2-transcript-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl2-external-preview.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl4-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl6-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl8-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl10-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl12-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl15-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/gl19-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/wa1-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/wa2-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au1-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au2-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au3-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au5-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au6-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au7-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au8-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au9-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au10-ui.cjs && node -r ./harness/workbench-ui-register.cjs harness/au11-ui.cjs",
+    "tauri": "tauri",
+    "test:a11y": "node harness/a11y.cjs",
+    "test:functional": "node harness/functional.cjs && node -r ./harness/workbench-ui-register.cjs harness/functional-ui.cjs && python3 harness/functional-launcher.py",
+    "test:workbench": "node harness/workbench-ui-entry.cjs && node harness/workbench-ui-coldstart.cjs && node harness/workbench-ui-escape.cjs && node harness/workbench-ui.cjs && node harness/workbench-ui-render.cjs && node harness/workbench-ui-runtime.cjs && node harness/workbench-ui-settings.cjs && node harness/workbench-ui-concurrency.cjs && node harness/workbench-ui-layout.cjs && node harness/workbench-ui-scroll.cjs && node harness/workbench-ui-errors.cjs && node harness/workbench-ui-launcher.cjs",
+    "gen:functional": "cargo run -q --manifest-path ../engine/Cargo.toml --bin bob-app-wiregen",
+    "check:functional": "cargo run -q --manifest-path ../engine/Cargo.toml --bin bob-app-wiregen -- --check",
+    "test:interaction": "node harness/interaction-header.cjs && node harness/interaction-attachments.cjs && node harness/interaction-turn.cjs",
+    "test:projects": "node harness/project-context.cjs",
+    "test:usability": "node harness/usability-composer.cjs && node harness/usability-sidebar.cjs && node harness/usability-files.cjs && node harness/usability-models.cjs",
+    "test:runtime-upgrade": "node -r ./harness/workbench-ui-register.cjs harness/runtime-upgrade-ui.cjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "3d-force-graph": "^1.73.4",
+    "monaco-editor": "^0.52.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "30.1.3",
+    "typescript": "~5.6.2",
+    "vite": "^5.4.11"
+  }
+}

@@ -19,6 +19,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Awaitable, Callable
 
+from core.chat_policy import single_pass_chat
+
 if TYPE_CHECKING:
     from core.graph import AgentState
 
@@ -43,7 +45,7 @@ def _is_complex(task: str) -> bool:
 
 # ─── LLM call (injectable) ────────────────────────────────────────────────────
 
-async def _default_call_llm(task: str, backend: str) -> list[str]:
+async def _default_call_llm(task: str, backend: str, model_override: str | None = None) -> list[str]:
     """Break a task into subtasks using the state-selected backend.
 
     Routing:
@@ -72,7 +74,8 @@ async def _default_call_llm(task: str, backend: str) -> list[str]:
             # (`execute._send_to_backend`) intact.
             import core.nodes.execute as _execute
 
-            full = await _execute._send_to_backend(messages, backend)
+            full = await (_execute._send_to_backend(messages, backend, model_override)
+                          if model_override else _execute._send_to_backend(messages, backend))
         else:
             # Default path: discover and stream from a local backend.
             from core.backends.local_router import LocalModelRouter
@@ -110,13 +113,27 @@ _call_llm: Callable[[str, str], Awaitable[list[str]]] = _default_call_llm
 
 async def decompose_node(state: "AgentState") -> dict:
     """LangGraph node: decompose complex tasks into subtasks."""
+    if state.get("error"):
+        return {}
     task = state.get("task", "")
+    if state.get("agent_service_single_turn"):
+        return {"subtasks": []}
 
     if not _is_complex(task):
         # Simple task — pass straight through with a bookkeeping message
         return {
             "messages": [
                 {"role": "system", "content": f"Simple task (no decomposition needed): {task}"}
+            ],
+        }
+
+    if single_pass_chat(state):
+        # Chat faces answer in one pass: no planner call, no subtasks, no fan-out.
+        # The operator asked for a conversation, not a work breakdown; heavy work
+        # is dispatched as a run from the portal instead.
+        return {
+            "messages": [
+                {"role": "system", "content": f"Chat turn (answered in one pass): {task}"}
             ],
         }
 
@@ -144,7 +161,14 @@ async def decompose_node(state: "AgentState") -> dict:
         return {}
 
     backend = state.get("backend", "local")
-    subtasks = await _call_llm(task, backend)
+    model_override = state.get("model_override")
+    from core.lane_config import require_backend, LaneConfigurationError
+    try:
+        require_backend(backend, model_override)
+    except LaneConfigurationError as exc:
+        return {"error": str(exc)}
+    subtasks = await (_call_llm(task, backend, model_override)
+                      if model_override else _call_llm(task, backend))
 
     subtask_body = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(subtasks))
     return {

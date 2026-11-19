@@ -24,7 +24,7 @@ CORE_ROOT = Path(__file__).resolve().parents[1]
 if str(CORE_ROOT) not in sys.path:
     sys.path.insert(0, str(CORE_ROOT))
 
-from core.faces.registry import FaceRegistry  # noqa: E402
+from core.faces.registry import FaceRegistry, get_registry  # noqa: E402
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8902
@@ -539,10 +539,14 @@ async def responses(request: web.Request) -> web.StreamResponse:
 
 
 async def models(request: web.Request) -> web.Response:
+    from core.lane_config import configured_mode, catalog
+    if configured_mode():
+        from core.backends.local_router import LocalModelRouter
+        await catalog(LocalModelRouter())
     now = int(time.time())
     face_models = [f"bob-{face.id}" for face in request.app[FACES_KEY].all_faces()
                    if face.role == "worker"]
-    ids = ["bob", *face_models]
+    ids = (["bob"] if "assistant" in request.app[FACES_KEY] else []) + face_models
     return web.json_response({"object": "list", "data": [
         {"id": model_id, "object": "model", "created": now, "owned_by": "bob-bridge"}
         for model_id in ids
@@ -563,7 +567,7 @@ def build_app(*, engine_url: str | None = None, upstream: str | None = None,
     if maximum < 1:
         raise ValueError("BOB_BRIDGE_MAX_HISTORY must be at least 1")
     app = web.Application(client_max_size=16 * 1024 * 1024)
-    app[FACES_KEY] = faces or FaceRegistry()
+    app[FACES_KEY] = faces if faces is not None else get_registry()
     app[ENGINE_KEY] = engine
     app[UPSTREAM_KEY] = configured_upstream
     app[MAX_HISTORY_KEY] = maximum

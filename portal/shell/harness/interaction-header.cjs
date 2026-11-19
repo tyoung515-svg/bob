@@ -1,0 +1,11 @@
+require('./workbench-ui-register.cjs');
+const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});for(const n of ['window','document','HTMLElement','Event','MouseEvent','KeyboardEvent'])global[n]=dom.window[n];global.IS_REACT_ACT_ENVIRONMENT=true;
+const React=require('react'),{act}=React,{createRoot}=require('react-dom/client');
+const app={session:{id:'compact-test',messages:[],events:[],receipts:[],project:{root:'/synthetic/root'},pending:null},saved:[],data_root:'/test-only'};
+const invoke=async cmd=>{if(cmd==='workbench_snapshot')throw Error('unknown command');return app};
+const button=t=>[...document.querySelectorAll('button')].find(b=>b.textContent===t);
+(async()=>{const App=require('../src/WorkbenchApp.tsx').default;let root=createRoot(document.getElementById('root'));await act(async()=>root.render(React.createElement(App,{invoke})));
+let toggle=button('Expand conversation header');assert.ok(toggle,'entire header has a compact-default expansion control');assert.equal(toggle.getAttribute('aria-expanded'),'false');assert.ok(document.getElementById(toggle.getAttribute('aria-controls')).hidden,'whole settings/context block hidden, not only instructions');assert.match(document.querySelector('.header-summary').textContent,/synthetic\/root/);
+await act(async()=>toggle.click());assert.equal(button('Collapse conversation header').getAttribute('aria-expanded'),'true');assert.ok(!document.querySelector('#conversation-header-details').hidden);assert.ok(document.querySelector('#chat-model'));
+await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));await act(async()=>root.render(React.createElement(App,{invoke})));assert.equal(button('Collapse conversation header').getAttribute('aria-expanded'),'true','UI preference survives remount');await act(async()=>button('Collapse conversation header').click());assert.ok(document.querySelector('#conversation-header-details').hidden);await act(async()=>root.unmount());console.log('I1 whole-header compact/persist/aria DOM PASS');})().catch(e=>{console.error(e);process.exit(1)});

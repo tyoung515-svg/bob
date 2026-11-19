@@ -1,0 +1,8 @@
+storage:
+  storage_path: /var/lib/bob/qdrant/storage
+  snapshots_path: /var/lib/bob/qdrant/snapshots
+service:
+  host: 127.0.0.1
+  http_port: 6353
+  grpc_port: 6354
+telemetry_disabled: true

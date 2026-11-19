@@ -24,6 +24,9 @@ instance-default behaviour; set empty only deliberately.)
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import logging
 from typing import Any, Optional
 
@@ -54,6 +57,9 @@ class OpenCodeServeClient:
     """Async client for a single OpenCode serve instance (opencode 1.17 API)."""
 
     def __init__(self, host: str, port: int) -> None:
+        if execution_mode() == "worker":
+            from core.worker.client import refuse
+            refuse()
         self.base_url = f"http://{host}:{port}"
         self._timeout = aiohttp.ClientTimeout(
             total=config.OPENCODE_DEFAULT_TIMEOUT_S, connect=5

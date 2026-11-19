@@ -36,9 +36,18 @@ from api.ws_protocol import (
     message_complete_event,
 )
 from core.backends.local_router import LocalModelRouter
-from core.config import GRAPH_RECURSION_LIMIT, config
+from core.lane_config import (configured_mode, get_lane, catalog, selectable_backends,
+                              agent_service_definitions)
+
+from core.config import (
+    GRAPH_RECURSION_LIMIT,
+    KNOWN_BACKENDS,
+    MAX_FANOUT_WIDTH_BY_BACKEND,
+    MAX_WORKER_USD_BY_BACKEND,
+    config,
+)
 from core import teams, team_proposer
-from core.faces.registry import FaceRegistry
+from core.faces.registry import FaceRegistry, get_registry
 from core.memory.bootstrap import get_memory
 from core.memory.exceptions import L1ValidationFailed, MemoryConfigError
 
@@ -59,6 +68,7 @@ _CLOUD_BACKENDS: tuple[tuple[str, str, str], ...] = (
     ("gemini_flash", "GOOGLE_API_KEY", "GEMINI_FLASH_MODEL"),
     ("gemini_pro", "GOOGLE_API_KEY", "GEMINI_PRO_MODEL"),
     ("gemini_deep_research", "GOOGLE_API_KEY", "GEMINI_DEEP_RESEARCH_MODEL"),
+    ("glm_5_3_flash_or", "OPENROUTER_API_KEY", "OPENROUTER_GLM_FLASH_MODEL"),
 )
 
 
@@ -127,16 +137,56 @@ async def health(_: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
+@routes.post("/api/bob-guide")
+async def bob_guide(request: web.Request) -> web.Response:
+    """Lane-local read-only guide; the authenticated gateway supplies visible faces."""
+    from core.guide import render
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text='guide request must be an object')
+    visible = body.get('visible_faces')
+    if not isinstance(visible, list) or any(not isinstance(f, str) for f in visible):
+        raise web.HTTPBadRequest(text='visible_faces required')
+    try:
+        payload = await render(body.get('topic', 'index'), registry=request.app[FACES_KEY],
+                               face_id=body.get('face_id') or None, visible_faces=visible)
+    except PermissionError:
+        raise web.HTTPForbidden(text='face outside guide scope')
+    except ValueError:
+        raise web.HTTPBadRequest(text='invalid or oversized guide topic')
+    return web.json_response(payload)
+
+
 @routes.get("/api/faces")
 async def list_faces(request: web.Request) -> web.Response:
     """Return compact summaries of every configured Face."""
+    if configured_mode():
+        await catalog(request.app[ROUTER_KEY])
     registry = request.app[FACES_KEY]
     return web.json_response([s.model_dump() for s in registry.list_faces()])
+
+
+@routes.get("/api/agent-services/definitions")
+async def agent_services_definitions(request: web.Request) -> web.Response:
+    """Sanitized service snapshot from the same authority as the core catalogs."""
+    if configured_mode():
+        definitions = agent_service_definitions(await catalog(request.app[ROUTER_KEY]))
+        return web.json_response({"mode": "configured", **definitions})
+    from core.roster import get_roster
+    services = get_roster().agent_services
+    return web.json_response({
+        "mode": "deployment",
+        "models": {k: v.as_supplied() for k, v in services.models.items()},
+        "teams": {k: v.as_supplied() for k, v in services.teams.items()},
+        "worker_choices": services.worker_choices,
+    })
 
 
 @routes.get("/api/faces/{face_id}")
 async def get_face(request: web.Request) -> web.Response:
     """Return the full Face profile, or 404 if unknown."""
+    if configured_mode():
+        await catalog(request.app[ROUTER_KEY])
     registry = request.app[FACES_KEY]
     face_id = request.match_info["face_id"]
     try:
@@ -215,6 +265,8 @@ async def routing_view(request: web.Request) -> web.Response:
     Read-only. ``?team=<name>`` previews a fleet without changing the process env;
     ``?format=text`` returns a plain-text table instead of JSON.
     """
+    if configured_mode():
+        await catalog(request.app[ROUTER_KEY])
     registry = request.app[FACES_KEY]
     team_q = request.query.get("team") or None
     if team_q is not None and team_q not in teams.known_teams():
@@ -410,13 +462,15 @@ async def list_backends_endpoint(request: web.Request) -> web.Response:
     """The backend palette for the team-builder: every registered backend with its
     per-worker USD cost cap + max fan-out width, plus the role vocabulary."""
     from core.config import MAX_FANOUT_WIDTH_BY_BACKEND, MAX_WORKER_USD_BY_BACKEND
+    if configured_mode():
+        await catalog(request.app[ROUTER_KEY])
     items = [
         {
             "backend": b,
             "max_usd_per_worker": MAX_WORKER_USD_BY_BACKEND[b],
             "max_fanout_width": MAX_FANOUT_WIDTH_BY_BACKEND.get(b),
         }
-        for b in sorted(MAX_WORKER_USD_BY_BACKEND)
+        for b in sorted(selectable_backends())
     ]
     return web.json_response({"items": items, "roles": list(teams.ROLES)})
 
@@ -532,6 +586,11 @@ async def list_available_models(request: web.Request) -> web.Response:
     A backend that is wired but unconfigured is returned with
     ``available: false`` so the UI can show (and disable) it.
     """
+    if configured_mode():
+        rows = await catalog(request.app[ROUTER_KEY])
+        for row in rows:
+            row.pop("kind", None)
+        return web.json_response(rows)
     router = request.app[ROUTER_KEY]
     try:
         local_backends = await router.discover()
@@ -551,13 +610,20 @@ async def list_available_models(request: web.Request) -> web.Response:
         }
     ]
     for name, key_attr, model_attr in _CLOUD_BACKENDS:
-        result.append(
-            {
-                "backend": name,
-                "available": bool(getattr(config, key_attr, "")),
-                "model": getattr(config, model_attr, None),
-            }
-        )
+        lapsed = name in _unavailable_backends()
+        entry = {
+            "backend": name,
+            "available": bool(getattr(config, key_attr, "")) and not lapsed,
+            "model": getattr(config, model_attr, None),
+        }
+        if lapsed:
+            entry["unavailable_reason"] = "entitlement_lapsed"
+        result.append(entry)
+    signin = get_lane().backends.get("openai_codex")
+    if signin is not None:
+        entry = signin.row()
+        entry.pop("kind", None)
+        result.append(entry)
     # claude_code (planning tier) — the subscription CLI, NOT key-gated: it runs
     # the genuine ``claude`` binary under the user's OAuth login. Available when
     # the binary resolves on PATH (or CC_CLI_PATH points at it). which() only,
@@ -585,6 +651,146 @@ async def list_available_models(request: web.Request) -> web.Response:
             "model": None,
         }
     )
+    from core.model_choices import with_choices
+    return web.json_response([with_choices(row) for row in result])
+
+
+# ─── Unified backend catalog (F3, 2026-10-01) ───────────────────────────────
+# /api/models/available only knows key-present cloud backends + local + the
+# three CLI probes that were added ad hoc — so the MCP list_backends tool and
+# the face's own router view disagreed (12 vs 17). This endpoint exposes the
+# ROUTER view (every backend in KNOWN_BACKENDS, which derives from
+# MAX_WORKER_USD_BY_BACKEND) with an honest availability probe per kind:
+# cloud = API-key-present, cli = binary resolves (or instances configured),
+# local = discovery finds a reachable server.
+
+# backend → (api-key config attr, default-model config attr)
+_CATALOG_CLOUD: dict[str, tuple[str, str]] = {
+    "claude_api": ("ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"),
+    "deepseek_v4_flash": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL"),
+    "deepseek_v4": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL"),
+    "kimi_code": ("KIMI_API_KEY", "KIMI_MODEL"),
+    "kimi_platform": ("MOONSHOT_API_KEY", "KIMI_PLATFORM_MODEL"),
+    "minimax": ("MINIMAX_API_KEY", "MINIMAX_MODEL"),
+    "gemini_flash": ("GOOGLE_API_KEY", "GEMINI_FLASH_MODEL"),
+    "gemini_pro": ("GOOGLE_API_KEY", "GEMINI_PRO_MODEL"),
+    "gemini_deep_research": ("GOOGLE_API_KEY", "GEMINI_DEEP_RESEARCH_MODEL"),
+    "glm_5_3": ("ZAI_API_KEY", "ZAI_MODEL"),
+    "glm_5_3_flash_or": ("OPENROUTER_API_KEY", "OPENROUTER_GLM_FLASH_MODEL"),
+}
+
+
+def _unavailable_backends() -> set[str]:
+    """Backends with a live credential but a lapsed entitlement.
+
+    ``BOB_UNAVAILABLE_BACKENDS`` is a comma-separated list set by the operator
+    when a subscription ends. Key-presence alone must never be reported as
+    availability — a cancelled seat still has its key in the env file, and
+    advertising it as available makes the catalog lie to team composition and
+    to every client reading ``list_backends``.
+    """
+    raw = getattr(config, "BOB_UNAVAILABLE_BACKENDS", "") or ""
+    if not isinstance(raw, str):
+        raw = ",".join(raw)
+    return {name.strip() for name in raw.split(",") if name.strip()}
+
+
+@routes.get("/api/backends/catalog")
+async def backends_catalog(request: web.Request) -> web.Response:
+    """Every router backend with kind, availability, and caps.
+
+    ``available`` reports WIRING (key present / binary resolves / local
+    server reachable), not policy — an available backend may still be
+    off-policy for a given face. Caps come from the cost/fan-out maps so
+    team composition and the catalog can never drift apart.
+    """
+    if configured_mode():
+        rows = await catalog(request.app[ROUTER_KEY])
+        for row in rows:
+            row["max_usd_per_worker"] = MAX_WORKER_USD_BY_BACKEND[row["backend"]]
+            row["max_fanout_width"] = MAX_FANOUT_WIDTH_BY_BACKEND.get(row["backend"])
+        return web.json_response(rows)
+    router = request.app[ROUTER_KEY]
+    try:
+        local_backends = await router.discover()
+    except Exception:
+        logger.warning("local backend discovery failed", exc_info=True)
+        local_backends = []
+
+    # Resolved per-request so tests monkeypatching config attrs see their
+    # values (module-level capture would freeze them at import).
+    cli_binaries = {
+        "claude_code": config.CC_CLI_PATH or "claude",
+        "agy_code": config.AGY_CLI_PATH or "agy",
+        "codex_code": config.CODEX_CLI_PATH or "codex",
+        "kimi_cli": config.KIMI_CLI_PATH or "kimi",
+        "pi_code": config.PI_CLI_PATH or "pi",
+    }
+
+    local_models = sorted(
+        {m for b in local_backends for m in (b.models or [])}
+    )
+    unavailable = _unavailable_backends()
+
+    result: list[dict] = []
+    for name in sorted(KNOWN_BACKENDS):
+        if name == "openai_codex":
+            # This transport requires lane-owned ChatGPT sign-in even in
+            # deployment mode. Never probe the host CLI home or infer a model.
+            row = get_lane().backends.get(name)
+            if row is not None:
+                result.append({**row.row(), "max_usd_per_worker": MAX_WORKER_USD_BY_BACKEND[name],
+                               "max_fanout_width": MAX_FANOUT_WIDTH_BY_BACKEND[name]})
+            continue
+        entry: dict = {
+            "backend": name,
+            "max_usd_per_worker": MAX_WORKER_USD_BY_BACKEND[name],
+            "max_fanout_width": MAX_FANOUT_WIDTH_BY_BACKEND.get(name),
+        }
+        if name == "local":
+            entry.update(
+                kind="local",
+                available=bool(local_backends),
+                model=None,
+                models=local_models,
+            )
+        elif name == "opencode_serve":
+            entry.update(
+                kind="cli",
+                available=bool(config.opencode_instances_parsed()),
+                model=None,
+                models=[],
+            )
+        elif name in _CATALOG_CLOUD:
+            key_attr, model_attr = _CATALOG_CLOUD[name]
+            default_model = getattr(config, model_attr, None)
+            entry.update(
+                kind="cloud",
+                available=bool(getattr(config, key_attr, "")),
+                model=default_model,
+                # Cloud backends can't be enumerated live; offer the
+                # configured default so slug-staleness checks have something
+                # honest to compare against.
+                models=[default_model] if default_model else [],
+            )
+        elif name in cli_binaries:
+            entry.update(
+                kind="cli",
+                available=bool(shutil.which(cli_binaries[name])),
+                model=None,
+                models=[],
+            )
+        else:
+            # A router backend with no probe rule — fail closed and make it
+            # visible instead of silently dropping it from the catalog.
+            entry.update(kind="unknown", available=False, model=None, models=[])
+        if name in unavailable:
+            # Operator-declared lapsed entitlement overrides every probe: the
+            # key/binary may still resolve, but a paid seat that ended cannot
+            # serve a turn, so reporting available=true is a lie.
+            entry["available"] = False
+            entry["unavailable_reason"] = "entitlement_lapsed"
+        result.append(entry)
     return web.json_response(result)
 
 
@@ -610,6 +816,7 @@ def _fact_to_summary(fact) -> dict:
         "ts": fact.ts,
         "source_event_id": fact.source_event_id,
         "confidence": asdict(fact.confidence),
+        **({"retirement": body["retirement"]} if body.get("retirement") else {}),
     }
 
 
@@ -638,9 +845,12 @@ async def list_memory_facts(request: web.Request) -> web.Response:
     limit = max(0, min(limit, 500))
     offset = max(0, offset)
 
-    facts = await mem.fact_store.query(
-        {"generation_method": _L1_GENERATION_METHOD}
-    )
+    status = request.query.get("status", "default")
+    if status not in {"default", "retired"}:
+        return web.json_response(error_event("status must be retired or omitted", code="invalid_request"), status=400)
+    filters = ({"generation_method": "face_memory_save:v1", "rank": "deprecated"}
+               if status == "retired" else {"generation_method": _L1_GENERATION_METHOD})
+    facts = await mem.fact_store.query(filters)
     facts.sort(key=lambda f: f.ts or "", reverse=True)  # newest-first
     page = facts[offset : offset + limit]
     return web.json_response([_fact_to_summary(f) for f in page])
@@ -787,6 +997,12 @@ async def _stream_graph_turn(
     approval_emitted = False
     disconnected = False
     stream_failed = False
+    stopped_reason = None
+    step_extensions = 0
+    actual_model = None
+    actual_backend = backend_override
+    requested_model = model_override
+    model_usage = None
 
     try:
         # stream_mode is a list → each item is a (mode, payload) tuple.
@@ -821,6 +1037,31 @@ async def _stream_graph_turn(
                 # opted in. Verbatim (the U8 client parses the flat frame by top-level type;
                 # extra keys like flight_id/ts are ignored). Gated ⇒ a council turn without
                 # emit_events streams exactly what it does today (byte-identical).
+                elif isinstance(chunk, dict) and chunk.get("type") == "question":
+                    # S2 (2026-10-27): a mid-turn question for the operator. The
+                    # turn is parked in core until an answer arrives on
+                    # POST /chat/questions/{id}/answer.
+                    if not await _safe_write(response, _sse_line(chunk), thread_id):
+                        disconnected = True
+                elif isinstance(chunk, dict) and chunk.get('type') in {'model_observation', 'model_usage'}:
+                    actual_backend = chunk.get('backend') or actual_backend
+                    if chunk['type'] == 'model_observation':
+                        actual_model = chunk.get('provider_reported_model') or actual_model
+                        requested_model = chunk.get('model') or requested_model
+                    elif chunk.get('available'):
+                        prior = model_usage if actual_backend != 'claude_code' else None
+                        model_usage = {key: (prior or {}).get(key, 0) + chunk.get(key, 0)
+                                       for key in ('input_tokens', 'output_tokens', 'total_tokens')}
+                        if chunk.get('model'):
+                            actual_model = chunk['model']
+                    if not await _safe_write(response, _sse_line(chunk), thread_id):
+                        disconnected = True
+                elif isinstance(chunk, dict) and chunk.get("type") in {"tool_activity", "builder_wait"}:
+                    # S1 (2026-10-27): forward the tool-loop trail verbatim. Additive:
+                    # clients that do not know the frame ignore it, and it carries no
+                    # secrets beyond a bounded preview the operator already owns.
+                    if not await _safe_write(response, _sse_line(chunk), thread_id):
+                        disconnected = True
                 elif (
                     emit_council_events
                     and isinstance(chunk, dict)
@@ -836,6 +1077,10 @@ async def _stream_graph_turn(
             for node_name, update in chunk.items():
                 if not isinstance(update, dict):
                     continue
+                if update.get("stopped_reason"):
+                    stopped_reason = update["stopped_reason"]
+                if "step_extensions" in update:
+                    step_extensions = update["step_extensions"]
 
                 for msg in update.get("messages") or []:
                     if (
@@ -852,8 +1097,11 @@ async def _stream_graph_turn(
                         # or the answer double-emits (the 4f7d8f4 streaming-drop
                         # class, inverted). The answer still rides "messages" into
                         # checkpoint state for these nodes.
+                        # Failed execute replies do not pass through the token
+                        # writer, including failures after partial output.
                         if node_name in ("execute", "synthesize", "council", "ground",
-                                         "debate_converge"):
+                                         "debate_converge") and not (
+                                node_name == 'execute' and update.get('error')):
                             continue
                         text = msg["content"]
                         full_response.append(text)
@@ -875,13 +1123,17 @@ async def _stream_graph_turn(
                     break
 
                 if update.get("error"):
+                    logger.warning('Chat state error conversation_id=%s turn_id=%s face=%s backend=%s node=%s error_type=%s',
+                                   thread_id, update.get('turn_id'), face_id, backend_override,
+                                   node_name, update.get('error_type') or 'state_error')
                     if not await _safe_write(
                         response,
                         _sse_line(
-                            error_event(
+                            {**error_event(
                                 str(update["error"]),
                                 code="state_error",
-                            )
+                            ), 'error_type': update.get('error_type') or 'state_error',
+                                'turn_id': update.get('turn_id')}
                         ),
                         thread_id,
                     ):
@@ -949,14 +1201,17 @@ async def _stream_graph_turn(
         try:
             await response.write(
                 _sse_line(
-                    message_complete_event(
+                    {**message_complete_event(
                         message_id=uuid.uuid4().hex,
-                        tokens_in=_rough_tokens(user_content),
-                        tokens_out=_rough_tokens(assistant_text),
+                        tokens_in=model_usage['input_tokens'] if model_usage else _rough_tokens(user_content),
+                        tokens_out=model_usage['output_tokens'] if model_usage else _rough_tokens(assistant_text),
                         elapsed_ms=elapsed_ms,
-                        model=model_override,
-                        backend=backend_override,
-                    )
+                        model=actual_model or requested_model,
+                        backend=actual_backend,
+                    ), "step_extensions": step_extensions,
+                    "requested_model": requested_model, "provider_reported_model": actual_model,
+                    **({"model_usage": model_usage} if model_usage else {}),
+                    **({"stopped_reason": stopped_reason} if stopped_reason else {})}
                 )
             )
         except ConnectionResetError:
@@ -1070,6 +1325,16 @@ async def chat(request: web.Request) -> web.StreamResponse:
     face_id = (payload.get("face_id") or "assistant").strip()
     model_override = payload.get("model")
     backend_override = payload.get("backend")
+    if backend_override and model_override:
+        try:
+            if configured_mode():
+                get_lane().require(backend_override, model_override)
+            else:
+                from core.model_choices import validate_pin
+                rows = json.loads((await list_available_models(request)).text)
+                validate_pin(rows, backend_override, model_override)
+        except ValueError as exc:
+            return web.json_response(error_event(str(exc), code='invalid_pin'), status=400)
     # JOAT v0: optional per-conversation team pin (role→backend fleet). None/absent
     # ⇒ the process default (BOBCLAW_TEAM env, else per-face) — no behaviour change.
     team_pin = (payload.get("team") or None)
@@ -1091,6 +1356,18 @@ async def chat(request: web.Request) -> web.StreamResponse:
     page_context = _raw_page_context if isinstance(_raw_page_context, dict) and _raw_page_context else None
     # Gateway-derived user identity (JWT subject), threaded to tool contextvars.
     user_id = payload.get("user_id")
+    from core.execution.chat_records import POOL as workflow_pool
+    from core.execution.workflow_context import conversation_run
+    owning_run=await conversation_run(workflow_pool,user_id,conversation_id)
+    if owning_run:
+        return web.json_response({'error':'conversation_owned_by_run','run_id':owning_run},status=409)
+    # The gateway-derived owner is available before prompt fitting/model work.
+    # Import stays independent of the turn, including when its start fails.
+    try:
+        from core.context.backfill import ensure_started
+        ensure_started(user_id)
+    except Exception:
+        logger.warning('Earlier conversation backfill could not start', exc_info=True)
     # Headless contract: the gateway sets this for an agent-token turn whose face was
     # explicitly chosen (and checked against the token's `faces` claim) — route_node
     # then honors the pin and skips the intent heuristic. Changes face routing only
@@ -1130,26 +1407,56 @@ async def chat(request: web.Request) -> web.StreamResponse:
         tools_allowed = []
 
     initial_messages: list[dict] = []
+    history_fit: dict | None = None
     if history:
-        formatted = "\n".join(
-            f"{m['role']}: {m['content']}" for m in history
+        # Fit the history to the model's real context window (not a fixed 2K tokens). The backend is
+        # a hint at this point; core.context.enforce_backend_limits re-checks the backend actually called.
+        from core.context import build_prior_conversation
+
+        try:
+            _preferred_backend = faces.get_face(face_id).preferred_backend
+        except Exception:
+            _preferred_backend = None
+        prior_conversation, history_fit = build_prior_conversation(
+            history,
+            preferred_backend=_preferred_backend,
+            backend_override=backend_override,
+            conversation_id=conversation_id,
+            user_id=user_id,
         )
-        initial_messages.append(
-            {"role": "system", "content": f"Prior conversation:\n{formatted}"}
-        )
+        initial_messages.append({"role": "system", "content": prior_conversation})
+        # Index the history by message id so conv_expand / conv_search / the compactor resolve it exactly.
+        try:
+            import asyncio as _asyncio_ctx
+
+            from core.context.store import record_history
+
+            await _asyncio_ctx.to_thread(record_history, conversation_id, user_id, history)
+        except Exception:
+            import logging as _logging_ctx
+
+            _logging_ctx.getLogger(__name__).debug("context: history indexing failed", exc_info=True)
 
     initial_state = {
         "messages": initial_messages,
         "task": content,
         "conversation_id": conversation_id,
+        "request_id": payload.get("request_id") if isinstance(payload.get("request_id"), str) else None,
+        "stopped_reason": None,
+        "step_extensions": 0,
+        "step_questions_allowed": payload.get("step_questions_allowed") is True,
         "user_id": user_id,
+        "history_fit": history_fit,
         "face_id": face_id,
+        "selected_face_id": face_id,
         "model_override": model_override,
+        "model_effort": payload.get("effort"),
         "backend_override": backend_override,
         "team": team_pin,
         "profile_name": profile_pin,
         "locale": locale,
         "pin_authoritative": pin_authoritative,
+        "agent_service_single_turn": payload.get("agent_service_single_turn") is True,
         "hierarchical": hierarchical,
         # MS2-R2: the research orchestrator's entry trigger (False/absent ⇒ arm unvisited).
         "research_request": research_request,
@@ -1165,6 +1472,12 @@ async def chat(request: web.Request) -> web.StreamResponse:
         # U5: the helper-bubble page snapshot (None for every non-bubble turn). Spliced by
         # execute_node only under config.PAGE_CONTEXT_ENABLED (flag off ⇒ byte-identical).
         "page_context": page_context,
+        "work_context": payload.get("work_context"),
+        "work_context_vouch": payload.get("work_context_vouch"),
+        "workflow_context": payload.get("workflow_context"),
+        "workflow_context_vouch": payload.get("workflow_context_vouch"),
+        "pc_context": payload.get("pc_context"),
+        "pc_context_vouch": payload.get("pc_context_vouch"),
         # P3: only set when a valid gateway-vouched scope rode in (else None ⇒ today's
         # human-gated behaviour). The Gate (execute/dispatch/worker) reads state["scope"].
         "scope": resolved_scope,
@@ -1188,6 +1501,47 @@ async def chat(request: web.Request) -> web.StreamResponse:
 # ─── /api/chat/approval — resume interrupted graph (B1c) ──────────────────────
 
 _VALID_DECISIONS = {"approve", "reject"}
+
+
+@routes.post("/api/chat/index")
+async def index_stored_conversation(request: web.Request) -> web.Response:
+    """Receive signed stored rows after the gateway has finished replying."""
+    from core.context.ingest import receive
+    try:
+        body = await request.json()
+    except (ValueError, TypeError):
+        return web.json_response({'error': 'invalid_json'}, status=400)
+    try:
+        status, result = await receive(body, config.BOBCLAW_SECRET)
+        return web.json_response(result, status=status)
+    except Exception:
+        logger.warning('Stored conversation indexing failed', exc_info=True)
+        return web.json_response({'error': 'index_unavailable'}, status=503)
+
+
+@routes.post("/api/chat/questions/{question_id}/answer")
+async def chat_question_answer(request: web.Request) -> web.Response:
+    """S2: deliver the operator's answer to a parked mid-turn question.
+
+    Only the running turn's own question id resolves, once. An unknown or already
+    answered id is a 404 — never an error the turn has to interpret.
+    """
+    from core.execution.chat_records import valid_answer, accept
+    from core.execution.models import ExecutionError
+
+    question_id = str(request.match_info.get("question_id") or "").strip()
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    if not isinstance(body,dict):return web.json_response({'error':'invalid_json'},status=400)
+    value=body.get('envelope')
+    if not valid_answer(value,(body or {}).get('vouch'),config.BOBCLAW_SECRET,question_id):
+        return web.json_response({'error':'invalid_question_vouch'},status=403)
+    try:
+        return web.json_response(await accept(value))
+    except ExecutionError as exc:
+        return web.json_response({'error':exc.code},status=exc.status)
 
 
 @routes.post("/api/chat/approval")
@@ -1305,7 +1659,7 @@ def build_app(
     ``start.py``'s ``_on_startup`` (both are built asynchronously).
     """
     app = web.Application()
-    app[FACES_KEY] = faces if faces is not None else FaceRegistry()
+    app[FACES_KEY] = faces if faces is not None else get_registry()
     app[ROUTER_KEY] = router if router is not None else LocalModelRouter()
     app[APPROVALS_KEY] = {}
     app[APPROVALS_IN_FLIGHT_KEY] = set()
@@ -1314,4 +1668,10 @@ def build_app(
     if pg_pool is not None:
         app[POOL_KEY] = pg_pool
     app.add_routes(routes)
+    from core.execution.api import router as execution_routes
+    app.add_routes(execution_routes)
+    from core.tools.workflow_context import router as workflow_tool_routes
+    app.add_routes(workflow_tool_routes)
+    from core.inspection_api import router as inspection_routes
+    app.add_routes(inspection_routes)
     return app

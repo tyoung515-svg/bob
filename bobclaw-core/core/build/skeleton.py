@@ -22,9 +22,13 @@ minimal proven shape from the demo.
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import os
 import re
 import subprocess
+from core.worker import workspace as worker_workspace
 import sys
 from pathlib import Path
 
@@ -98,7 +102,7 @@ def render_test(unit: dict) -> str:
     return "\n".join(out) + "\n"
 
 
-def write_app(app_dir: Path, units: list[dict], impls: dict[str, str]) -> None:
+def write_app(app_dir: Path, units: list[dict], impls: dict[str, str], *, worker_local=False) -> None:
     """(Re)generate the package + tests + CLI from contracts + impls (deterministic).
 
     A contract with no impl gets its :func:`stub`, so the package ALWAYS imports
@@ -106,22 +110,36 @@ def write_app(app_dir: Path, units: list[dict], impls: dict[str, str]) -> None:
     skeleton (``impls={}``) and again after each fill/repair wave.
     """
     app_dir = Path(app_dir)
+    # Installed checked adapter already owns the isolated worker process. Avoid
+    # recursively acquiring its physical lane slot for deterministic generation.
+    local_io = worker_local or execution_mode() == 'legacy'
     pkg = app_dir / PACKAGE_NAME
-    pkg.mkdir(parents=True, exist_ok=True)
-    (app_dir / "tests").mkdir(exist_ok=True)
-
+    if local_io:
+        pkg.mkdir(parents=True, exist_ok=True)
+    else:
+        worker_workspace.mkdir(pkg)
+    if local_io:
+        (app_dir / "tests").mkdir(exist_ok=True)
+    else:
+        worker_workspace.mkdir(app_dir / "tests")
     bodies = [impls.get(u["name"]) or stub(u) for u in units]
-    (pkg / "functions.py").write_text(HEADER + "\n\n".join(bodies) + "\n", encoding="utf-8")
-    (pkg / "__init__.py").write_text(
-        f"from {PACKAGE_NAME}.functions import *  # noqa\n", encoding="utf-8"
-    )
-
+    if local_io:
+        (pkg / "functions.py").write_text(HEADER + "\n\n".join(bodies) + "\n", encoding="utf-8")
+    else:
+        worker_workspace.write(pkg / "functions.py", HEADER + "\n\n".join(bodies) + "\n")
+    if local_io:
+        (pkg / "__init__.py").write_text(
+            f"from {PACKAGE_NAME}.functions import *  # noqa\n", encoding="utf-8"
+        )
+    else:
+        worker_workspace.write(pkg / "__init__.py", f"from {PACKAGE_NAME}.functions import *  # noqa\n")
     tests = [f"from {PACKAGE_NAME}.functions import *  # noqa\n\n"] + [
         render_test(u) for u in units
     ]
-    (app_dir / "tests" / "test_functions.py").write_text("\n".join(tests), encoding="utf-8")
-
-    # Runnable CLI: exercise a sample of the functions with their first test case.
+    if local_io:
+        (app_dir / "tests" / "test_functions.py").write_text("\n".join(tests), encoding="utf-8")
+    else:
+        worker_workspace.write(app_dir / "tests" / "test_functions.py", "\n".join(tests))
     sample = [u for u in units if u.get("cases")][:8]
     cli = [
         f"from {PACKAGE_NAME} import functions as F\n\n",
@@ -132,7 +150,10 @@ def write_app(app_dir: Path, units: list[dict], impls: dict[str, str]) -> None:
         args = ", ".join(repr(a) for a in u["cases"][0].get("args", []))
         cli.append(f"    print('  {u['name']}(...) ->', repr(F.{u['name']}({args})))\n")
     cli.append("\nif __name__ == '__main__':\n    main()\n")
-    (pkg / "cli.py").write_text("".join(cli), encoding="utf-8")
+    if local_io:
+        (pkg / "cli.py").write_text("".join(cli), encoding="utf-8")
+    else:
+        worker_workspace.write(pkg / "cli.py", "".join(cli))
 
 
 # Env keys the build/test subprocess legitimately needs (Python + pytest, Win + POSIX).
@@ -173,13 +194,22 @@ def build_empty_ok(app_dir: Path) -> bool:
     broken, never a worker's fault.
     """
     app_dir = Path(app_dir)
-    proc = subprocess.run(
-        [sys.executable, "-c",
-         f"import {PACKAGE_NAME}; "
-         f"print(len([n for n in dir({PACKAGE_NAME}) if not n.startswith('_')]))"],
-        cwd=str(app_dir), capture_output=True, text=True,
-        env=build_env(app_dir), timeout=_BUILD_TIMEOUT,
-    )
+    if execution_mode() == "legacy":
+        proc = subprocess.run(
+            [sys.executable, "-c",
+             f"import {PACKAGE_NAME}; "
+             f"print(len([n for n in dir({PACKAGE_NAME}) if not n.startswith('_')]))"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=_BUILD_TIMEOUT,
+        )
+    else:
+        proc = worker_client.run(
+            [sys.executable, "-c",
+             f"import {PACKAGE_NAME}; "
+             f"print(len([n for n in dir({PACKAGE_NAME}) if not n.startswith('_')]))"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=_BUILD_TIMEOUT,
+        )
     return proc.returncode == 0
 
 
@@ -191,12 +221,20 @@ def collect_tests(app_dir: Path) -> int:
     tests to run".
     """
     app_dir = Path(app_dir)
-    proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q",
-         "-p", "no:cacheprovider", "tests"],
-        cwd=str(app_dir), capture_output=True, text=True,
-        env=build_env(app_dir), timeout=_COLLECT_TIMEOUT,
-    )
+    if execution_mode() == "legacy":
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q",
+             "-p", "no:cacheprovider", "tests"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=_COLLECT_TIMEOUT,
+        )
+    else:
+        proc = worker_client.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q",
+             "-p", "no:cacheprovider", "tests"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=_COLLECT_TIMEOUT,
+        )
     out = proc.stdout + proc.stderr
     m = re.search(r"(\d+) test", out)
     return int(m.group(1)) if m else 0
@@ -212,12 +250,20 @@ def run_pytest(app_dir: Path, *, timeout: int = _PYTEST_TIMEOUT) -> dict:
     NEVER edited to make a failure pass (a bad spec stays red and is surfaced).
     """
     app_dir = Path(app_dir)
-    proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--no-header",
-         "-p", "no:cacheprovider", "tests"],
-        cwd=str(app_dir), capture_output=True, text=True,
-        env=build_env(app_dir), timeout=timeout,
-    )
+    if execution_mode() == "legacy":
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "--no-header",
+             "-p", "no:cacheprovider", "tests"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=timeout,
+        )
+    else:
+        proc = worker_client.run(
+            [sys.executable, "-m", "pytest", "-q", "--no-header",
+             "-p", "no:cacheprovider", "tests"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=timeout,
+        )
     return parse_pytest_summary(proc.stdout + proc.stderr)
 
 
@@ -258,9 +304,16 @@ def run_cli(app_dir: Path, *, timeout: int = _CLI_TIMEOUT) -> tuple[bool, str]:
     The "it actually runs" signal of the gate (the deterministic skeleton guarantees
     "builds"; pytest is the honest test gate; this proves the package executes)."""
     app_dir = Path(app_dir)
-    proc = subprocess.run(
-        [sys.executable, "-m", f"{PACKAGE_NAME}.cli"],
-        cwd=str(app_dir), capture_output=True, text=True,
-        env=build_env(app_dir), timeout=timeout,
-    )
+    if execution_mode() == "legacy":
+        proc = subprocess.run(
+            [sys.executable, "-m", f"{PACKAGE_NAME}.cli"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=timeout,
+        )
+    else:
+        proc = worker_client.run(
+            [sys.executable, "-m", f"{PACKAGE_NAME}.cli"],
+            cwd=str(app_dir), capture_output=True, text=True,
+            env=build_env(app_dir), timeout=timeout,
+        )
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()

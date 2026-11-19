@@ -175,16 +175,59 @@ def _tool_names(cfg):
     return {t.name for t in build_server(cfg)._tool_manager.list_tools()}
 
 
+WORKFLOW_MCP_NAMES = {'workflows_catalog', 'workflows_list', 'workflows_get', 'workflows_propose',
+    'workflow_run_status', 'workflow_run_events', 'workflow_run_report', 'workflow_run_message', 'workflow_run_stop'}
+INSPECTION_MCP_NAMES = {'projects_list','project_read','project_files_list','project_files_read',
+    'project_files_search','project_git','bob_installation','bob_source_list','bob_source_read','bob_source_search'}
+
+
 def test_registers_both_tools_when_council_allowed():
-    assert _tool_names(_cfg(faces=[])) == {"chat_with_face", "run_council"}
-    assert _tool_names(_cfg(faces=["assistant", "council-max"])) == {
+    assert _tool_names(_cfg(faces=[])) == {
+        *INSPECTION_MCP_NAMES,
+        *WORKFLOW_MCP_NAMES,
         "chat_with_face",
+        "bob_guide",
         "run_council",
+        # 2026-09-30 action tools (read-only gateway proxies)
+        "list_faces",
+        "list_backends",
+        "get_server_time",
+        "check_model_slugs",
+        "list_agent_services",
+        "bob_memory_status", "bob_memory_search", "bob_memory_read", "bob_memory_save",
+        "start_team_run", "get_team_run", "message_team_manager", "cancel_team_run",
+        # 2026-11-03 S4B durable v2 runs and saved teams
+        "list_saved_teams", "save_team", "start_team_run_v2", "get_team_run_v2",
+        "list_team_runs", "cancel_team_run_v2", "resume_team_run", "set_project_call_budget", "prepare_execution_grant",
+    }
+    assert _tool_names(_cfg(faces=["assistant", "council-max"])) == {
+        *INSPECTION_MCP_NAMES,
+        *WORKFLOW_MCP_NAMES,
+        "chat_with_face",
+        "bob_guide",
+        "run_council",
+        "list_faces",
+        "list_backends",
+        "get_server_time",
+        "check_model_slugs",
+        "list_agent_services",
+        "bob_memory_status", "bob_memory_search", "bob_memory_read", "bob_memory_save",
     }
 
 
 def test_omits_council_when_not_allowed():
-    assert _tool_names(_cfg(faces=["assistant"])) == {"chat_with_face"}
+    assert _tool_names(_cfg(faces=["assistant"])) == {
+        *INSPECTION_MCP_NAMES,
+        *WORKFLOW_MCP_NAMES,
+        "chat_with_face",
+        "bob_guide",
+        "list_faces",
+        "list_backends",
+        "get_server_time",
+        "check_model_slugs",
+        "list_agent_services",
+        "bob_memory_status", "bob_memory_search", "bob_memory_read", "bob_memory_save",
+    }
 
 
 # ── stream consumer ────────────────────────────────────────────────────────────

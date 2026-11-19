@@ -24,6 +24,9 @@ token streaming.
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import asyncio
 import json
 import logging
@@ -508,19 +511,24 @@ class ClaudeCodeClient:
         env = _subscription_env()  # never bill the metered API key (subscription only)
         if spawn_ctx is not None:
             env.update(spawn_ctx.env_overrides)
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=spawn_ctx.cwd if spawn_ctx is not None else self._effective_cwd(posture),
-            env=env,
-        )
-
-        # Feed the prompt on stdin, then half-close (send EOF) so the CLI
-        # proceeds. The briefing is < the OS pipe buffer (64 KB on Windows), so a
-        # single write+EOF before reading stdout cannot deadlock — claude reads
-        # stdin to EOF before producing output. (WinError 206 fix: prompt off argv.)
+        if execution_mode() == "legacy":
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=spawn_ctx.cwd if spawn_ctx is not None else self._effective_cwd(posture),
+                env=env,
+            )
+        else:
+            proc = await worker_client.refuse_async(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=spawn_ctx.cwd if spawn_ctx is not None else self._effective_cwd(posture),
+                env=env,
+            )
         await self._write_stdin(proc, briefed)
 
         loop = asyncio.get_event_loop()
@@ -626,14 +634,24 @@ class ClaudeCodeClient:
         False if the binary is missing or the version probe fails.
         """
         try:
-            proc = await asyncio.create_subprocess_exec(
-                self.cli_path,
-                "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
-                env=_subscription_env(),  # consistent posture (version probe is auth-free)
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    self.cli_path,
+                    "--version",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                    env=_subscription_env(),  # consistent posture (version probe is auth-free)
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    self.cli_path,
+                    "--version",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                    env=_subscription_env(),  # consistent posture (version probe is auth-free)
+                )
         except (FileNotFoundError, NotADirectoryError, OSError):
             return False
         try:
@@ -707,14 +725,24 @@ class ClaudeCodeClient:
             # because overrides never carry the metered-auth family.
             env.update(env_overrides)
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE if input_bytes is not None else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd or self.cwd,
-                env=env,
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE if input_bytes is not None else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd or self.cwd,
+                    env=env,
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE if input_bytes is not None else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd or self.cwd,
+                    env=env,
+                )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise ClaudeCodeError(
                 f"claude CLI not found at {self.cli_path!r}: {exc}"
@@ -730,7 +758,6 @@ class ClaudeCodeClient:
                 f"if this is WinError 206 / 'command line too long', an argv "
                 f"(e.g. --add-dir / extra_args) is oversized"
             ) from exc
-
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input=input_bytes), timeout=self.timeout

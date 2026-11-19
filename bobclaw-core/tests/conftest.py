@@ -7,6 +7,8 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pathlib import Path
+os.environ.setdefault("BOB_ROSTER_FILE", str(Path(__file__).resolve().parents[2] / "bobclaw-core/tests/fixtures/deployment/roster.yaml"))
 
 # Test baselines must win over the repo .secrets file: core.config loads
 # .secrets/bobclaw.env with override=False at import, so anything set here
@@ -91,3 +93,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "v099_expected: v0.99 known env-posture delta (see tests/conftest.py)"
     )
+
+
+# Explicit synthetic deployment values for legacy regression contracts.
+os.environ.setdefault("BOB_FAMILY_ROOT", "/var/lib/example/family")
+os.environ.setdefault("BOB_DEFAULT_OWNER", "dad")
+os.environ.setdefault("BOB_MEMORY_OWNERS", "dad,luna,sam,alex,shared")
+os.environ.setdefault("BOB_SPS_LANE_ROOT", "/var/lib/example/work")

@@ -25,6 +25,9 @@ from config import config
 from db import close_postgres_pool, get_postgres_pool, init_db
 from redis_client import close_redis
 from routers.auth_routes import router as auth_router
+from owner_sessions import router as owner_router
+from routers.settings import router as settings_router
+from routers.recovery import router as recovery_router
 from routers.agents import router as agents_router
 from routers.capabilities import router as capabilities_router
 from routers.chat import router as chat_router
@@ -41,8 +44,10 @@ from routers.projects import router as projects_router
 from routers.routing_view import router as routing_view_router
 from routers.system_routes import router as system_router
 from routers.teams import router as teams_router
+from routers import agent_services, agent_memory, work_memory, portal_resources
 
 from core.backends.opencode_pool import _pool as _opencode_pool
+from core.paths import memory_sqlite_path
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +113,26 @@ def build_app(state_overrides: dict[web.AppKey, Any] | None = None) -> web.Appli
 
     # Register route tables
     app.router.add_routes(auth_router)
+    app.router.add_routes(owner_router)
+    app.router.add_routes(settings_router)
+    app.router.add_routes(recovery_router)
     app.router.add_routes(agents_router)
     app.router.add_routes(capabilities_router)
     app.router.add_routes(chat_router)
     app.router.add_routes(conversations_router)
     app.router.add_routes(projects_router)
+    from routers.tool_jobs import router as tool_jobs_router
+    app.router.add_routes(tool_jobs_router)
+    from routers.work import router as work_router
+    from routers.workflows import router as workflows_router
+    app.router.add_routes(workflows_router)
+    from routers.inspection import router as inspection_router
+    app.router.add_routes(inspection_router)
+    app.router.add_routes(work_router)
+    from routers.builder import router as builder_router
+    app.router.add_routes(builder_router)
+    from routers.pc import router as pc_router
+    app.router.add_routes(pc_router)
     app.router.add_routes(faces_router)
     app.router.add_routes(flights_router)
     app.router.add_routes(ideas_router)
@@ -124,6 +144,14 @@ def build_app(state_overrides: dict[web.AppKey, Any] | None = None) -> web.Appli
     app.router.add_routes(routing_view_router)
     app.router.add_routes(teams_router)
     app.router.add_routes(system_router)
+    app.router.add_routes(agent_services.router)
+    agent_services.setup(app)
+    memory_db = memory_sqlite_path()
+    agent_memory.setup(app, db=memory_db)
+    app.router.add_routes(agent_memory.router)
+    portal_resources.setup(app)
+    app.router.add_routes(portal_resources.router)
+    app.router.add_routes(work_memory.router)
 
     # Web UI REMOVED (2026-07-02): the Preact stopgap wrapper was deprecated in favor of the
     # KMM desktop app. Only the JSON/WS API remains; `/` returns a tiny info response.

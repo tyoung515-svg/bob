@@ -1,0 +1,28 @@
+{
+  "run": "b — denial path: user denies with a reason, no execution",
+  "frames": [
+    "turn.started",
+    "tool.call",
+    "authority.decided",
+    "approval.requested",
+    "approval.resolved",
+    "tool.result",
+    "turn.completed"
+  ],
+  "ledger_kinds": [
+    "lineage",
+    "turn.start",
+    "step.context",
+    "tool.call",
+    "authority.decided",
+    "approval.requested",
+    "approval.resolved",
+    "tool.result",
+    "turn.end"
+  ],
+  "tool_result_status": "denied",
+  "turn_status": "failed",
+  "fixture_bytes": "bob-slice-fixture\n",
+  "deny_reason": "not today",
+  "error_code": "user_denied"
+}

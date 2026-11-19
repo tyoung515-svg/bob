@@ -1,6 +1,8 @@
 import asyncio
 import json
 import unittest
+from unittest.mock import AsyncMock, patch
+from uuid import UUID
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -12,6 +14,7 @@ from tests.fake_pool import InMemoryPostgresPool
 
 CHUNK_COUNT = 10
 FULL_ASSISTANT_TEXT = "".join(f"word{i} " for i in range(CHUNK_COUNT))
+CONVERSATIONS = [str(UUID(int=n)) for n in range(1, 6)]
 
 
 class TestChatConcurrency(unittest.TestCase):
@@ -63,7 +66,7 @@ class TestChatConcurrency(unittest.TestCase):
             cls._pool = InMemoryPostgresPool()
             for n in range(1, 6):
                 cls._pool.add_conversation(
-                    title=f"Conversation {n}", conv_id=f"conv-{n}", user_id="bobclaw"
+                    title=f"Conversation {n}", conv_id=CONVERSATIONS[n-1], user_id="bobclaw"
                 )
             cls._client = TestClient(
                 TestServer(build_app({POSTGRES_POOL_KEY: cls._pool}))
@@ -84,8 +87,14 @@ class TestChatConcurrency(unittest.TestCase):
 
     def setUp(self) -> None:
         self._pool.messages.clear()
+        self._pool.workflow_conversation_runs.clear()
         self._client.server.app[CONVERSATION_STATE_KEY].clear()
         self._client.server.app[SESSION_STATE_KEY].clear()
+        # This chat fixture has no PC/Builder tables. Verify the lifecycle hook's
+        # scope here; its SQL/authority behavior has separate Postgres coverage.
+        lifecycle = patch('core.builder.lifecycle.end_sessions', new_callable=AsyncMock)
+        self._end_sessions = lifecycle.start()
+        self.addCleanup(lifecycle.stop)
 
     def _run(self, coro):
         return self._loop.run_until_complete(coro)
@@ -112,7 +121,7 @@ class TestChatConcurrency(unittest.TestCase):
         """Collect frames until predicate(frame) is true (inclusive)."""
         frames = []
         for _ in range(cap):
-            frame = self._run(ws.receive_json())
+            frame = self._run(ws.receive_json(timeout=5))
             frames.append(frame)
             if predicate(frame):
                 return frames
@@ -124,15 +133,33 @@ class TestChatConcurrency(unittest.TestCase):
             if m["conversation_id"] == conversation_id and m["role"] == "assistant"
         ]
 
+    def test_workflow_conversation_has_one_producer_and_scoped_controls(self):
+        self._pool.workflow_conversation_runs[(CONVERSATIONS[0],'bobclaw')]='workflow-run'
+        ws=self._connect()
+        for operation in ('message','switch_model','switch_face','switch_profile','switch_locale','stop_generation'):
+            self._run(ws.send_json({'type':operation,'conversation_id':CONVERSATIONS[0],'content':'Do not supersede the workflow.'}))
+            frame=self._run(ws.receive_json())
+            self.assertEqual(frame['code'],'conversation_owned_by_run')
+            self.assertEqual(frame['run_id'],'workflow-run')
+        headers={'Authorization':f'Bearer {self._token()}'}
+        for method,path,body in [('PATCH','',{'face_id':'builder'}),('POST','/project',{'project_id':None}),('DELETE','',None)]:
+            response=self._run(self._client.request(method,'/conversations/'+CONVERSATIONS[0]+path,headers=headers,json=body))
+            self.assertEqual(response.status,409)
+            self.assertEqual(self._run(response.json())['run_id'],'workflow-run')
+        self.assertFalse(self._pool.messages)
+        self._send_message(ws,CONVERSATIONS[1],'An independent conversation remains usable.')
+        self.assertEqual(self._run(ws.receive_json())['type'],'chunk')
+        self._run(ws.close())
+
     def test_two_conversations_stream_concurrently(self):
         """Streams in two conversations of the same user run side by side —
         neither cancels the other (no generation_stopped), both persist."""
         ws = self._connect()
-        self._send_message(ws, "conv-1", "First conversation")
+        self._send_message(ws, CONVERSATIONS[0], "First conversation")
         first = self._run(ws.receive_json())
         self.assertEqual(first["type"], "chunk")  # conv-1 stream is live
 
-        self._send_message(ws, "conv-2", "Second conversation")
+        self._send_message(ws, CONVERSATIONS[1], "Second conversation")
         completes = [first]
         self._receive_until(
             ws,
@@ -145,8 +172,8 @@ class TestChatConcurrency(unittest.TestCase):
         self.assertEqual(types.count("chunk"), 2 * CHUNK_COUNT)
         self.assertNotIn("generation_stopped", types)
         # Both turns persisted their full assistant message.
-        self.assertEqual([r["content"] for r in self._assistant_rows("conv-1")], [FULL_ASSISTANT_TEXT])
-        self.assertEqual([r["content"] for r in self._assistant_rows("conv-2")], [FULL_ASSISTANT_TEXT])
+        self.assertEqual([r["content"] for r in self._assistant_rows(CONVERSATIONS[0])], [FULL_ASSISTANT_TEXT])
+        self.assertEqual([r["content"] for r in self._assistant_rows(CONVERSATIONS[1])], [FULL_ASSISTANT_TEXT])
 
     def test_cleanup_race_keeps_replacement_stream(self):
         """Task A cancelled+replaced by task B in the same conversation: A's late
@@ -157,19 +184,19 @@ class TestChatConcurrency(unittest.TestCase):
         self._loop.set_exception_handler(lambda loop, ctx: loop_errors.append(ctx))
         try:
             ws = self._connect()
-            self._send_message(ws, "conv-1", "First")
+            self._send_message(ws, CONVERSATIONS[0], "First")
             first = self._run(ws.receive_json())
             self.assertEqual(first["type"], "chunk")
 
             # Second message supersedes A with B in the same conversation.
-            self._send_message(ws, "conv-1", "Second")
+            self._send_message(ws, CONVERSATIONS[0], "Second")
             stopped = self._run(ws.receive_json())
             self.assertEqual(stopped["type"], "generation_stopped")
             self.assertEqual(stopped["code"], "superseded")
 
             # Let A's cancelled task finish and its done-callback run.
             self._run(asyncio.sleep(0.05))
-            conv_session = self._client.server.app[CONVERSATION_STATE_KEY]["bobclaw:conv-1"]
+            conv_session = self._client.server.app[CONVERSATION_STATE_KEY][f"bobclaw:{CONVERSATIONS[0]}"]
             replacement = conv_session.get("active_stream")
             self.assertIsNotNone(replacement)  # A's callback did NOT erase B
             self.assertFalse(replacement.done())
@@ -191,18 +218,19 @@ class TestChatConcurrency(unittest.TestCase):
         try:
             ws = self._connect()
             for n in range(1, 5):
-                self._send_message(ws, f"conv-{n}", f"Stream {n}")
+                self._send_message(ws, CONVERSATIONS[n-1], f"Stream {n}")
             # Confirm all four streams are live (one chunk each).
             for _ in range(4):
                 frame = self._run(ws.receive_json())
                 self.assertEqual(frame["type"], "chunk")
 
-            self._send_message(ws, "conv-5", "One too many")
+            self._send_message(ws, CONVERSATIONS[4], "One too many")
             frames = self._receive_until(ws, lambda f: f["type"] == "error")
             self.assertEqual(frames[-1]["code"], "concurrency_limit")
+            self.assertEqual(frames[-1]["reason"], "too_many_active_conversations")
             # Rejected before any side effect: conv-5's user message never saved.
             self.assertEqual(
-                [m for m in self._pool.messages if m["conversation_id"] == "conv-5"], []
+                [m for m in self._pool.messages if m["conversation_id"] == CONVERSATIONS[4]], []
             )
 
             # Drain the four live streams cleanly.
@@ -219,11 +247,11 @@ class TestChatConcurrency(unittest.TestCase):
         """A superseded turn's truncated assistant message is NOT saved — only the
         replacement turn's full message lands in the pool."""
         ws = self._connect()
-        self._send_message(ws, "conv-1", "First")
+        self._send_message(ws, CONVERSATIONS[0], "First")
         first = self._run(ws.receive_json())
         self.assertEqual(first["type"], "chunk")
 
-        self._send_message(ws, "conv-1", "Second")
+        self._send_message(ws, CONVERSATIONS[0], "Second")
         stopped = self._run(ws.receive_json())
         self.assertEqual(stopped["type"], "generation_stopped")
         self.assertEqual(stopped["code"], "superseded")
@@ -231,7 +259,7 @@ class TestChatConcurrency(unittest.TestCase):
         self._run(asyncio.sleep(0.05))  # let the superseded task's tail finish
         self._run(ws.close())
 
-        rows = self._assistant_rows("conv-1")
+        rows = self._assistant_rows(CONVERSATIONS[0])
         self.assertEqual(len(rows), 1)  # no truncated row from the superseded turn
         self.assertEqual(rows[0]["content"], FULL_ASSISTANT_TEXT)
 
@@ -240,11 +268,11 @@ class TestChatConcurrency(unittest.TestCase):
         is cancelled, generation_stopped + message_complete are sent, AND the
         truncated assistant message IS persisted."""
         ws = self._connect()
-        self._send_message(ws, "conv-1", "Keep talking")
+        self._send_message(ws, CONVERSATIONS[0], "Keep talking")
         first = self._run(ws.receive_json())
         self.assertEqual(first["type"], "chunk")
 
-        self._run(ws.send_json({"type": "stop_generation", "conversation_id": "conv-1"}))
+        self._run(ws.send_json({"type": "stop_generation", "conversation_id": CONVERSATIONS[0]}))
         stopped = self._run(ws.receive_json())
         self.assertEqual(stopped["type"], "generation_stopped")
         self.assertEqual(stopped["code"], "stopped")
@@ -252,10 +280,11 @@ class TestChatConcurrency(unittest.TestCase):
         self.assertEqual(complete["type"], "message_complete")
         self._run(ws.close())
 
-        rows = self._assistant_rows("conv-1")
+        rows = self._assistant_rows(CONVERSATIONS[0])
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["content"].startswith("word0 "))
         self.assertNotEqual(rows[0]["content"], FULL_ASSISTANT_TEXT)  # truncated
+
     def test_cap_reservation_atomic_under_concurrent_connects(self):
         """Audit 1A (Opus) finding: the cap check and the slot reservation must be
         atomic. With cap=1 and connection A parked mid-turn-setup (history fetch
@@ -275,17 +304,18 @@ class TestChatConcurrency(unittest.TestCase):
         chat_module._get_conversation_history = slow_history
         try:
             ws_a = self._connect()
-            self._send_message(ws_a, "conv-1", "A")
+            self._send_message(ws_a, CONVERSATIONS[0], "A")
             self._run(asyncio.sleep(0.1))  # let A reach the blocked history fetch
 
             ws_b = self._connect()
-            self._send_message(ws_b, "conv-2", "B")
+            self._send_message(ws_b, CONVERSATIONS[1], "B")
             frame = self._run(ws_b.receive_json())
             self.assertEqual(frame["type"], "error")
             self.assertEqual(frame["code"], "concurrency_limit")
+            self.assertEqual(frame["reason"], "too_many_active_conversations")
             # Rejection is side-effect-free: no conv-2 user message persisted.
             self.assertEqual(
-                [m for m in self._pool.messages if m["conversation_id"] == "conv-2"], []
+                [m for m in self._pool.messages if m["conversation_id"] == CONVERSATIONS[1]], []
             )
 
             gate.set()  # release A — it completes normally
@@ -295,6 +325,71 @@ class TestChatConcurrency(unittest.TestCase):
         finally:
             chat_module._get_conversation_history = original_history
             config.MAX_CONCURRENT_STREAMS_PER_USER = original_cap
+
+
+    def _producer(self, conversation):
+        return self._client.server.app[CONVERSATION_STATE_KEY][f"bobclaw:{conversation}"]["active_stream"]
+
+    def test_stop_cancels_only_named_conversation(self):
+        ws_a, ws_b = self._connect(), self._connect()
+        try:
+            self._send_message(ws_a, CONVERSATIONS[0])
+            self._receive_until(ws_a, lambda f: f['type'] == 'chunk')
+            self._send_message(ws_b, CONVERSATIONS[1])
+            self._receive_until(ws_b, lambda f: f['type'] == 'chunk')
+            task_a, task_b = self._producer(CONVERSATIONS[0]), self._producer(CONVERSATIONS[1])
+            self._run(ws_a.send_json({'type': 'stop_generation', 'conversation_id': CONVERSATIONS[0]}))
+            self._receive_until(ws_a, lambda f: f['type'] == 'generation_stopped')
+            self._receive_until(ws_a, lambda f: f['type'] == 'message_complete')
+            self.assertTrue(task_a.done())
+            self.assertFalse(task_b.done())
+            self.assertEqual(self._end_sessions.await_args.args[3], [CONVERSATIONS[0]])
+            frames = self._receive_until(ws_b, lambda f: f['type'] == 'message_complete')
+            self.assertNotIn('generation_stopped', [f['type'] for f in frames])
+            self.assertEqual(self._assistant_rows(CONVERSATIONS[1])[0]['content'], FULL_ASSISTANT_TEXT)
+        finally:
+            self._run(ws_a.close())
+            self._run(ws_b.close())
+
+    def test_socket_close_cancels_only_its_producer(self):
+        ws_a, ws_b = self._connect(), self._connect()
+        try:
+            self._send_message(ws_a, CONVERSATIONS[0])
+            self._receive_until(ws_a, lambda f: f['type'] == 'chunk')
+            self._send_message(ws_b, CONVERSATIONS[1])
+            self._receive_until(ws_b, lambda f: f['type'] == 'chunk')
+            task_a, task_b = self._producer(CONVERSATIONS[0]), self._producer(CONVERSATIONS[1])
+            self._run(ws_a.close())
+            async def settle():
+                await asyncio.wait({task_a}, timeout=1)
+            self._run(settle())
+            self.assertTrue(task_a.done())
+            self.assertFalse(task_b.done())
+            self.assertEqual(task_a.cancelling(), 1)
+            self._receive_until(ws_b, lambda f: f['type'] == 'message_complete')
+            self.assertEqual(self._assistant_rows(CONVERSATIONS[1])[0]['content'], FULL_ASSISTANT_TEXT)
+        finally:
+            self._run(ws_a.close())
+            self._run(ws_b.close())
+
+    def test_old_socket_close_does_not_cancel_replacement_on_new_socket(self):
+        ws_a, ws_b = self._connect(), self._connect()
+        try:
+            self._send_message(ws_a, CONVERSATIONS[0], 'first')
+            self._receive_until(ws_a, lambda f: f['type'] == 'chunk')
+            self._send_message(ws_b, CONVERSATIONS[0], 'replacement')
+            stopped = self._receive_until(ws_a, lambda f: f['type'] == 'generation_stopped')
+            self.assertEqual(stopped[-1]['code'], 'superseded')
+            self._receive_until(ws_b, lambda f: f['type'] == 'chunk')
+            replacement = self._producer(CONVERSATIONS[0])
+            self._run(ws_a.close())
+            frames = self._receive_until(ws_b, lambda f: f['type'] == 'message_complete')
+            self.assertEqual(replacement.cancelling(), 0)
+            self.assertNotIn('generation_stopped', [f['type'] for f in frames])
+            self.assertEqual(self._assistant_rows(CONVERSATIONS[0])[0]['content'], FULL_ASSISTANT_TEXT)
+        finally:
+            self._run(ws_a.close())
+            self._run(ws_b.close())
 
 
 if __name__ == "__main__":

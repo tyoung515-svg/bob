@@ -1,5 +1,5 @@
 # ── Secrets / env ────────────────────────────────────────
-.secrets/
+.secrets/*
 !.secrets/*.example
 .env
 .env.local
@@ -144,3 +144,6 @@ tasks/2026-07-14-lks-v55-librarian/curve/*.log
 # 2.8G training logs + 59M driver state
 tasks/2026-07-25-moe-shrink-stage0/box-logs/
 tasks/2026-07-25-moe-shrink-stage0/driver/
+
+# Runtime image placed here for an installer build
+/dist-runtime*/

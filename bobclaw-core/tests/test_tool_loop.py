@@ -107,7 +107,7 @@ async def test_tool_loop_executes_tool_and_returns_final_answer(monkeypatch, _pa
 
 
 @pytest.mark.asyncio
-async def test_tool_loop_runs_on_glm_5_2(monkeypatch, _patch_event_log):
+async def test_tool_loop_runs_on_glm_5_3(monkeypatch, _patch_event_log):
     """GLM-5.2 is registered as tool-capable and can execute native tools."""
     final_text = "The current UTC time has been retrieved."
     fake_model = _FakeModel(
@@ -121,7 +121,7 @@ async def test_tool_loop_runs_on_glm_5_2(monkeypatch, _patch_event_log):
     result = await execute_node(
         {
             "task": "What time is it?",
-            "backend": "glm_5_2",
+            "backend": "glm_5_3",
             "face_id": "assistant-tools",
             "messages": [],
             "approval_response": None,
@@ -152,10 +152,72 @@ async def test_tool_loop_respects_iteration_cap(monkeypatch, _patch_event_log):
         }
     )
 
-    # The loop is hard-capped at 5 iterations.
+    # The loop is capped by config.TOOL_LOOP_MAX_ROUNDS (default 25), not forever.
+    from core.config import config
+
     assert fake_model.bound_model is not None
-    assert len(fake_model.bound_model.invocations) == 5
+    assert len(fake_model.bound_model.invocations) == config.TOOL_LOOP_MAX_ROUNDS
     assert result.get("error") is None
+    assert result['stopped_reason'] == 'tool_round_limit'
+    text = result['messages'][-1]['content']
+    assert 'before finishing' in text and '"continue"' in text
+    assert 'Last results' not in text and 'get_server_time:' not in text
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_budget_is_configurable(monkeypatch, _patch_event_log):
+    """The cap is config.TOOL_LOOP_MAX_ROUNDS, so a heavier face can get more rounds."""
+    from core.config import config
+
+    monkeypatch.setattr(config, "TOOL_LOOP_MAX_ROUNDS", 3)
+    fake_model = _FakeModel(
+        responses=[_tool_call_response("get_server_time", f"call_{i}") for i in range(10)]
+    )
+    monkeypatch.setattr("core.nodes.execute._build_tool_model", lambda _backend: fake_model)
+
+    await execute_node(
+        {
+            "task": "Keep checking the time",
+            "backend": "deepseek_v4_flash",
+            "face_id": "assistant-tools",
+            "messages": [],
+            "approval_response": None,
+        }
+    )
+
+    assert fake_model.bound_model is not None
+    assert len(fake_model.bound_model.invocations) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('progress', ['', 'I checked the available settings. The comparison is still in progress.'])
+async def test_round_stop_preserves_progress_and_resets_request_context(monkeypatch, _patch_event_log, progress):
+    from core.config import config
+    from core.execution.chat_records import request_id
+    observed = []
+
+    @tool
+    async def inspect() -> str:
+        """Inspect supplied settings."""
+        observed.append(request_id.get())
+        return '{"private_raw_result":"must not become the answer"}'
+
+    monkeypatch.setattr(config, 'TOOL_LOOP_MAX_ROUNDS', 1)
+    monkeypatch.setattr('core.nodes.execute.get_all_tools', AsyncMock(return_value=[inspect]))
+    fake = _FakeModel([AIMessage(content=progress, tool_calls=[{'name': 'inspect', 'args': {}, 'id': 'one'}])])
+    monkeypatch.setattr('core.nodes.execute._build_tool_model', lambda backend: fake)
+    frames = []
+    monkeypatch.setattr('core.nodes.execute._get_stream_writer', lambda: frames.append)
+    result = await execute_node(dict(task='Compare settings', backend='deepseek_v4_flash',
+        face_id='assistant-tools', messages=[], request_id='bounded-turn'))
+    text = result['messages'][-1]['content']
+    assert observed == ['bounded-turn'] and request_id.get() is None
+    assert result['stopped_reason'] == 'tool_round_limit'
+    assert 'before finishing' in text and '"continue"' in text
+    assert 'private_raw_result' not in text and 'Last results' not in text
+    if progress: assert text.count(progress) == 1
+    assert ''.join(f['content'] for f in frames if f['type'] == 'token') == text
+    assert len(fake.bound_model.invocations) == 1
 
 
 @pytest.mark.asyncio
@@ -226,12 +288,9 @@ async def test_check_tool_access_filters_disallowed_tools(monkeypatch, _patch_ev
 
 
 @pytest.mark.asyncio
-async def test_non_tool_face_path_unchanged(monkeypatch, _patch_event_log):
-    """A normal deepseek_v4_flash turn on a non-tool face stays byte-identical.
-
-    Uses ``reviewer`` (``allowed_tools: []``) — ``assistant`` now carries the
-    read-only tools and takes the tool loop on deepseek_v4_flash.
-    """
+async def test_plain_transport_path_unchanged(monkeypatch, _patch_event_log):
+    """A deliberately unbound plain transport keeps the same message contract."""
+    monkeypatch.setattr("core.nodes.execute._is_tool_enabled", lambda *args: False)
     captured_calls: list = []
 
     async def _fake_stream(messages, backend, model_override=None):
@@ -362,9 +421,143 @@ def test_get_tools_filters_by_allowed_list():
     assert len(get_tools(["not_a_tool"])) == 0
 
 
-def test_get_server_time_returns_iso_utc():
+def test_get_server_time_returns_iso_utc_with_weekday():
     tool = NATIVE_TOOLS["get_server_time"]
     result = tool.invoke({})
-    parsed = datetime.fromisoformat(result)
+    timestamp, weekday = result.rsplit(" (", 1)
+    parsed = datetime.fromisoformat(timestamp)
     assert parsed.tzinfo is not None
     assert parsed.tzinfo.utcoffset(parsed).total_seconds() == 0
+    assert weekday == parsed.strftime("%A") + ")"
+
+
+@pytest.mark.parametrize("timestamp,weekday", [
+    ("2026-11-16T00:00:00+00:00", "Monday"),
+    ("2026-11-15T23:59:59+00:00", "Sunday"),
+])
+def test_get_server_time_weekday_matches_utc_date(monkeypatch, timestamp, weekday):
+    class Clock:
+        @staticmethod
+        def now(tz):
+            assert tz.utcoffset(None).total_seconds() == 0
+            return datetime.fromisoformat(timestamp)
+
+    monkeypatch.setattr("core.tools.registry.datetime", Clock)
+    assert NATIVE_TOOLS["get_server_time"].invoke({}) == f"{timestamp} ({weekday})"
+
+
+# ─── S1: the turn's tool trail is published on the custom stream ─────────────
+
+@pytest.mark.asyncio
+async def test_tool_loop_emits_tool_activity_frames(monkeypatch, _patch_event_log):
+    """Each tool call publishes a start frame and a result frame, in order."""
+    frames: list[dict] = []
+    monkeypatch.setattr("core.nodes.execute._get_stream_writer", lambda: frames.append)
+    fake_model = _FakeModel(
+        responses=[
+            _tool_call_response("get_server_time", "call_1"),
+            _final_response("done"),
+        ]
+    )
+    monkeypatch.setattr("core.nodes.execute._build_tool_model", lambda _backend: fake_model)
+
+    result = await execute_node(
+        {
+            "task": "What time is it?",
+            "backend": "deepseek_v4_flash",
+            "face_id": "assistant-tools",
+            "messages": [],
+            "approval_response": None,
+        }
+    )
+
+    assert result.get("error") is None
+    trail = [f for f in frames if f.get("type") == "tool_activity"]
+    assert [f["phase"] for f in trail] == ["start", "result"], trail
+    assert trail[0]["tool"] == "get_server_time"
+    assert trail[1]["ok"] is True
+    assert isinstance(trail[1]["elapsed_ms"], int)
+    assert trail[1]["preview"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_tool_activity_writer_never_fails_the_turn(monkeypatch, _patch_event_log):
+    """The trail is best-effort: the operator's answer still arrives."""
+
+    def exploding_writer(_frame):
+        raise RuntimeError("stream writer is gone")
+
+    monkeypatch.setattr("core.nodes.execute._get_stream_writer", lambda: exploding_writer)
+    fake_model = _FakeModel(
+        responses=[
+            _tool_call_response("get_server_time", "call_1"),
+            _final_response("still answered"),
+        ]
+    )
+    monkeypatch.setattr("core.nodes.execute._build_tool_model", lambda _backend: fake_model)
+
+    result = await execute_node(
+        {
+            "task": "What time is it?",
+            "backend": "deepseek_v4_flash",
+            "face_id": "assistant-tools",
+            "messages": [],
+            "approval_response": None,
+        }
+    )
+
+    assert result.get("error") is None
+    assert result["messages"][-1]["content"] == "still answered"
+
+@pytest.mark.asyncio
+async def test_turn_loads_skill_then_calls_documented_tool(monkeypatch, tmp_path, _patch_event_log):
+    import json
+    import yaml
+    from core.faces.registry import FaceRegistry
+    from core.permissions import _FACE_TOOL_CACHE
+    profile = dict(id="skill-test", name="Test", system_prompt="Hello",
+                   allowed_tools=["skill_list", "skill_view", "get_server_time"],
+                   allowed_skills=["bob.clock"], skills=[dict(
+                       id="bob.clock", version=1, summary="Read clock.",
+                       required_tools=["get_server_time"], operations=["clock.read"],
+                       body="Call get_server_time to read the current UTC timestamp.")])
+    (tmp_path / "face.yaml").write_text(yaml.safe_dump(profile))
+    reg = FaceRegistry(tmp_path)
+    monkeypatch.setattr("core.faces.registry._DEFAULT_REGISTRY", reg)
+    _FACE_TOOL_CACHE.clear()
+    fake = _FakeModel([
+        AIMessage(content="", tool_calls=[dict(name="skill_view", id="load",
+                  args={"skill_id": "bob.clock", "version": 1})]),
+        _tool_call_response("get_server_time", "clock"),
+        _tool_call_response("runs.forged", "forged"),
+        _final_response("Done"),
+    ])
+    monkeypatch.setattr("core.nodes.execute._build_tool_model", lambda _: fake)
+    try:
+        result = await execute_node(dict(task="Read clock", backend="deepseek_v4_flash",
+                                   face_id="skill-test", messages=[], approval_response=None))
+        assert result.get("error") is None
+        messages = fake.bound_model.invocations[-1]
+        outputs = {m.tool_call_id: m.content for m in messages if isinstance(m, ToolMessage)}
+        assert json.loads(outputs["load"])["body"] == profile["skills"][0]["body"]
+        stamp, _, weekday = outputs["clock"].partition(" (")
+        assert datetime.fromisoformat(stamp).tzinfo is not None
+        assert weekday.endswith("day)")
+        assert "not available" in outputs["forged"]
+        initial = [m for m in fake.bound_model.invocations[0] if m.type == "system"]
+        assert "Read clock." in str(initial)
+        assert profile["skills"][0]["body"] not in str(initial)
+    finally:
+        _FACE_TOOL_CACHE.clear()
+
+
+def test_skill_tools_refuse_missing_context_and_extra_arguments():
+    from pydantic import ValidationError
+    from core.tools.registry import skill_list, skill_view
+    with pytest.raises(PermissionError):
+        skill_list.invoke({})
+    with pytest.raises(PermissionError):
+        skill_view.invoke({"skill_id": "bob.clock"})
+    with pytest.raises(ValidationError):
+        skill_view.invoke({"skill_id": "bob.clock", "op": "runs.forged"})
+    assert "pipe_call" in NATIVE_TOOLS

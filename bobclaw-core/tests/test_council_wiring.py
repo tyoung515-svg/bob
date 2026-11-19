@@ -485,14 +485,14 @@ def test_build_council_spec_derives_seats_from_roles():
         "roles": {
             "apex": [{"name": "", "backend": "claude_api", "escalation_chain": [], "role_prompt": "lead"}],
             "worker": [{"name": "", "backend": "deepseek_v4_flash",
-                        "escalation_chain": ["glm_5_2"], "role_prompt": "do"}],
+                        "escalation_chain": ["glm_5_3"], "role_prompt": "do"}],
         },
     }
     spec = _build_council_spec_from_profile(prof)
     assert set(spec["seats"]) == {"apex", "worker"}
     assert spec["profile"]["apex"]["backend"] == "claude_api"
     assert spec["profile"]["apex"]["role_prompt"] == "lead"
-    assert spec["profile"]["worker"]["fallback_chain"] == ["glm_5_2"]
+    assert spec["profile"]["worker"]["fallback_chain"] == ["glm_5_3"]
 
 
 # ─── face registry ───────────────────────────────────────────────────────────

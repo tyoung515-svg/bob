@@ -117,7 +117,7 @@ def test_make_semantic_verifier_holds_mocked():
     async def fake_send(messages, backend):
         return '{"verdict":"holds","reasons":["ok"]}'
 
-    verifier = make_semantic_verifier(actor_backend="glm_5_2", send=fake_send)
+    verifier = make_semantic_verifier(actor_backend="glm_5_3", send=fake_send)
     verdict = verifier(
         Subgoal("the file is saved", Postcondition(expect_changed=False)),
         Action(ActionKind.CLICK, target="save_btn"),
@@ -147,12 +147,12 @@ def test_make_semantic_verifier_failsafe_mocked():
     async def fake_send_garbage(messages, backend):
         return "not json at all"
 
-    v1 = make_semantic_verifier(actor_backend="glm_5_2", send=fake_send_violated)
+    v1 = make_semantic_verifier(actor_backend="glm_5_3", send=fake_send_violated)
     verdict1 = v1(Subgoal("x", Postcondition(expect_changed=False)),
                   Action(ActionKind.CLICK, target="save_btn"), ACCT_FRAME, ACCT_FRAME, None)
     assert verdict1.ok is False
 
-    v2 = make_semantic_verifier(actor_backend="glm_5_2", send=fake_send_garbage)
+    v2 = make_semantic_verifier(actor_backend="glm_5_3", send=fake_send_garbage)
     verdict2 = v2(Subgoal("x", Postcondition(expect_changed=False)),
                   Action(ActionKind.CLICK, target="save_btn"), ACCT_FRAME, ACCT_FRAME, None)
     assert verdict2.ok is False

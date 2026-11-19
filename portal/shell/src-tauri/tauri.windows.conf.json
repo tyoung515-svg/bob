@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../../dist-runtime/bob-runtime.tar.gz": "runtime/bob-runtime.tar.gz",
+      "../../../dist-runtime/bob-runtime.release.json": "runtime/bob-runtime.release.json"
+    }
+  }
+}

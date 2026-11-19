@@ -28,6 +28,9 @@ follow-up if big jobs land here.
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import asyncio
 import logging
 import re
@@ -95,7 +98,11 @@ def _make_workspace(state: dict) -> Path:
     ws = Path(root) / conv / f"{stamp}-{uuid.uuid4().hex[:8]}"
     if not is_path_within(str(ws), str(root)):
         raise ValueError(f"build workspace {ws} escapes sandbox root {root}")
-    ws.mkdir(parents=True, exist_ok=True)
+    if execution_mode() == "legacy":
+        ws.mkdir(parents=True, exist_ok=True)
+    else:
+        from core.worker.workspace import mkdir
+        mkdir(ws)
     return ws
 
 
@@ -132,6 +139,8 @@ async def plan_contracts_node(state: dict) -> dict:
     # resolved separately at fan-out (dispatch), so apex≠worker holds (Opus plans,
     # DeepSeek builds) without a per-turn single-backend collision.
     backend = teams.role_backend(state.get("team"), "apex") or state.get("backend") or "local"
+    from core.lane_config import require_backend
+    require_backend(backend)
     n = int(state.get("build_units") or _config.BUILD_DEFAULT_UNITS)
 
     raw = await _send_to_backend(
@@ -157,9 +166,14 @@ async def plan_contracts_node(state: dict) -> dict:
 
     scope = _build_scope(workspace)
     # write + the build-empty subprocess gate would block the event loop — offload.
-    await asyncio.to_thread(skeleton.write_app, workspace, units, {})
-    builds_empty = await asyncio.to_thread(skeleton.build_empty_ok, workspace)
-    collected = await asyncio.to_thread(skeleton.collect_tests, workspace)
+    if execution_mode() != 'legacy':
+        from core.build.jobs import scaffold, collect
+        await scaffold(workspace, units)
+        builds_empty, collected = await collect(workspace)
+    else:
+        await asyncio.to_thread(skeleton.write_app, workspace, units, {})
+        builds_empty = await asyncio.to_thread(skeleton.build_empty_ok, workspace)
+        collected = await asyncio.to_thread(skeleton.collect_tests, workspace)
     report = {
         "phase": "skeleton",
         "builds_empty": builds_empty,

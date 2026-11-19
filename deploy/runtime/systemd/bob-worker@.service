@@ -1,0 +1,48 @@
+[Unit]
+AssertPathExists=/etc/systemd/system/bob-worker@%i.service.d/identity.conf
+Description=Bob isolated worker (%i)
+Requires=bob-worker@%i.socket bob-worker-policy@%i.service bob-worker-journal@%i.socket
+After=bob-worker@%i.socket bob-worker-auth@%i.socket bob-worker-policy@%i.service bob-worker-journal@%i.socket
+BindsTo=bob-worker-policy@%i.service bob-worker@%i.socket bob-worker-auth@%i.socket
+
+[Service]
+# Fresh-lane provisioning installs exact User/Group and mount holes in a root-owned drop-in.
+User=bob-unprovisioned
+Group=bob-unprovisioned
+SupplementaryGroups=
+ExecStart=/opt/bob/.venv/bin/python -I -m core.worker.daemon /etc/bob/workers/%i.json
+WorkingDirectory=/
+Environment=LANG=C.UTF-8
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=~@mount @reboot @swap @raw-io @privileged @obsolete @debug
+# Denied syscalls fail with EPERM instead of SIGSYS, so probing tools (node, Chromium, codex) degrade cleanly.
+SystemCallErrorNumber=EPERM
+TemporaryFileSystem=/run:ro /var/lib/bob:ro
+InaccessiblePaths=-/mnt -/media -/boot -/var/lib/docker -/var/lib/containerd -/proc/sys/fs/binfmt_misc -/var/lib/bob-worker-journals
+TasksMax=256
+MemoryMax=2G
+CPUQuota=200%
+LimitNOFILE=1024
+KillMode=control-group
+TimeoutStopSec=5
+Restart=on-failure
+RestartSec=2

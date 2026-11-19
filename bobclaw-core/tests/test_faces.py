@@ -13,7 +13,7 @@ from core.faces.registry import Face, FaceRegistry, FaceSummary
 
 # Build registry once for all tests
 PROFILES_DIR = (
-    Path(__file__).parent.parent / "core" / "faces" / "profiles"
+    Path(__file__).resolve().parents[2] / "bobclaw-core" / "tests" / "fixtures" / "deployment" / "faces"
 )
 EXPECTED_FACE_IDS = {
     "builder-bob",
@@ -22,6 +22,7 @@ EXPECTED_FACE_IDS = {
     "council-lite",
     "council-max",
     "assistant",
+    "assistant-local",
     "assistant-actions",
     "assistant-tools",
     "assistant-tools-mcp",
@@ -47,6 +48,7 @@ EXPECTED_FACE_IDS = {
     "worker-gpt56-terra",
     "worker-gpt56-luna",
     "telegram-bob",
+    "discord-bob",
 }
 
 @pytest.fixture(scope="module")
@@ -57,7 +59,7 @@ def registry() -> FaceRegistry:
 # ─── Loading ──────────────────────────────────────────────────────────────────
 
 def test_all_profiles_loaded(registry: FaceRegistry):
-    assert len(registry) == 31
+    assert len(registry) == 33
 
 
 def test_all_expected_ids_present(registry: FaceRegistry):
@@ -178,15 +180,37 @@ def test_get_face_assistant(registry: FaceRegistry):
     face = registry.get_face("assistant")
     assert face.name == "General Assistant"
     assert face.ui_theme == "green"
-    # Read-only tools only — the everyday face can look, not mutate.
-    assert face.allowed_tools == ["get_server_time", "list_backends"]
+    # Lookup tools + the face-callable memory pair (F2, 2026-10-01):
+    # memory_save is the ONE deliberate mutation the everyday face can make.
+    # + conv_search / conv_expand: read back earlier messages of the same conversation (context mgmt).
+    # + web_fetch (2026-10-27): read-only https retrieval so a claim about a
+    #   release date or a model list can be checked against a primary source
+    #   instead of described from memory. No write, no credentials, allow-listed.
+    # + web_search (2026-10-28): find sources, then read them. Hosts a search
+    #   surfaces are fetchable for the rest of that turn only.
+    assert face.allowed_tools == [
+        "pipe_call",
+        "skill_list",
+        "skill_view",
+        "get_server_time",
+        "list_backends",
+        "memory_save",
+        "memory_recall",
+        "conv_search",
+        "conv_expand",
+        "web_search",
+        "web_fetch",
+        "ask_operator",
+    ]
 
 
 def test_get_face_assistant_tools(registry: FaceRegistry):
     face = registry.get_face("assistant-tools")
     assert face.name == "Assistant (Tools)"
     assert face.preferred_backend == "deepseek_v4_flash"
-    assert face.allowed_tools == ["get_server_time", "list_backends", "create_team"]
+    assert face.allowed_tools == [
+        "get_server_time", "list_backends", "create_team", "conv_search", "conv_expand",
+    ]
 
 
 def test_get_face_invalid_raises_key_error(registry: FaceRegistry):
@@ -203,7 +227,7 @@ def test_get_face_empty_string_raises_key_error(registry: FaceRegistry):
 
 def test_list_faces_returns_summaries(registry: FaceRegistry):
     summaries = registry.list_faces()
-    assert len(summaries) == 31
+    assert len(summaries) == 33
     for s in summaries:
         assert isinstance(s, FaceSummary)
         assert s.id
@@ -251,24 +275,19 @@ def test_system_prompt_invalid_id_raises(registry: FaceRegistry):
 
 # ─── get_allowed_tools() ──────────────────────────────────────────────────────
 
-def test_builder_bob_allowed_tools_empty(registry: FaceRegistry):
+def test_builder_bob_allowed_tools_guide_only(registry: FaceRegistry):
     tools = registry.get_allowed_tools("builder-bob")
-    assert tools == []
+    assert tools == ["bob_guide"]
 
 
-def test_reviewer_allowed_tools_empty(registry: FaceRegistry):
-    tools = registry.get_allowed_tools("reviewer")
-    assert tools == []
-
-
-def test_council_lite_allowed_tools_empty(registry: FaceRegistry):
+def test_council_lite_allowed_tools_guide_only(registry: FaceRegistry):
     tools = registry.get_allowed_tools("council-lite")
-    assert tools == []
+    assert tools == ["bob_guide"]
 
 
-def test_council_max_allowed_tools_empty(registry: FaceRegistry):
+def test_council_max_allowed_tools_guide_only(registry: FaceRegistry):
     tools = registry.get_allowed_tools("council-max")
-    assert tools == []
+    assert tools == ["bob_guide"]
 
 
 def test_get_allowed_tools_returns_copy(registry: FaceRegistry):
@@ -276,7 +295,7 @@ def test_get_allowed_tools_returns_copy(registry: FaceRegistry):
     tools = registry.get_allowed_tools("assistant-tools")
     tools.clear()
     assert registry.get_allowed_tools("assistant-tools") == [
-        "get_server_time", "list_backends", "create_team",
+        "get_server_time", "list_backends", "create_team", "conv_search", "conv_expand", "bob_guide",
     ]
 
 
@@ -468,7 +487,7 @@ def test_get_face_planner_gpt56_sol(registry):
 
     assert face.role == "apex"
     assert face.preferred_backend == "codex_code"
-    assert face.codex_posture["model"] == "gpt-5.6-sol"
+    assert face.codex_posture["model"] == "gpt-6.1-sol"
 
 
 def test_get_face_worker_gpt56_terra(registry):
@@ -489,7 +508,14 @@ def test_get_face_worker_gpt56_luna(registry):
 
 # ─── Teammate marker (hermes-iface-2 wave 2): bot + is_teammate ──────────────
 
-_BOT_FACE_IDS = {"assistant", "researcher", "reviewer", "planner-claude", "telegram-bob"}
+_BOT_FACE_IDS = {
+    "assistant",
+    "researcher",
+    "reviewer",
+    "planner-claude",
+    "telegram-bob",
+    "discord-bob",
+}
 
 
 def test_bot_field_loads_from_yaml(registry: FaceRegistry):
@@ -529,3 +555,86 @@ def test_teammate_faces_roster_filter(registry: FaceRegistry):
     assert roster_ids == {f.id for f in registry.all_faces() if f.is_teammate}
     # an unmarked, unslotted face stays off the roster
     assert "builder-bob" not in roster_ids
+
+# S5 slice 1: embedded, permission-bound procedures.
+def _skill_profile(tmp_path, **changes):
+    import yaml
+    record = dict(id="bob.clock", version=1, summary="Read the clock.",
+                  required_tools=["get_server_time"], operations=["clock.read"],
+                  body="Call get_server_time; preserve the returned timestamp.")
+    record.update(changes)
+    profile = dict(id="test", name="Test", system_prompt="Hello",
+                   allowed_tools=["get_server_time"], allowed_skills=["bob.clock"],
+                   skills=[record])
+    (tmp_path / "test.yaml").write_text(yaml.safe_dump(profile))
+    return profile
+
+
+def test_skill_discovery_and_loading(tmp_path):
+    import hashlib
+    profile = _skill_profile(tmp_path)
+    reg = FaceRegistry(tmp_path)
+    assert reg.list_skills("test") == [dict(skill_id="bob.clock", version=1,
+                                           summary="Read the clock.")]
+    assert profile["skills"][0]["body"] not in reg.get_system_prompt("test")
+    loaded = reg.load_skill("test", "bob.clock", 1)
+    assert loaded["sha256"] == hashlib.sha256(loaded["body"].encode()).hexdigest()
+    assert loaded["operations"] == ["clock.read"]
+    with pytest.raises(ValueError):
+        reg.load_skill("test", "bob.clock", 2)
+    with pytest.raises(KeyError):
+        reg.list_skills("unknown")
+
+
+@pytest.mark.parametrize("changes", [
+    {"id": "../clock"}, {"id": "/tmp/clock"}, {"version": 2},
+    {"version": True}, {"unexpected": "field"}, {"body": "é" * 16385},
+    {"body": " "}, {"required_tools": "get_server_time"},
+    {"operations": ["../escape"]}, {"summary": " "},
+])
+def test_skill_validation(tmp_path, changes):
+    _skill_profile(tmp_path, **changes)
+    with pytest.raises(ValueError):
+        FaceRegistry(tmp_path)
+
+
+def test_skill_forbidden_and_missing_dependencies(tmp_path):
+    _skill_profile(tmp_path)
+    reg = FaceRegistry(tmp_path)
+    face = reg.get_face("test")
+    face.allowed_skills = []
+    with pytest.raises(PermissionError):
+        reg.load_skill("test", "bob.clock")
+    face.allowed_skills = ["bob.clock"]
+    face.allowed_tools = []
+    with pytest.raises(PermissionError):
+        reg.load_skill("test", "bob.clock")
+    face.allowed_tools = ["unknown_tool"]
+    face.skills[0].required_tools = ["unknown_tool"]
+    with pytest.raises(PermissionError):
+        reg.load_skill("test", "bob.clock")
+
+
+def test_duplicate_skills_and_unknown_face_fields(tmp_path):
+    profile = _skill_profile(tmp_path)
+    with pytest.raises(ValueError):
+        Face.model_validate({**profile, "skills": profile["skills"] * 2})
+    with pytest.raises(ValueError):
+        Face.model_validate({**profile, "surprise": True})
+    with pytest.raises(ValueError):
+        Face.model_validate({**profile, "skills": [{}]})
+    (tmp_path / "test.yaml").write_text("id: test\nid: other\n")
+    with pytest.raises(ValueError, match="Duplicate YAML key"):
+        FaceRegistry(tmp_path)
+
+
+def test_assistant_pipe_skills_only_run_results_loads(registry):
+    summaries = registry.list_skills("assistant")
+    assert len(summaries) == 6
+    assert all(set(s) == {"skill_id", "version", "summary"} for s in summaries)
+    for item in summaries:
+        if item["skill_id"] == "bob.run-results":
+            assert registry.load_skill("assistant", item["skill_id"])["ok"]
+        else:
+            with pytest.raises(PermissionError, match="required pipe operation"):
+                registry.load_skill("assistant", item["skill_id"])

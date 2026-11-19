@@ -298,12 +298,12 @@ async def test_run_critic_stands_in_when_primary_hard_fails():
     from core.nodes.critic import run_critic
 
     async def _by_backend(_messages, backend):
-        if backend == "glm_5_2":
+        if backend == "glm_5_3":
             raise RuntimeError("Z.AI GLM balance/resource exhausted (HTTP 429, code 1113)")
         return '{"verdict": "reject", "reasons": ["out of scope"]}'
 
     with patch("core.nodes.critic._send_to_backend", _by_backend):
-        verdict, reasons = await run_critic("scope", "worker output", critic_backend="glm_5_2")
+        verdict, reasons = await run_critic("scope", "worker output", critic_backend="glm_5_3")
 
     assert verdict == "reject"
     assert reasons[0] == "critic_standin=deepseek_v4_flash"
@@ -322,7 +322,7 @@ async def test_run_critic_no_standin_when_primary_succeeds():
         return '{"verdict": "approve", "reasons": []}'
 
     with patch("core.nodes.critic._send_to_backend", _by_backend):
-        verdict, reasons = await run_critic("scope", "wo", critic_backend="glm_5_2")
+        verdict, reasons = await run_critic("scope", "wo", critic_backend="glm_5_3")
 
     assert verdict == "approve"
-    assert calls == ["glm_5_2"]            # primary succeeded → stand-in never called
+    assert calls == ["glm_5_3"]            # primary succeeded → stand-in never called

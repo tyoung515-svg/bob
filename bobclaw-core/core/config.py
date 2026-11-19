@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from core.paths import DEFAULT_MEMORY_SQLITE_PATH
+from core.lane_config import configured_mode, get_lane, transport_defaults, provider_setup, BACKEND_FIELDS, CLI_FIELDS
 
 # Load env: check .secrets first, then local
 _SECURE_ENV = Path(__file__).parent.parent.parent / ".secrets" / "bobclaw.env"
@@ -16,11 +18,15 @@ _LOCAL_ENV = Path(__file__).parent.parent / ".env"
 # conftest os.environ.setdefault) wins over the .secrets file. This keeps .secrets
 # from leaking into pytest and breaking baselines, and lets launcher env take
 # precedence at runtime. (Matches bobclaw-claude-pipeline/config.py.)
-if _SECURE_ENV.exists():
+if not configured_mode() and _SECURE_ENV.exists():
     load_dotenv(_SECURE_ENV, override=False)
-else:
+elif not configured_mode():
     load_dotenv(_LOCAL_ENV, override=False)
 
+
+from core.roster import get_roster
+
+_roster_defaults = get_roster().defaults
 
 def _default_cli_scratch_root(name: str) -> str:
     """Platform-native default scratch root for a CLI backend's spawn dirs.
@@ -41,14 +47,18 @@ class BoBClawConfig:
 
     # ── Server ────────────────────────────────────────────
     PORT: int = int(os.getenv("BOBCLAW_CORE_PORT", "7825"))
+    # How many model/tool rounds one turn may take before it must answer. Bounded
+    # by design; raise it for a heavier face via BOB_TOOL_LOOP_MAX_ROUNDS.
+    TOOL_LOOP_MAX_ROUNDS: int = max(1, int(os.getenv("BOB_TOOL_LOOP_MAX_ROUNDS", "25")))
+    MEMORY_CONTEXT_MAX_CHARS: int = max(256, int(os.getenv("BOB_MEMORY_CONTEXT_MAX_CHARS", "2000")))
     # Loopback-only by default (R1 network containment). Only the authenticated
     # gateway is ever intentionally exposed, behind the TLS/SSH boundary in
-    # docs/SECURITY.md. Override with BOBCLAW_CORE_HOST=0.0.0.0 to bind all interfaces.
+    # SECURITY.md. Override with BOBCLAW_CORE_HOST=0.0.0.0 to bind all interfaces.
     HOST: str = os.getenv("BOBCLAW_CORE_HOST", "127.0.0.1")
 
     # ── Database ──────────────────────────────────────────
     POSTGRES_URL: str = os.getenv(
-        "POSTGRES_URL", "postgresql://bobclaw:bobclaw@localhost:5432/bobclaw"
+        "POSTGRES_URL", ""
     )
 
     # ── Local Model Backends ──────────────────────────────
@@ -77,6 +87,13 @@ class BoBClawConfig:
     KIMI_BASE_URL: str = os.getenv("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
     KIMI_MODEL: str = os.getenv("KIMI_MODEL", "kimi-k2.7-code")
 
+    # Alibaba Model Studio international endpoint (owner decision 2026-11-16; a
+    # mainland endpoint may be added later). Endpoint and preset model are set
+    # only in provider-setup.json.
+    DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
+    QWEN_BASE_URL: str = os.getenv("QWEN_BASE_URL", transport_defaults()["QWEN_BASE_URL"])
+    QWEN_MODEL: str = os.getenv("QWEN_MODEL", provider_setup()["qwen"]["model"])
+
     # ── DeepSeek (cloud, OpenAI-compat) ──────────────────
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -90,7 +107,28 @@ class BoBClawConfig:
     # `api/coding/paas/v4` is the GLM Coding Plan subscription. Default = coding (our plan).
     ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "")
     ZAI_BASE_URL: str = os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4")
-    ZAI_MODEL: str = os.getenv("ZAI_MODEL", "glm-5.2")
+    ZAI_MODEL: str = os.getenv("ZAI_MODEL", "glm-5.3")
+
+    # ── OpenRouter (cloud aggregator, OpenAI-compat) ──────
+    # The `glm_5_3_flash_or` backend serves Z.AI GLM 5.3 Flash THROUGH OpenRouter.
+    # Why: the Z.AI coding-plan surface (`glm_5_3`) is serial-1 ([[glm-single-lane-only]]),
+    # so a second GLM lane that needs parallel calls has no seat there. OpenRouter is
+    # OpenAI-compatible, bills PAYG, and carries the same weights — a separate vendor
+    # GATE, not a separate model family (decorrelation still treats it as ``glm``).
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    OPENROUTER_GLM_FLASH_MODEL: str = os.getenv(
+        "OPENROUTER_GLM_FLASH_MODEL", "z-ai/glm-5.3-flash"
+    )
+
+    # ── Entitlement gate (2026-10-21) ─────────────────────
+    # Backends whose credentials are still present but whose paid entitlement
+    # has LAPSED. A key in the env is wiring, not availability: without this
+    # list the catalog advertises a dead seat (Kimi after the subscription was
+    # cancelled) and callers spend a turn to discover the 401/402. Comma-
+    # separated backend names; empty default keeps every other deployment's
+    # existing key-presence behaviour.
+    BOB_UNAVAILABLE_BACKENDS: str = os.getenv("BOB_UNAVAILABLE_BACKENDS", "")
 
     # ── Qwen research floor (LOCAL llama.cpp, OpenAI-compat, no auth) — MS2-R0 ──
     # Self-hostable agentic research head (Qwen 35B-A3B Q4 expert-split, DESIGN-MS-D2 §3/OD#1).
@@ -379,6 +417,7 @@ class BoBClawConfig:
     )
 
     # ── Auth ──────────────────────────────────────────────
+    GATEWAY_URL: str = os.getenv("BOBCLAW_GATEWAY_URL", "http://127.0.0.1:7836")
     BOBCLAW_SECRET: str = os.getenv("BOBCLAW_SECRET", "")
 
     # ── Logging ───────────────────────────────────────────
@@ -420,9 +459,7 @@ class BoBClawConfig:
     MEMORY_T0_RECALL_ENABLED: bool = (
         os.getenv("MEMORY_T0_RECALL_ENABLED", "false").strip().lower() == "true"
     )
-    MEMORY_SQLITE_PATH: str = os.getenv(
-        "MEMORY_SQLITE_PATH", ".memory/bobclaw_memory.db"
-    )
+    MEMORY_SQLITE_PATH: str = os.getenv("MEMORY_SQLITE_PATH", str(DEFAULT_MEMORY_SQLITE_PATH))
     # Default to BoB's OWN Qdrant (:6353, the compose host port + what the launchers
     # export), NOT the shared LKS Qdrant (:6333). A non-empty default means validate()
     # can't catch a missing value, so the default itself must be fail-safe: enabling
@@ -476,12 +513,12 @@ class BoBClawConfig:
     # ── Gate Router (Phase 2) ─────────────────────────────
     # Default senior/auditor backend used when a scoped job's Gate decision is
     # ambiguous ("gate") and no per-call critic_backend override is provided.
-    GATE_CRITIC_BACKEND: str = os.getenv("GATE_CRITIC_BACKEND", "minimax")
+    GATE_CRITIC_BACKEND: str = os.getenv("GATE_CRITIC_BACKEND", _roster_defaults.gate_critic_backend)
 
     # Stand-in critic: when the primary critic backend HARD-fails (timeout / HTTP error
     # such as Z.AI GLM's balance-exhausted 429), `run_critic` retries once on this healthy
     # backend so the fleet's critique is not silently lost. Empty string disables fallback.
-    CRITIC_FALLBACK_BACKEND: str = os.getenv("CRITIC_FALLBACK_BACKEND", "deepseek_v4_flash")
+    CRITIC_FALLBACK_BACKEND: str = os.getenv("CRITIC_FALLBACK_BACKEND", _roster_defaults.critic_fallback_backend)
 
     # (COUNCIL_MODE_DEFAULT lives at module level with the other COUNCIL_* constants.)
 
@@ -530,9 +567,41 @@ class BoBClawConfig:
 
 config = BoBClawConfig()
 
+if configured_mode():
+    _lane = get_lane()
+    _transport_defaults = transport_defaults()
+    # Enrollment and execution share lane-owned values. Shared keys and model
+    # defaults cannot escape through adapters in this mode.
+    for _attr in vars(BoBClawConfig):
+        if (_attr.endswith(("_API_KEY", "_MODEL", "_BASE_URL")) or
+                _attr in {"OLLAMA_URL", "LMSTUDIO_URL", "BOB_UNAVAILABLE_BACKENDS",
+                          "GATE_CRITIC_BACKEND", "CRITIC_FALLBACK_BACKEND"}):
+            setattr(config, _attr, _lane.values.get(_attr, _transport_defaults.get(_attr, "")))
+            setattr(BoBClawConfig, _attr, getattr(config, _attr))
+    for _home_key, _home_default, _, _binary_key, _ in CLI_FIELDS.values():
+        _home = _lane.owned_path(_lane.values.get(_home_key) or _home_default)
+        setattr(config, _home_key, str(_home) if _home else "")
+        setattr(config, _binary_key, _lane.values.get(_binary_key, ""))
+        setattr(BoBClawConfig, _home_key, getattr(config, _home_key))
+        setattr(BoBClawConfig, _binary_key, getattr(config, _binary_key))
+    config.AGY_SETTINGS_PATH = str(Path(config.AGY_HOME) / ".gemini/antigravity-cli/settings.json")
+    BoBClawConfig.AGY_SETTINGS_PATH = config.AGY_SETTINGS_PATH
+    for _attr in {model for _, model in BACKEND_FIELDS.values()}:
+        setattr(config, _attr, _lane.values.get(_attr, ""))
+        setattr(BoBClawConfig, _attr, getattr(config, _attr))
+
 # ── Fan-out constants (module-level, not env-backed) ──────────────────────────
 _FANOUT_THRESHOLD: int = 5  # Min subtask count to trigger Send-based fan-out
                             # Separate from _BULK_DISPATCH_THRESHOLD; do not consolidate.
+
+# ── Chat single-pass faces ────────────────────────────────────────────────────
+# A conversational face answers in ONE model call. Decomposition and fan-out stay
+# reserved for explicit research/build/council turns and for dispatched runs, so a
+# chat reply is a reply and not five concatenated worker sections that the
+# operator has to read as a plan (verified live 2026-10-27: a "send out a research
+# team" chat turn fanned out to five workers and returned '### Subtask 1..5' with
+# no synthesis step on that path). Pin a non-chat face to keep the old behaviour.
+CHAT_SINGLE_PASS_FACES: frozenset[str] = frozenset({"assistant", "planner"})
 
 # -- Hierarchical-managers (2-level agent tree) --
 # manager_dispatch splits N subtasks into K sections; each section is one
@@ -623,17 +692,21 @@ COUNCIL_SYNTH_TIMEOUT_SECONDS: int = int(os.getenv("COUNCIL_SYNTH_TIMEOUT_SECOND
 MAX_WORKER_USD_BY_BACKEND: dict[str, float] = {
     "claude_api":     0.50,
     "claude_code":    0.00,  # subscription CLI (planning tier) — not metered per-call
+    "claude_alternate":    0.10,  # second PC / separate subscription — OPT-IN only, never primary account quota
     "agy_code":       0.00,  # agy subscription CLI (Gemini Second Voice) — not metered per-call
     "codex_code":     0.00,  # codex CLI via local LiteLLM proxy (glm/ds/qwen) — not metered per-call
+    "openai_codex":   0.00,  # ChatGPT subscription, same cost treatment as codex_code
     "kimi_platform":  0.10,
     "kimi_code":      0.05,
+    "qwen_cloud":     0.10,  # provisional pessimistic worker budget, not a quoted tariff
     "kimi_cli":       0.05,  # kimi CLI (membership) — flat-rate; $ cap is informational
     "pi_code":        0.05,  # pi agentic CLI (GLM/DeepSeek/MiniMax) — GLM flat, DS/MiniMax metered; pessimistic
     "opencode_serve": 0.00,
     "local":          0.00,
     "deepseek_v4_flash": 0.005,
     "deepseek_v4":    0.02,  # DS Pro — senior/audit tier (pricier than flash)
-    "glm_5_2":        0.01,
+    "glm_5_3":        0.01,
+    "glm_5_3_flash_or": 0.005,  # GLM 5.3 Flash via OpenRouter (PAYG) — parallel-safe GLM lane
     "minimax":        0.05,
     "gemini_flash": 0.02,
     "gemini_pro": 0.10,
@@ -652,12 +725,15 @@ KNOWN_BACKENDS: frozenset[str] = frozenset(MAX_WORKER_USD_BY_BACKEND.keys())
 # _pin_escalation as the actual backstop.
 MAX_FANOUT_WIDTH_BY_BACKEND: dict[str, int] = {
     "kimi_code":     10,
+    "qwen_cloud":     1,  # conservative until Qwen rate limits are measured on a real key
     "kimi_cli":      10,  # shares the Allegretto 30-concurrent/account hard cap
     "kimi_platform": 10,
     "claude_api":    20,
     "claude_code":    1,  # planning tier — single heavy spawn, never a fan-out worker
+    "claude_alternate":    1,  # one heavy spawn per host (separate subscription) — never a fan-out worker
     "agy_code":       8,  # planner is single-spawn but worker-agy IS a fan-out worker
     "codex_code":     8,  # worker-codex IS a fan-out worker (GPT-native via `-p gpt`)
+    "openai_codex":   8,
     "pi_code":        8,  # agentic worker harness. NOTE: GLM-via-pi rides the Z.AI coding
                           # plan's serial-1 ceiling — a GLM roster must keep pi_code at width 1
                           # (per-provider cap is a roster concern; DeepSeek/MiniMax can fan wider).
@@ -665,9 +741,11 @@ MAX_FANOUT_WIDTH_BY_BACKEND: dict[str, int] = {
     "local":          1,
     "deepseek_v4_flash": 20,
     "deepseek_v4":   10,  # DS Pro — senior/audit tier, not fanned as wide as flash
-    "glm_5_2":        1,  # SINGLE-LANE-ONLY ([[glm-single-lane-only]]): Z.AI coding plan caps
+    "glm_5_3":        1,  # SINGLE-LANE-ONLY ([[glm-single-lane-only]]): Z.AI coding plan caps
                           # concurrency ~1; combined with the hard cap below, any GLM fan-out
                           # fails LOUD instead of silently 429-ing. GLM = single serial calls only.
+    "glm_5_3_flash_or": 8,  # OpenRouter lane for the SAME model: rate-limit-bounded, not
+                            # account-serial, so this one MAY fan out (8 is conservative).
     "minimax":        10,
     "gemini_flash": 20,
     "gemini_pro": 10,
@@ -688,11 +766,11 @@ MAX_FANOUT_WIDTH_GLOBAL: int = 100
 # build would fan N concurrent workers at a width-1 backend and overrun it.
 HARD_CONCURRENCY_CAP_BACKENDS: frozenset[str] = frozenset(
     {"kimi_code", "kimi_cli", "kimi_platform", "local", "opencode_serve", "agy_code",
-     "codex_code", "pi_code",
-     # glm_5_2: Z.AI coding plan caps concurrency ~1 ([[glm-single-lane-only]]). Cap 1 + hard
+     "codex_code", "openai_codex", "pi_code",
+     # glm_5_3: Z.AI coding plan caps concurrency ~1 ([[glm-single-lane-only]]). Cap 1 + hard
      # ⇒ any GLM fan-out fails LOUD (rosters keep GLM single-lane; the FU1 cross-flight mutex
      # then gives true serial-1). Removed from fan-out critic/worker spots in core/teams.py.
-     "glm_5_2"}
+     "glm_5_3"}
 )
 
 # Per-backend env override pattern: BOBCLAW_MAX_FANOUT_WIDTH_<BACKEND>
@@ -739,22 +817,7 @@ COUNCIL_MODE_DEFAULT: str = os.getenv("COUNCIL_MODE_DEFAULT", "fusion")
 # JSON shaped {posture: {"backend": ..., "fallback_chain": [...]}} merged
 # per-seat over these defaults — instead of patching this table downstream.
 _COUNCIL_SEAT_DEFAULTS: dict[str, dict] = {
-    "framer": {
-        "backend": "claude_code",
-        "fallback_chain": ["deepseek_v4_flash", "minimax"],
-    },
-    "stress": {
-        "backend": "agy_code",
-        "fallback_chain": ["gemini_flash", "deepseek_v4_flash"],
-    },
-    "wildcard": {
-        "backend": "deepseek_v4_flash",
-        "fallback_chain": ["kimi_code", "minimax"],
-    },
-    "synth": {
-        "backend": "minimax",
-        "fallback_chain": ["claude_code", "deepseek_v4_flash"],
-    },
+    name: seat.model_dump() for name, seat in _roster_defaults.council_seat_backends.items()
 }
 
 
@@ -788,13 +851,14 @@ def _seat_backends_with_env_override(defaults: dict[str, dict], raw: str) -> dic
 
 
 COUNCIL_SEAT_BACKENDS: dict[str, dict] = _seat_backends_with_env_override(
-    _COUNCIL_SEAT_DEFAULTS, os.getenv("COUNCIL_SEAT_BACKENDS", "")
+    _COUNCIL_SEAT_DEFAULTS, (get_lane().values.get("COUNCIL_SEAT_BACKENDS", "") if configured_mode()
+                           else os.getenv("COUNCIL_SEAT_BACKENDS", ""))
 )
 
 # Default fusion panel: the three core voices, blind in parallel. synth is the
 # reconciler (not a panel seat) — it runs after the panel in synthesize_node.
-COUNCIL_DEFAULT_SEATS: list[str] = ["framer", "stress", "wildcard"]
-COUNCIL_DEFAULT_SYNTH_POSTURE: str = "synth"
+COUNCIL_DEFAULT_SEATS: list[str] = list(_roster_defaults.council_default_seats)
+COUNCIL_DEFAULT_SYNTH_POSTURE: str = _roster_defaults.council_default_synth_posture
 
 # ── CoCouncil P2 — pre-close grounding gate + grounded restart + budgets ──────
 # (Design §A2/A3/A4.) The grounding gate runs on the fusion close path: before
@@ -812,7 +876,8 @@ COUNCIL_GROUND_CADENCE: str = os.getenv("COUNCIL_GROUND_CADENCE", "preclose")
 # Grounding tier: claude_code ONLY for P2 (connected, subscription, has WebSearch;
 # the Gemini second-verifier is deferred). Drives which verifier the grounding
 # node spawns — currently only "claude_code" is wired.
-COUNCIL_GROUND_BACKEND: str = os.getenv("COUNCIL_GROUND_BACKEND", "claude_code")
+COUNCIL_GROUND_BACKEND: str = (get_lane().values.get("COUNCIL_GROUND_BACKEND", "") if configured_mode()
+                             else os.getenv("COUNCIL_GROUND_BACKEND", _roster_defaults.council_ground_backend))
 # Restart budget (§A3): grounded restarts re-seed round 1 but burn a SEPARATE
 # budget so drift→restart→drift→restart can't spin under the round cap.
 COUNCIL_RESTART_BUDGET: int = int(os.getenv("COUNCIL_RESTART_BUDGET", "2"))

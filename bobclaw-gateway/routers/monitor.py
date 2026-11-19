@@ -21,7 +21,7 @@ import logging
 from aiohttp import WSMsgType, web
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
-from auth import authenticate_ws
+from auth import authenticate_ws, CredentialWebSocketResponse
 from redis_client import get_redis
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ async def monitor_socket(request: web.Request) -> web.StreamResponse:
     message ``{"type": "auth", "token": "..."}``. Read-only: the server never acts on
     client frames (a client may ping / close). ``?flight_id=`` optionally filters.
     """
-    ws = web.WebSocketResponse(heartbeat=30)
+    ws = CredentialWebSocketResponse(heartbeat=30)
     await ws.prepare(request)
 
     payload, _ = await authenticate_ws(request, ws, allow_agent=False)

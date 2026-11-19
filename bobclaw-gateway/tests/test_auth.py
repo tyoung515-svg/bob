@@ -263,15 +263,37 @@ class TestTOTPReplayProtection(unittest.TestCase):
         self.assertEqual(self._login(code), 401)
 
     def test_next_timestep_code_accepted(self):
+        """A code for the *next* step is accepted (clock-drift tolerance)."""
+        import time as time_mod
+
+        import pyotp
+
+        from config import config
+
+        code1 = self._valid_code()
+        self.assertEqual(self._login(code1), 200)
+
+        # Build the next step's code explicitly: pyotp's .now() reads
+        # datetime.now(), so mocking time.time() does NOT change it (the earlier
+        # form of this test silently resubmitted code1 and passed only because
+        # replay tracking keyed on the current clock rather than the code's step).
+        next_step_start = (int(time_mod.time()) // 30 + 1) * 30
+        code2 = pyotp.TOTP(config.TOTP_SECRET).at(next_step_start)
+        self.assertNotEqual(code2, code1)
+        self.assertEqual(self._login(code2), 200)
+
+    def test_spent_code_stays_rejected_in_the_next_window(self):
+        """A used code must not become replayable via the tolerance window."""
         import time as time_mod
         from unittest import mock
 
         code1 = self._valid_code()
         self.assertEqual(self._login(code1), 200)
 
+        # One step later the server is inside the tolerance window for code1,
+        # but that code has already been spent and must still be refused.
         with mock.patch.object(time_mod, "time", return_value=time_mod.time() + 31):
-            code2 = self._valid_code()
-            self.assertEqual(self._login(code2), 200)
+            self.assertEqual(self._login(code1), 401)
 
     def test_persistence_across_connections(self):
         code1 = self._valid_code()

@@ -20,7 +20,7 @@ from core import graph_topology as gt
 from core.faces.registry import FaceRegistry
 from core.graph import build_graph
 
-PROFILES_DIR = Path(__file__).parent.parent / "core" / "faces" / "profiles"
+PROFILES_DIR = Path(__file__).resolve().parents[2] / "bobclaw-core" / "tests" / "fixtures" / "deployment" / "faces"
 
 
 @pytest.fixture

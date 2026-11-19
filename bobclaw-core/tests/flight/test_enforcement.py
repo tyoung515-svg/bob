@@ -63,7 +63,7 @@ async def test_flag_off_is_byte_identical(monkeypatch):
     kv = _FakeKV()
     enf.set_provider_slots(_slots(kv))
     spend_mod.set_current_flight("proj-x")
-    assert await enf.acquire_or_escalate("glm_5_2") == ("glm_5_2", None)
+    assert await enf.acquire_or_escalate("glm_5_3") == ("glm_5_3", None)
     assert await enf.acquire_or_escalate("deepseek_v4_flash") == ("deepseek_v4_flash", None)
     assert kv.d == {}  # slot never touched
 
@@ -82,10 +82,10 @@ async def test_flag_on_acquires_and_releases(monkeypatch):
     kv = _FakeKV()
     enf.set_provider_slots(_slots(kv))
     spend_mod.set_current_flight(None)  # ⇒ "ambient", priority 0
-    run_backend, holder = await enf.acquire_or_escalate("glm_5_2")
-    assert run_backend == "glm_5_2" and holder == "ambient"
+    run_backend, holder = await enf.acquire_or_escalate("glm_5_3")
+    assert run_backend == "glm_5_3" and holder == "ambient"
     assert kv.d  # slot held
-    await enf.release("glm_5_2", holder)
+    await enf.release("glm_5_3", holder)
     assert kv.d == {}  # slot freed
 
 
@@ -96,10 +96,10 @@ async def test_contention_escalates(monkeypatch):
     slots = _slots(kv)
     enf.set_provider_slots(slots)
     # another flight already holds the serial slot at priority 0
-    assert await slots.try_acquire("glm_5_2", "other-flight", 0) is True
+    assert await slots.try_acquire("glm_5_3", "other-flight", 0) is True
     spend_mod.set_current_flight(None)  # ambient, priority 0 ⇒ cannot preempt
-    run_backend, holder = await enf.acquire_or_escalate("glm_5_2")
-    assert run_backend == enf.SERIAL_ESCALATION["glm_5_2"]  # deepseek_v4_flash
+    run_backend, holder = await enf.acquire_or_escalate("glm_5_3")
+    assert run_backend == enf.SERIAL_ESCALATION["glm_5_3"]  # deepseek_v4_flash
     assert holder is None  # nothing to release
 
 
@@ -112,10 +112,10 @@ async def test_higher_priority_named_flight_preempts(monkeypatch, tmp_path):
     kv = _FakeKV()
     slots = _slots(kv)
     enf.set_provider_slots(slots)
-    assert await slots.try_acquire("glm_5_2", "low-flight", 0) is True  # low holder
+    assert await slots.try_acquire("glm_5_3", "low-flight", 0) is True  # low holder
     spend_mod.set_current_flight("proj-hi")  # priority 5 from the store
-    run_backend, holder = await enf.acquire_or_escalate("glm_5_2")
-    assert run_backend == "glm_5_2" and holder == "proj-hi"  # preempted, not escalated
+    run_backend, holder = await enf.acquire_or_escalate("glm_5_3")
+    assert run_backend == "glm_5_3" and holder == "proj-hi"  # preempted, not escalated
     flight_service._reset_for_tests()
 
 
@@ -126,8 +126,8 @@ async def test_fail_open_on_dead_kv(monkeypatch):
     spend_mod.set_current_flight(None)  # ambient ⇒ no store touch; isolates the dead KV
     # ProviderSlots.try_acquire is itself fail-open (True on Redis error) ⇒ we still run
     # glm, just effectively unslotted; either way the turn must proceed, never raise/block.
-    run_backend, holder = await enf.acquire_or_escalate("glm_5_2")
-    assert run_backend == "glm_5_2"  # never blocked / never escalated on infra failure
+    run_backend, holder = await enf.acquire_or_escalate("glm_5_3")
+    assert run_backend == "glm_5_3"  # never blocked / never escalated on infra failure
 
 
 # ── F1.3 pause-with-teeth (D2) ────────────────────────────────────────────────

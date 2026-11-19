@@ -122,7 +122,7 @@ async def test_mini_manager_fans_workers_and_synthesizes():
             "section_subtasks": ["task A", "task B", "task C"],
             "worker_backend": "deepseek_v4_flash",
             "apex_backend": "kimi_code",
-            "critic_backend": "glm_5_2",
+            "critic_backend": "glm_5_3",
         })
     entry = out["section_results"][0]
     assert entry["idx"] == 2

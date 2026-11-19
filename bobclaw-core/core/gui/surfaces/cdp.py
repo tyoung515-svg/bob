@@ -27,6 +27,9 @@ Usage::
 
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import base64
 import json
 import os
@@ -246,12 +249,20 @@ def _terminate_process(proc: subprocess.Popen) -> None:
         pass
     if sys.platform == "win32":
         try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 f"Stop-Process -Id {proc.pid} -Force -ErrorAction SilentlyContinue"],
-                capture_output=True,
-                timeout=10.0,
-            )
+            if execution_mode() == "legacy":
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"Stop-Process -Id {proc.pid} -Force -ErrorAction SilentlyContinue"],
+                    capture_output=True,
+                    timeout=10.0,
+                )
+            else:
+                worker_client.refuse(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"Stop-Process -Id {proc.pid} -Force -ErrorAction SilentlyContinue"],
+                    capture_output=True,
+                    timeout=10.0,
+                )
         except Exception:
             pass
     else:
@@ -372,6 +383,8 @@ class CdpSurface(Surface):
         Returns:
             A connected :class:`CdpSurface` (does NOT own the Chrome process).
         """
+        if execution_mode() == "worker":
+            worker_client.refuse()
         ws_url = _discover_page_ws(host, port, target_id,
                                    timeout=connect_timeout)
 
@@ -429,7 +442,8 @@ class CdpSurface(Surface):
             A connected :class:`CdpSurface` that owns the Chrome process and
             (if it created one) the throwaway user data directory.
         """
-        # Resolve Chrome
+        if execution_mode() == "worker":
+            worker_client.refuse()
         chrome_exe = _resolve_chrome(chrome_path)
 
         # Allocate resources
@@ -460,11 +474,18 @@ class CdpSurface(Surface):
         # spawned process or the throwaway user-data-dir (audit r1).
         proc: Optional[subprocess.Popen] = None
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            if execution_mode() == "legacy":
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                proc = worker_client.refuse(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             _wait_for_port("127.0.0.1", used_port, timeout=launch_timeout)
             # Connect (does NOT own the process — we do).
             surface = cls.connect(
@@ -480,7 +501,6 @@ class CdpSurface(Surface):
             if owns_udd:
                 shutil.rmtree(user_data_dir, ignore_errors=True)
             raise
-
         surface._process = proc
         surface._user_data_dir = user_data_dir if owns_udd else None
         surface._owns_process = True

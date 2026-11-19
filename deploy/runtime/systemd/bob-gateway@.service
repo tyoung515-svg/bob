@@ -1,0 +1,22 @@
+[Unit]
+AssertPathExists=/etc/systemd/system/bob-gateway@%i.service.d/identity.conf
+Description=Bob gateway (%i)
+Requires=bob-firstboot.service bob-core@%i.service
+After=bob-firstboot.service bob-core@%i.service
+
+[Service]
+Environment=BOB_EXECUTION_BOUNDARY=worker
+User=bob-unprovisioned
+Group=bob-unprovisioned
+UMask=0077
+WorkingDirectory=/var/lib/bob/family/%i/bob-memory
+Environment=PYTHONPATH=/opt/bob/bobclaw-core
+Environment=PYTHONUNBUFFERED=1
+Environment=BOB_FAMILY_ROOT=/var/lib/bob/family
+EnvironmentFile=/var/lib/bob/family/%i/bob-memory/gateway.env
+ExecStart=/opt/bob/.venv/bin/python /opt/bob/bobclaw-gateway/gateway.py --host 127.0.0.1 --port ${BOBCLAW_GATEWAY_PORT}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

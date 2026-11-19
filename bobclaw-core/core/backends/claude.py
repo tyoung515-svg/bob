@@ -24,7 +24,7 @@ class ClaudeClient:
     ) -> None:
         self.base_url = (base_url or config.ANTHROPIC_BASE_URL).rstrip("/")
         self.api_key = api_key if api_key is not None else config.ANTHROPIC_API_KEY
-        self._timeout = aiohttp.ClientTimeout(total=120, connect=5)
+        self._timeout = aiohttp.ClientTimeout(total=180, connect=5)
         self._discover_timeout = aiohttp.ClientTimeout(total=5)
 
     def _headers(self) -> dict[str, str]:
@@ -33,6 +33,15 @@ class ClaudeClient:
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
+
+    @property
+    def api_key(self):
+        from core.settings_client import provider_key
+        return provider_key('anthropic', self._api_key)
+
+    @api_key.setter
+    def api_key(self, value):
+        self._api_key = value
 
     # ── health & model discovery ───────────────────────────────────────────────
 
@@ -78,6 +87,8 @@ class ClaudeClient:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Non-streaming chat completion — returns the raw API response dict."""
+        from core.execution.call_guard import consume_transport
+        consume_transport()
         payload: dict[str, Any] = {
             "model": model or config.ANTHROPIC_MODEL,
             "max_tokens": 4096,
@@ -89,6 +100,7 @@ class ClaudeClient:
                 f"{self.base_url}/v1/messages",
                 json=payload,
                 headers=self._headers(),
+                allow_redirects=False,
             ) as resp:
                 resp.raise_for_status()
                 return await resp.json(content_type=None)
@@ -100,6 +112,8 @@ class ClaudeClient:
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
         """Streaming chat — yields SSE delta text strings."""
+        from core.execution.call_guard import consume_transport
+        consume_transport()
         payload: dict[str, Any] = {
             "model": model or config.ANTHROPIC_MODEL,
             "max_tokens": 4096,

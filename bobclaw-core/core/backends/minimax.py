@@ -26,7 +26,7 @@ class MiniMaxClient:
     ) -> None:
         self.base_url = (base_url or config.MINIMAX_BASE_URL).rstrip("/")
         self.api_key = api_key or config.MINIMAX_API_KEY
-        self._timeout = aiohttp.ClientTimeout(total=120, connect=5)
+        self._timeout = aiohttp.ClientTimeout(total=180, connect=5)
         self._discover_timeout = aiohttp.ClientTimeout(total=5)
 
     # ── health & model discovery ───────────────────────────────────────────────

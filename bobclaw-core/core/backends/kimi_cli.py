@@ -27,6 +27,9 @@ Streaming is message-level (one block) — kimi buffers the whole reply.
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import asyncio
 import json
 import logging
@@ -206,13 +209,22 @@ class KimiCliClient:
     async def health_check(self) -> bool:
         """True if ``kimi --version`` succeeds (no turn, no quota burn)."""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                self.cli_path, "--version",
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    self.cli_path, "--version",
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    self.cli_path, "--version",
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                )
         except (FileNotFoundError, NotADirectoryError, OSError):
             return False
         try:
@@ -243,17 +255,26 @@ class KimiCliClient:
             else None
         )
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                )
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             raise KimiCliError(f"kimi CLI not found at {self.cli_path!r}: {exc}") from exc
-
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout

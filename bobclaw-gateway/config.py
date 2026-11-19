@@ -25,6 +25,20 @@ _SECRET_BLOCKLIST: frozenset[str] = frozenset(
 )
 
 
+def _bounded_int_env(
+    name: str, default: int, minimum: int = 0, maximum: int = 10
+) -> int:
+    """Read an int env var, clamped to a safe range; falls back to *default*.
+
+    Parsing failures fall back rather than raising: a typo in an env file must
+    not stop the gateway from starting.
+    """
+    try:
+        return max(minimum, min(maximum, int(os.getenv(name, str(default)))))
+    except (TypeError, ValueError):
+        return default
+
+
 class BoBClawGatewayConfig:
     """Gateway service configuration."""
 
@@ -56,6 +70,11 @@ class BoBClawGatewayConfig:
     BOBCLAW_SECRET: str = os.getenv("BOBCLAW_SECRET", "")
     BOBCLAW_PASSWORD: str = os.getenv("BOBCLAW_PASSWORD", "")
     TOTP_SECRET: str = os.getenv("TOTP_SECRET", "")
+    # Accepted TOTP step tolerance (RFC 6238 §5.2). 0 accepts only the exact
+    # current step, so a phone whose clock is off by a single 30s step has a
+    # *correct* code rejected; 1 (default) accepts +/- one step. Bounded so a
+    # typo cannot widen the acceptance window indefinitely.
+    TOTP_VALID_WINDOW: int = _bounded_int_env("BOBCLAW_TOTP_VALID_WINDOW", 1)
 
     # -- Token lifetimes --
     ACCESS_TOKEN_MINUTES: int = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
@@ -64,6 +83,19 @@ class BoBClawGatewayConfig:
     # in v0. Longer-lived than the 15-min human access token because a headless
     # agent has no interactive refresh loop yet (Phase 5 adds revocation/refresh).
     AGENT_TOKEN_DAYS: int = int(os.getenv("AGENT_TOKEN_DAYS", "30"))
+    PORTAL_TOKEN_DAYS: int = int(os.getenv("PORTAL_TOKEN_DAYS", "30"))
+
+    # -- Agent inner gates (family permission layer) --
+    # "strict" (default): agent bearer tokens are face-allow-listed on /ws/chat
+    # (_face_denied_for_agent) and default-denied off _AGENT_ALLOWED_ROUTES on
+    # REST (auth_middleware). "open": household-trust mode — agent tokens behave
+    # like human tokens inside Bob so faces/teams/dispatch work as they did
+    # pre-family-layer. Outer auth (JWT, login, TOTP) is untouched either way.
+    # PATCH-LATER: "open" is an owner's choice for a household where every
+    # member is trusted; it goes away once the scope-authority migration
+    # lands. Set the value in .secrets/bobclaw.env;
+    # conftest forces "strict" so the denial tests always exercise the gate.
+    AGENT_INNER_GATES: str = os.getenv("BOB_AGENT_INNER_GATES", "strict").lower()
 
     # -- Rate limiting (in-memory; per-process) --
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
@@ -82,7 +114,7 @@ class BoBClawGatewayConfig:
 
     # -- Database --
     POSTGRES_URL: str = os.getenv(
-        "POSTGRES_URL", "postgresql://bobclaw:bobclaw@localhost:5432/bobclaw"
+        "POSTGRES_URL", ""
     )
 
     # -- Redis (pub/sub for live approval notifications) --
@@ -92,8 +124,11 @@ class BoBClawGatewayConfig:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
     # -- History replay (trailing-N context for conversation continuity) --
-    HISTORY_MESSAGE_COUNT: int = int(os.getenv("BOBCLAW_HISTORY_MESSAGES", "20"))
-    HISTORY_MAX_CHARS: int = int(os.getenv("BOBCLAW_HISTORY_MAX_CHARS", "8192"))
+    # Transport ceilings for the history fetched per turn, NOT the model budget: core fits the history
+    # to the routed backend's real context window (core/context). Set these to 20 / 8192 to restore
+    # the old behaviour.
+    HISTORY_MESSAGE_COUNT: int = int(os.getenv("BOBCLAW_HISTORY_MESSAGES", "5000"))
+    HISTORY_MAX_CHARS: int = int(os.getenv("BOBCLAW_HISTORY_MAX_CHARS", "6000000"))
 
     # -- Streaming concurrency (per-user cap on simultaneously live chat streams) --
     MAX_CONCURRENT_STREAMS_PER_USER: int = int(os.getenv("BOBCLAW_MAX_CONCURRENT_STREAMS_PER_USER", "4"))

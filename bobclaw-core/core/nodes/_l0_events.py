@@ -95,6 +95,10 @@ async def _append_agent_turn_event(
         "duration_ms": state.get("duration_ms"),
         "model_capability_class": state.get("model_capability_class"),
         "error": error_msg,
+        # Conversation + owner, so a turn can be cited, expanded and access-checked later.
+        "conversation_id": state.get("conversation_id"),
+        "user_id": state.get("user_id"),
+        "history": state.get("history_fit"),
     }
 
     try:
@@ -124,3 +128,13 @@ async def _append_agent_turn_event(
         )
         singletons.pending_extraction_tasks.add(task)
         task.add_done_callback(singletons.pending_extraction_tasks.discard)
+
+    # Claims compaction (ON by default; BOB_COMPACTOR_ENABLED=false stops it): when the history has grown large and
+    # the conversation runs on a cloud backend, extend its chain of verified claims in the background. The prompt
+    # assembler uses the chain only once the history no longer fits. Never blocks or fails the turn.
+    try:
+        from core.context.compactor import maybe_schedule_compaction
+
+        maybe_schedule_compaction(state)
+    except Exception:
+        logger.debug("context: compaction scheduling failed", exc_info=True)

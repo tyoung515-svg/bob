@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "claude": {
+    "version": "2.1.327",
+    "platform": "linux-x64",
+    "url": "https://downloads.claude.ai/claude-code-releases/2.1.327/linux-x64/claude",
+    "sha256": "343c744baa14bfd38286a7cb90871051f04379956da6c5b803a9e66019a76ac9",
+    "bytes": 372904464,
+    "path": "/usr/local/bin/claude",
+    "owner": "root:root",
+    "mode": "0755",
+    "license_note": "Proprietary Anthropic Claude Code, not the repository license. Unmodified binary. Product preinstallation is subject to Anthropic Commercial Terms and the conditions in the official legal/compliance documentation; individual subscription use also follows applicable Consumer Terms.",
+    "license_source": "https://code.claude.com/docs/en/legal-and-compliance"
+  }
+}

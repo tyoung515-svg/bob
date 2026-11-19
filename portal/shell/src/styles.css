@@ -1,0 +1,246 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: #14171c;
+  color: #d7dce3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 3rem;
+}
+
+h1 {
+  font-size: 1.15rem;
+  margin: 0.6rem 0 0.2rem;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 1.4rem 0 0.5rem;
+  border-bottom: 1px solid #2b313a;
+  padding-bottom: 0.25rem;
+}
+
+h3 {
+  font-size: 0.9rem;
+  margin: 0.7rem 0 0.3rem;
+}
+
+.banner .conn {
+  color: #8b949e;
+  font-size: 0.8rem;
+  margin: 0.2rem 0 0.6rem;
+}
+
+.conn[data-conn="connected"] {
+  color: #3fb950;
+}
+
+.conn[data-conn="version_mismatch"],
+.conn[data-conn="closed"] {
+  color: #f85149;
+}
+
+.livescreen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+button {
+  background: #21262d;
+  color: #d7dce3;
+  border: 1px solid #3d444d;
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: #6e7681;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.confirm {
+  margin-top: 0.4rem;
+}
+
+.lifecycle ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.row {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.85rem;
+}
+
+.row .seq {
+  color: #8b949e;
+  font-variant-numeric: tabular-nums;
+}
+
+.row .meta {
+  color: #6e7681;
+  font-size: 0.75rem;
+}
+
+.row.violation {
+  background: #3d1b1e;
+  color: #f85149;
+}
+
+.approval {
+  border: 1px solid #3d444d;
+  border-radius: 8px;
+  padding: 0.25rem 1rem 1rem;
+  margin-top: 1.2rem;
+  background: #181c22;
+}
+
+.preview {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.3rem 1rem;
+  margin: 0;
+}
+
+.preview dt {
+  color: #8b949e;
+  font-size: 0.8rem;
+  align-self: center;
+}
+
+.preview dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.preview code,
+pre.output,
+.transcript pre,
+.diagnostics pre {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.8rem;
+  background: #0f1216;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.controls {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.deny-reason {
+  margin-top: 0.6rem;
+}
+
+.deny-reason label {
+  display: block;
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+
+.deny-reason textarea {
+  width: 100%;
+  background: #0f1216;
+  color: #d7dce3;
+  border: 1px solid #3d444d;
+  border-radius: 4px;
+  padding: 0.4rem;
+  font-family: inherit;
+}
+
+.verification {
+  margin-top: 0.9rem;
+  border: 1px dashed #3d444d;
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem;
+  color: #8b949e;
+}
+
+.closed {
+  color: #3fb950;
+}
+
+.notices .notice {
+  color: #f85149;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.status {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.status[data-status="succeeded"] {
+  color: #3fb950;
+}
+
+.status[data-status="failed"],
+.status[data-status="denied"],
+.status[data-status="aborted"],
+.status[data-status="indeterminate"] {
+  color: #f85149;
+}
+
+.terminal-error {
+  border: 1px solid #f85149;
+  border-radius: 8px;
+  padding: 0.25rem 1rem 0.8rem;
+  margin-top: 1.2rem;
+}
+
+.result,
+.turnend,
+.diagnostics,
+.transcript {
+  margin-top: 1.2rem;
+}
+
+footer {
+  margin-top: 2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* no animation anywhere; nothing to reduce */
+}
+
+/* Functional successor product layout. Historic fixture styles remain intact. */
+.functional-app{max-width:1100px;margin:auto;padding:24px;color:#e2e8f0;background:#111827;min-height:100vh}
+.functional-app header{display:block}.functional-app h1{font-size:1.7rem}.functional-app h2{font-size:1.05rem}
+.functional-app section{margin:16px 0}.functional-app input,.functional-app select,.functional-app textarea{background:#1f2937;color:#f8fafc;border:1px solid #64748b;border-radius:4px;padding:9px;margin:6px;font:inherit}
+.functional-app input{min-width:380px}.functional-app textarea{display:block;width:calc(100% - 32px)}
+.functional-app button{padding:10px 14px;margin:6px;background:#1d4ed8;color:white;border:1px solid #93c5fd;border-radius:4px;font:inherit}
+.functional-app button:disabled{opacity:.5}.functional-app pre{overflow:auto;max-height:480px;padding:12px;background:#0b1220;border:1px solid #374151;white-space:pre-wrap;overflow-wrap:anywhere}
+.functional-app .message{padding:10px;border-left:3px solid #60a5fa}.functional-app .user{border-color:#a78bfa}
+.functional-app .write-approval{border:2px solid #fbbf24;padding:16px}.functional-app [role=alert]{background:#7f1d1d;padding:12px}
+.functional-app :focus-visible{outline:3px solid #fbbf24;outline-offset:2px}.functional-app footer{margin-top:32px;color:#cbd5e1;font-size:.85rem}

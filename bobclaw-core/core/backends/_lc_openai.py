@@ -10,24 +10,34 @@ from __future__ import annotations
 from typing import Any
 
 from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from core.config import config
 
 
 def _deepseek_config() -> dict[str, Any]:
+    from core.settings_client import provider_key
     return {
         "base_url": config.DEEPSEEK_BASE_URL,
-        "api_key": config.DEEPSEEK_API_KEY,
+        "api_key": provider_key('deepseek', config.DEEPSEEK_API_KEY),
         "model": config.DEEPSEEK_MODEL,
     }
 
 
 def _zai_config() -> dict[str, Any]:
+    from core.settings_client import provider_key
     return {
         "base_url": config.ZAI_BASE_URL,
-        "api_key": config.ZAI_API_KEY,
+        "api_key": provider_key('glm', config.ZAI_API_KEY),
         "model": config.ZAI_MODEL,
     }
+
+
+def _qwen_cloud_config() -> dict[str, Any]:
+    from core.settings_client import provider_key
+    return {"base_url": config.QWEN_BASE_URL,
+            "api_key": provider_key('qwen', config.DASHSCOPE_API_KEY),
+            "model": config.QWEN_MODEL}
 
 
 def _qwen_research_config() -> dict[str, Any]:
@@ -43,18 +53,46 @@ def _qwen_research_config() -> dict[str, Any]:
     }
 
 
+def _openrouter_glm_flash_config() -> dict[str, Any]:
+    # GLM 5.3 Flash through OpenRouter. Same OpenAI-compatible shape as the Z.AI
+    # path; the slug is vendor-qualified on the aggregator.
+    return {
+        "base_url": config.OPENROUTER_BASE_URL,
+        "api_key": config.OPENROUTER_API_KEY,
+        "model": config.OPENROUTER_GLM_FLASH_MODEL,
+    }
+
+
 # Backend string -> constructor kwargs for ChatOpenAI.
 _LC_OPENAI_BACKENDS: dict[str, dict[str, Any]] = {
     "deepseek_v4_flash": _deepseek_config,
-    "glm_5_2": _zai_config,
+    "glm_5_3": _zai_config,
+    "glm_5_3_flash_or": _openrouter_glm_flash_config,
     "qwen_research": _qwen_research_config,
+    "qwen_cloud": _qwen_cloud_config,
 }
 
 # Backends that are wired through this wrapper and therefore tool-capable.
-TOOL_CAPABLE_BACKENDS: frozenset[str] = frozenset(_LC_OPENAI_BACKENDS.keys())
+from core.model_choices import TOOL_CAPABLE_BACKENDS
 
 
-def build_chat_openai(backend: str) -> ChatOpenAI:
+def claude_turns_enabled():
+    """Confined Claude turns: worker mode, and a lane enrolled through Bob's own sign-in.
+
+    A legacy roster keeps its old Claude path (and stays refused in worker mode)."""
+    from core.worker import mode as execution_mode
+    from core.lane_config import configured_mode
+    return execution_mode() == 'worker' and configured_mode()
+
+
+def tool_backend(backend):
+    """Provider wrappers plus the separately validated worker-only CLI adapter."""
+    if backend == 'claude_code':
+        return claude_turns_enabled()
+    return backend in TOOL_CAPABLE_BACKENDS
+
+
+def build_chat_openai(backend: str, model_override: str | None = None) -> BaseChatModel:
     """Build a ``ChatOpenAI`` instance for an OpenAI-compatible backend.
 
     Args:
@@ -63,6 +101,9 @@ def build_chat_openai(backend: str) -> ChatOpenAI:
     Raises:
         ValueError: if *backend* is not supported by this wrapper.
     """
+    if backend == "openai_codex":
+        from core.backends.openai_codex import ChatOpenAICodex
+        return ChatOpenAICodex(model_override=model_override)
     try:
         kwargs = _LC_OPENAI_BACKENDS[backend]()
     except KeyError as exc:
@@ -74,7 +115,8 @@ def build_chat_openai(backend: str) -> ChatOpenAI:
     return ChatOpenAI(
         base_url=kwargs["base_url"],
         api_key=kwargs["api_key"],
-        model=kwargs["model"],
+        model=model_override or kwargs["model"],
         # Tool turns are bounded by the caller; do not let the model loop on its own.
         max_retries=0,
+        timeout=180,
     )

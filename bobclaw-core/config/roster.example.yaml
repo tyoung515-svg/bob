@@ -1,0 +1,34 @@
+# Generic example; local inference must be configured separately. No model seats are enrolled.
+schema_version: 1
+profiles_dir: ../core/faces/templates
+agent_services:
+  models: {}
+  teams: {}
+  worker_choices: {}
+builtin_teams: {}
+routing:
+  intent_faces: {worker: assistant, plan_code: reviewer, plan_concept: researcher}
+  class_faces: {worker: assistant}
+  council_face: assistant
+  workspace_worker_face: builder
+  preferred_backend: local
+  escalation_backend: local
+defaults:
+  face_preferred_backend: local
+  face_escalation_backend: local
+  execute_fallbacks:
+    opencode_unavailable: local
+    claude_throttled: local
+    agy_throttled: local
+    codex_throttled: local
+    kimi_429: local
+    pi_429: local
+    pi_error: local
+  gate_critic_backend: ""
+  critic_fallback_backend: ""
+  council_seat_backends:
+    reviewer: {backend: local, fallback_chain: []}
+  council_default_seats: [reviewer]
+  council_default_synth_posture: reviewer
+  council_synth_backend: local
+  council_ground_backend: local

@@ -1,7 +1,7 @@
 """
 BoBClaw Core — Face / Role registry
 
-Loads all YAML profiles from core/faces/profiles/ and exposes them
+Loads YAML profiles selected by the effective deployment roster and exposes them
 through a typed Pydantic model with fast dict-based lookups.
 """
 from __future__ import annotations
@@ -9,11 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Optional
 
-import yaml
-from pydantic import BaseModel, Field, field_validator
+import hashlib
+import re
 
-# Default profiles directory relative to this file
-_DEFAULT_PROFILES_DIR = Path(__file__).parent / "profiles"
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from core.roster import get_roster
+from core.lane_config import configured_mode, get_lane, LaneConfigurationError
 
 # Disallowed abstract labels that never match a registered native or MCP tool ID.
 # Profiles must use real tool IDs (or an honest empty list) in allowed_tools.
@@ -22,16 +25,102 @@ FANTASY_TOOL_LABELS: frozenset[str] = frozenset(
 )
 
 
+class _UniqueLoader(yaml.SafeLoader):
+    """Reject duplicate mapping keys rather than silently replacing policy."""
+
+
+def _unique_mapping(loader, node):
+    result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node)
+        if key in result:
+            raise ValueError(f"Duplicate YAML key: {key}")
+        result[key] = loader.construct_object(value_node)
+    return result
+
+
+_UniqueLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping
+)
+
+
 # ─── Pydantic model ───────────────────────────────────────────────────────────
 
+class Skill(BaseModel):
+    """Embedded procedure; only its summary is exposed during discovery."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: str
+    version: Literal[1]
+    summary: str = Field(min_length=1, max_length=512)
+    required_tools: list[str]
+    operations: list[str]
+    body: str = Field(min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def safe_id(cls, value: str) -> str:
+        if not re.fullmatch(r"[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*", value):
+            raise ValueError("invalid skill id")
+        return value
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def supported_version(cls, value):
+        if type(value) is not int or value != 1:
+            raise ValueError("unsupported skill version")
+        return value
+
+    @field_validator("body")
+    @classmethod
+    def bounded_body(cls, value: str) -> str:
+        if not value.strip() or len(value.encode("utf-8")) > 32 * 1024:
+            raise ValueError("skill body must be nonempty and at most 32 KiB")
+        return value
+
+    @field_validator("summary")
+    @classmethod
+    def nonblank_summary(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("empty skill summary")
+        return value
+
+    @field_validator("required_tools", "operations")
+    @classmethod
+    def valid_names(cls, values: list[str]) -> list[str]:
+        if len(set(values)) != len(values) or any(
+            not re.fullmatch(r"[a-z][a-z0-9_.-]*", v) for v in values
+        ):
+            raise ValueError("invalid or duplicate skill dependency/operation")
+        return values
+
+
 class Face(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    skills: list[Skill] = Field(default_factory=list)
+    allowed_skills: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_skills(self):
+        ids = [skill.id for skill in self.skills]
+        if len(set(ids)) != len(ids):
+            raise ValueError("duplicate skill ids")
+        for skill_id in self.allowed_skills:
+            Skill.safe_id(skill_id)
+        if len(set(self.allowed_skills)) != len(self.allowed_skills):
+            raise ValueError("duplicate allowed_skills")
+        if not set(self.allowed_skills) <= set(ids):
+            raise ValueError("allowed_skills references missing skill")
+        return self
+
     id: str
     name: str
     avatar: str = "🤖"
     system_prompt: str
-    preferred_backend: str = "local"
+    preferred_backend: str = Field(default_factory=lambda: get_roster().defaults.face_preferred_backend)
     allowed_tools: list[str] = Field(default_factory=list)
-    escalation_backend: str = "claude_api"
+    tool_loop_max_rounds: int | None = Field(default=None, ge=1, le=100)
+    escalation_backend: str = Field(default_factory=lambda: get_roster().defaults.face_escalation_backend)
     ui_theme: str = "grey"
     # ── Display metadata (U2, Decision D10) ──
     # Friendly, human-readable presentation fields consumed by UI surfaces (the
@@ -77,7 +166,7 @@ class Face(BaseModel):
     codex_posture: dict = Field(default_factory=dict)
     # ── Pi (pi_code) posture ──
     # Policy fed to the ``pi_code`` agentic backend per face: ``model`` (a
-    # ``provider/id`` string, e.g. ``zai/glm-5.2`` | ``deepseek/deepseek-v4-flash`` |
+    # ``provider/id`` string, e.g. ``zai/glm-5.3`` | ``deepseek/deepseek-v4-flash`` |
     # ``minimax/MiniMax-M3``), ``tools`` (bool ⇒ enable the read/edit/bash loop),
     # ``cwd``, ``extra_args``. The fan-out threads only ``model`` (via
     # dispatch→worker model_override). Empty for non-pi faces.
@@ -166,35 +255,101 @@ class FaceRegistry:
     """Loads and indexes Face profiles from a YAML profiles directory."""
 
     def __init__(self, profiles_dir: Optional[Path] = None) -> None:
-        self._dir = profiles_dir or _DEFAULT_PROFILES_DIR
+        self._dir = Path(profiles_dir) if profiles_dir is not None else get_roster().profiles_path
         self._faces: dict[str, Face] = {}
+        self._lane_managed = profiles_dir is None and configured_mode()
+        self._lane_signature = None
+        if profiles_dir is None and configured_mode():
+            self._refresh_lane()
+            return
         self._load_all()
+
+    def _refresh_lane(self) -> None:
+        if not self._lane_managed:
+            return
+        lane = get_lane()
+        signature = (lane.root, id(lane), lane.default_backend, lane.default_error())
+        if signature == self._lane_signature:
+            return
+        self._faces.clear()
+        if lane.default_error():
+            self._lane_signature = signature
+            return
+        # Publish only a fully validated layer. A bad overlay never falls back to
+        # the shipped face, including on subsequent reads after an exception.
+        try:
+            self._load_all()
+            overlay = lane.owned_path("profiles")
+            if overlay is None:
+                raise LaneConfigurationError("lane profiles directory escapes lane root")
+            if overlay.exists():
+                self._load_all(overlay, overlay=True, lane=lane)
+        except Exception:
+            self._faces.clear()
+            self._lane_signature = None
+            raise
+        for face in self._faces.values():
+            face.preferred_backend = face.preferred_backend or lane.default_backend
+            if face.preferred_backend == "codex_code" and "codex_code" in lane.backends:
+                face.codex_posture = {"profile": lane.values.get("CODEX_PROFILE", "gpt")}
+                model = lane.backends["codex_code"].model
+                if model:
+                    face.codex_posture["model"] = model
+        self._lane_signature = signature
 
     # ── loading ───────────────────────────────────────────────────────────────
 
-    def _load_all(self) -> None:
+    def _load_all(self, directory: Path | None = None, *, overlay=False, lane=None) -> None:
         """Parse every *.yaml / *.yml file in the profiles directory."""
-        if not self._dir.exists():
+        directory = directory if directory is not None else self._dir
+        if not directory.is_dir():
             raise FileNotFoundError(
-                f"Faces profiles directory not found: {self._dir}"
+                f"Faces profiles directory not found: {directory}"
             )
-        for path in sorted(self._dir.glob("*.yaml")) :
-            self._load_file(path)
-        for path in sorted(self._dir.glob("*.yml")):
-            self._load_file(path)
+        seen = set()
+        for path in sorted([*directory.glob("*.yaml"), *directory.glob("*.yml")]):
+            if lane is not None and lane.owned_path(str(path)) is None:
+                raise LaneConfigurationError(f"lane face profile escapes lane root: {path.name}")
+            self._load_file(path, overlay=overlay, seen=seen)
 
-    def _load_file(self, path: Path) -> None:
+    def _load_file(self, path: Path, *, overlay=False, seen=None) -> None:
         with path.open("r", encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh)
+            raw = yaml.load(fh, Loader=_UniqueLoader)
         if not isinstance(raw, dict):
             raise ValueError(f"Invalid face profile (expected mapping): {path}")
-        face = Face.model_validate(raw)
+        face_id = raw.get("id", path.stem)
+        try:
+            face = Face.model_validate(raw)
+            if configured_mode():
+                self._validate_registered_tools(face)
+        except ValueError as exc:
+            raise LaneConfigurationError(f"Face {face_id!r} configuration error ({path}): {exc}") from exc
+        if face.id in (seen or set()) or (face.id in self._faces and not overlay):
+            raise ValueError(f"Duplicate face id: {face.id}")
+        if seen is not None:
+            seen.add(face.id)
         self._faces[face.id] = face
+
+    @staticmethod
+    def _validate_registered_tools(face: Face) -> None:
+        from core.tools.registry import NATIVE_TOOLS
+        from core.mcp import client
+        # Synchronous profile loading cannot claim unqueried MCP schemas exist.
+        registered = set(NATIVE_TOOLS) | {t.name for t in client._MCP_TOOLS or []}
+        unknown = set(face.allowed_tools) - registered
+        if unknown:
+            raise ValueError(f"unregistered allowed_tools: {', '.join(sorted(unknown))}")
+        for skill in face.skills:
+            missing = set(skill.required_tools) - (set(face.allowed_tools) & registered)
+            if missing:
+                raise ValueError(f"skill {skill.id!r} required_tools unavailable or forbidden: "
+                                 + ", ".join(sorted(missing)))
 
     # ── public API ────────────────────────────────────────────────────────────
 
     def get_face(self, face_id: str) -> Face:
         """Return the Face for *face_id*, or raise KeyError."""
+        self._refresh_lane()
         try:
             return self._faces[face_id]
         except KeyError:
@@ -202,6 +357,7 @@ class FaceRegistry:
 
     def list_faces(self) -> list[FaceSummary]:
         """Return lightweight summaries of all loaded faces."""
+        self._refresh_lane()
         return [
             FaceSummary(
                 id=f.id,
@@ -217,13 +373,51 @@ class FaceRegistry:
             for f in self._faces.values()
         ]
 
+    def list_skills(self, face_id: str) -> list[dict]:
+        face = self.get_face(face_id)
+        return [dict(skill_id=s.id, version=s.version, summary=s.summary)
+                for s in face.skills if s.id in face.allowed_skills]
+
+    def load_skill(self, face_id: str, skill_id: str, version: int | None = None) -> dict:
+        face = self.get_face(face_id)
+        if skill_id not in face.allowed_skills:
+            raise PermissionError("skill not allowed")
+        skill = next((s for s in face.skills if s.id == skill_id), None)
+        if skill is None or (version is not None and
+                             (type(version) is not int or version != skill.version)):
+            raise ValueError("unknown skill or unsupported version")
+        from core.tools.registry import NATIVE_TOOLS, PIPE_OPERATIONS
+        # Unknown dependencies are refused, including unavailable pipe adapters.
+        if any(t not in face.allowed_tools or t not in NATIVE_TOOLS
+               for t in skill.required_tools):
+            raise PermissionError("required tool unavailable or forbidden")
+        if "pipe_call" in skill.required_tools and (
+                not skill.operations or any(op not in PIPE_OPERATIONS for op in skill.operations)):
+            raise PermissionError("required pipe operation unavailable")
+        return dict(ok=True, skill_id=skill.id, version=skill.version,
+                    sha256=hashlib.sha256(skill.body.encode("utf-8")).hexdigest(),
+                    body=skill.body, operations=list(skill.operations))
+
     def get_system_prompt(self, face_id: str) -> str:
         """Return the full system prompt for *face_id*."""
         return self.get_face(face_id).system_prompt
 
     def get_allowed_tools(self, face_id: str) -> list[str]:
         """Return the allowed tool names for *face_id*."""
-        return list(self.get_face(face_id).allowed_tools)
+        tools = list(self.get_face(face_id).allowed_tools)
+        from core.tools.workflows import WORKFLOW_TOOLS, WORKFLOW_READ_NAMES
+        workflow_names = {t.name for t in WORKFLOW_TOOLS}
+        permitted = ([t.name for t in WORKFLOW_TOOLS] if face_id in {'assistant', 'planner'}
+                     else WORKFLOW_READ_NAMES if face_id == 'orchestrator' else [])
+        tools = [name for name in tools if name not in workflow_names or name in permitted]
+        tools.extend(name for name in permitted if name not in tools)
+        if "bob_guide" not in tools:
+            tools.append("bob_guide")
+        from core.lane_config import configured_mode
+        if configured_mode():
+            from core.tools.pc_tools import PC_TOOL_NAMES
+            tools.extend(name for name in PC_TOOL_NAMES if name not in tools)
+        return tools
 
     def all_faces(self) -> list[Face]:
         """Return every loaded Face (full models, not summaries).
@@ -231,6 +425,7 @@ class FaceRegistry:
         Used by the routing-view endpoint, which needs ``role`` + ``allowed_tools``
         per face to call ``teams.resolve``. Ordered by id for stable output.
         """
+        self._refresh_lane()
         return [self._faces[fid] for fid in sorted(self._faces)]
 
     def teammate_faces(self) -> list[Face]:
@@ -240,9 +435,11 @@ class FaceRegistry:
         return [f for f in self.all_faces() if f.is_teammate]
 
     def __len__(self) -> int:
+        self._refresh_lane()
         return len(self._faces)
 
     def __contains__(self, face_id: str) -> bool:
+        self._refresh_lane()
         return face_id in self._faces
 
 
@@ -250,13 +447,24 @@ class FaceRegistry:
 _DEFAULT_REGISTRY: Optional["FaceRegistry"] = None
 
 
-def get_default_registry() -> "FaceRegistry":
-    """Return the lazily-constructed module-level FaceRegistry singleton.
+_DEFAULT_REGISTRY_FILE: Optional[Path] = None
 
-    Re-reads YAML from disk only on first access; subsequent calls
-    reuse the cached instance.
+
+def get_registry() -> "FaceRegistry":
+    """One default factory for HTTP, routing and bridge. Explicit injection is allowed.
+
+    The selected manifest is cached per process; a changed selector builds a new
+    registry (useful in embedded applications/tests). File edits require restart.
     """
-    global _DEFAULT_REGISTRY
-    if _DEFAULT_REGISTRY is None:
+    global _DEFAULT_REGISTRY, _DEFAULT_REGISTRY_FILE
+    roster = get_roster()
+    key = ("lane", get_lane().root, id(get_lane())) if configured_mode() else roster.file
+    if _DEFAULT_REGISTRY is None or _DEFAULT_REGISTRY_FILE != key:
         _DEFAULT_REGISTRY = FaceRegistry()
+        _DEFAULT_REGISTRY_FILE = key
     return _DEFAULT_REGISTRY
+
+
+def get_default_registry() -> "FaceRegistry":
+    """Compatibility accessor for routing callers; uses the shared factory."""
+    return get_registry()

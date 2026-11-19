@@ -251,13 +251,20 @@ _FACE_TOOL_CACHE: dict[str, list[str]] = {}
 
 def _get_allowed_tools(face_id: str) -> list[str]:
     """Return allowed tools for a face, consulting registry first."""
-    if face_id in _FACE_TOOL_CACHE:
+    from core.lane_config import configured_mode
+    # Configured registries are lane-local. Never reuse another lane's cached
+    # face allowlist (or an earlier overlay) just because its face id matches.
+    # Reviewer workspace access is conditional on the current workflow stage.
+    # Do not reuse an allowlist from a different registry/context for this face.
+    legacy = not configured_mode() and face_id != 'reviewer'
+    if legacy and face_id in _FACE_TOOL_CACHE:
         return _FACE_TOOL_CACHE[face_id]
     try:
         from core.faces.registry import get_default_registry
         registry = get_default_registry()
         tools = registry.get_allowed_tools(face_id)
-        _FACE_TOOL_CACHE[face_id] = tools
+        if legacy:
+            _FACE_TOOL_CACHE[face_id] = tools
         return tools
     except Exception:
         return []
@@ -267,6 +274,13 @@ def _get_allowed_tools(face_id: str) -> list[str]:
 
 def check_tool_access(face_id: str, tool_name: str) -> bool:
     """Return True if *face_id* is permitted to use *tool_name*."""
+    if face_id == 'reviewer':
+        from core.execution.agent_turn import REVIEWER_READ_TOOLS
+        if tool_name in REVIEWER_READ_TOOLS:
+            from core.execution.workflow_context import current
+            stage = current.get()
+            if stage is None or stage.face != face_id or not stage.permits_tool(tool_name):
+                return False
     allowed = _get_allowed_tools(face_id)
     return tool_name in allowed
 
@@ -279,3 +293,73 @@ def requires_approval(action_type: str) -> bool:
 def task_requires_approval(task_text: str) -> bool:
     """Heuristic: scan free-text task for patterns that imply a dangerous action."""
     return bool(_DANGEROUS_PATTERNS.search(task_text))
+
+# Core→gateway pipe envelope. Exact fields prevent unsigned authority extensions.
+def canonical_pipe_json(value: dict) -> str:
+    import json
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def pipe_claims_valid(claims: dict, *, check_time: bool = True) -> bool:
+    import time
+    fields = {"iss", "aud", "sub", "face", "conversation_id", "op",
+              "args_sha256", "iat", "exp", "nonce"}
+    if not isinstance(claims, dict) or set(claims) != fields:
+        return False
+    if claims["iss"] != "core" or claims["aud"] != "gateway":
+        return False
+    if any(not isinstance(claims[k], str) or not claims[k].strip()
+           for k in fields - {"iat", "exp"}):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{64}", claims["args_sha256"]):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{32}", claims["nonce"]):
+        return False
+    if any(type(claims[k]) is not int for k in ("iat", "exp")):
+        return False
+    if not 0 < claims["exp"] - claims["iat"] <= 60:
+        return False
+    return not check_time or claims["iat"] <= time.time() < claims["exp"]
+
+
+def compute_pipe_vouch(claims: dict, secret: str) -> str:
+    if not isinstance(secret, str) or not secret.strip():
+        return ""
+    if not pipe_claims_valid(claims, check_time=False):
+        return ""
+    return compute_scope_vouch(canonical_pipe_json(claims), secret)
+
+
+def verify_pipe_vouch(claims: dict, vouch: str, secret: str) -> bool:
+    if (not pipe_claims_valid(claims) or not isinstance(vouch, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", vouch)):
+        return False
+    expected = compute_pipe_vouch(claims, secret)
+    return bool(expected) and hmac.compare_digest(expected, vouch)
+
+
+def execution_vouch(envelope: dict, secret: str) -> str:
+    """v2 signs operation, exact resource/budget payload AND credential authority.
+
+    Domain separation prevents a legacy scope/pipe vouch from authorizing a run.
+    """
+    try:
+        return compute_scope_vouch("bob-execution/v2\n" + canonical_pipe_json(envelope), secret)
+    except (TypeError, ValueError):
+        return ""
+
+
+def verify_execution_vouch(envelope: dict, vouch: str, secret: str) -> bool:
+    import time
+    if (not isinstance(envelope, dict) or set(envelope) not in ({"operation", "args", "authority", "iat", "exp"},
+            {"operation", "args", "authority", "iat", "exp", "face_id"})
+            or ('face_id' in envelope and (envelope['face_id'] not in ('orchestrator','builder','fixer')
+                or envelope.get('operation') not in {'work.catalog','work.recipe.save','work.prepare','work.start','work.status'}))
+            or envelope.get("operation") not in {"capabilities", "teams.list", "teams.save", "runs.start", "runs.get", "runs.list", "runs.cancel", "runs.resume", "budgets.set", "budgets.get", "budgets.list", "budgets.remove", "grants.prepare", "grants.proposal", "grants.issue", "grants.list", "grants.get", "grants.revoke", "owner.summary", "policy.get", "policy.set", "flags.list", "flags.get", "flags.resolve", "jobs.attachments", "jobs.list", "jobs.start", "jobs.audit", "jobs.cancel", "jobs.proposal", "jobs.decide", "jobs.artifact", "work.catalog", "work.recipe.save", "work.prepare", "work.preparation", "work.start", "work.status", "work.workspace.create", "work.publish", "builder.mode.get", "builder.mode.set", "builder.preview", "builder.approve", "builder.approval.get", "builder.approvals.get", "builder.network.set", "builder.network_log", "builder.task.end", "builder.project.result", "workspace.browse", "pc.pending", "pc.claim", "pc.receipt", "pc.end", "workflows.catalog", "workflows.proposals", "workflows.list", "workflows.get", "workflows.save", "workflows.copy", "workflows.delete", "workflows.propose", "workflows.proposal", "workflows.propose_again", "workflows.grant_start", "workflows.runs", "workflows.run", "workflows.events", "workflows.pause", "workflows.resume", "workflows.stop", "workflows.message", "workflows.gate", "workflows.artifact"}
+            or type(envelope.get("iat")) is not int or type(envelope.get("exp")) is not int
+            or not 0 < envelope["exp"] - envelope["iat"] <= 60
+            or not envelope["iat"] <= time.time() < envelope["exp"]
+            or not isinstance(vouch, str) or not re.fullmatch(r"[a-f0-9]{64}", vouch)):
+        return False
+    expected = execution_vouch(envelope, secret)
+    return bool(expected) and hmac.compare_digest(expected, vouch)

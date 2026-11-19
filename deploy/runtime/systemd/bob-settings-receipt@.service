@@ -1,0 +1,17 @@
+[Unit]
+Description=Bob read-only settings receipt connection
+
+[Service]
+User=root
+Group=root
+UMask=0077
+StandardInput=socket
+StandardOutput=null
+StandardError=null
+ExecStart=/usr/local/bin/bob-settings %i receipt
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/bob-settings
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET

@@ -23,7 +23,7 @@ class CriticConfigError(ValueError):
 # per-contract optimization. Concrete backends (their family is derived via family_of).
 LANE_CRITIC_BACKEND: dict[Lane, str] = {
     Lane.BUG_BOUNTY: "minimax",   # senior reasoning tier for smart-contract logic
-    Lane.DATASET: "glm_5_2",      # cheaper for license / PII checks
+    Lane.DATASET: "glm_5_3",      # cheaper for license / PII checks
 }
 
 

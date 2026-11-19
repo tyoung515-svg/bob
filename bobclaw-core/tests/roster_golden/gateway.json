@@ -1,0 +1,495 @@
+{
+  "/agent-services/catalog": {
+    "capabilities": {
+      "cost_limits": [
+        "model_calls",
+        "wall_seconds"
+      ],
+      "dollar_metering": false,
+      "durable_receipts": true,
+      "external_tools": false,
+      "independent_verification": false,
+      "manager_messaging": true,
+      "provider": "text_only",
+      "team_runs": "bounded_read_only"
+    },
+    "local_backend": {
+      "available": false,
+      "model": "qwen3.8-flash-next-iq3_xxs",
+      "reason": "fixture_offline"
+    },
+    "model_faces": [
+      {
+        "backend": "glm_5_3",
+        "enabled": true,
+        "id": "bob-glm-53",
+        "label": "GLM 5.3",
+        "model": "glm-5.3",
+        "transport": "text"
+      },
+      {
+        "backend": "kimi_code",
+        "disabled_reason": "Kimi subscription lapsed 2026-10 (operator, cost); credential still present so backend availability is key-presence only",
+        "enabled": false,
+        "id": "bob-kimi-k3",
+        "label": "Kimi K3",
+        "model": "k3",
+        "transport": "text"
+      },
+      {
+        "backend": "deepseek_v4_flash",
+        "enabled": true,
+        "id": "bob-ds-flash",
+        "label": "DSv4.1 flash",
+        "model": "deepseek-v4-flash",
+        "transport": "text"
+      },
+      {
+        "backend": "glm_5_3_flash_or",
+        "capabilities": "PAYG via OpenRouter; parallel-safe (no Z.AI serial-1 slot)",
+        "enabled": true,
+        "id": "bob-glm-53-flash-or",
+        "label": "GLM 5.3 Flash · OpenRouter",
+        "model": "z-ai/glm-5.3-flash",
+        "transport": "text"
+      },
+      {
+        "backend": "codex_code",
+        "enabled": true,
+        "id": "bob-gpt-sol-61",
+        "label": "GPT SOL 6.1",
+        "model": "gpt-6.1-sol",
+        "transport": "text"
+      },
+      {
+        "availability": "on_demand",
+        "backend": "qwen_research",
+        "enabled": true,
+        "id": "bob-qwen-strata",
+        "label": "Qwen 3.8 Next IQ3XXS · Strata",
+        "model": "qwen3.8-flash-next-iq3_xxs",
+        "roles": [
+          "local_face",
+          "cheap_worker",
+          "cheap_researcher"
+        ],
+        "tools_verified": false,
+        "transport": "primary-pc-local-ssh"
+      },
+      {
+        "backend": "claude_code",
+        "capabilities": "read_only; PC must be online",
+        "enabled": true,
+        "id": "bob-claude-opus-55",
+        "label": "Claude Opus 5.5",
+        "model": "claude-opus-5-5",
+        "transport": "primary-pc-cli"
+      },
+      {
+        "backend": "claude_code",
+        "capabilities": "read_only; PC must be online",
+        "enabled": true,
+        "id": "bob-claude-sonnet-55",
+        "label": "Claude Sonnet 5.5",
+        "model": "claude-sonnet-5-5",
+        "transport": "primary-pc-cli"
+      },
+      {
+        "backend": "claude_code",
+        "capabilities": "read_only; PC must be online; cheap worker tier",
+        "enabled": true,
+        "id": "bob-claude-haiku-55",
+        "label": "Claude Haiku 5.5",
+        "model": "claude-haiku-5-5",
+        "transport": "primary-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+        "enabled": true,
+        "id": "bob-claude-alternate-haiku",
+        "label": "Haiku 5.5 · Alternate",
+        "model": "claude-haiku-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+        "enabled": true,
+        "id": "bob-claude-alternate-sonnet",
+        "label": "Sonnet 5.5 · Alternate",
+        "model": "claude-sonnet-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+        "effort": "medium",
+        "enabled": true,
+        "id": "bob-claude-alternate-sonnet-med",
+        "label": "Sonnet 5.5 · Alternate · med",
+        "model": "claude-sonnet-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+        "effort": "high",
+        "enabled": true,
+        "id": "bob-claude-alternate-sonnet-high",
+        "label": "Sonnet 5.5 · Alternate · high",
+        "model": "claude-sonnet-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+        "effort": "xhigh",
+        "enabled": true,
+        "id": "bob-claude-alternate-sonnet-xhigh",
+        "label": "Sonnet 5.5 · Alternate · xhigh",
+        "model": "claude-sonnet-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+        "enabled": true,
+        "id": "bob-claude-alternate-opus",
+        "label": "Opus 5.5 · Alternate",
+        "model": "claude-opus-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+        "effort": "medium",
+        "enabled": true,
+        "id": "bob-claude-alternate-opus-med",
+        "label": "Opus 5.5 · Alternate · med",
+        "model": "claude-opus-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+        "effort": "high",
+        "enabled": true,
+        "id": "bob-claude-alternate-opus-high",
+        "label": "Opus 5.5 · Alternate · high",
+        "model": "claude-opus-5-5",
+        "transport": "alternate-pc-cli"
+      },
+      {
+        "backend": "claude_alternate",
+        "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+        "effort": "xhigh",
+        "enabled": true,
+        "id": "bob-claude-alternate-opus-xhigh",
+        "label": "Opus 5.5 · Alternate · xhigh",
+        "model": "claude-opus-5-5",
+        "transport": "alternate-pc-cli"
+      }
+    ],
+    "openrouter": {
+      "enabled": false,
+      "reason": "PAYG lane — serves GLM 5.3 Flash as bob-glm-53-flash-or"
+    },
+    "teams": [
+      {
+        "bulk": null,
+        "bulk_status": "Bulk-seat identity unresolved; require_bulk is blocked",
+        "critic": "bob-gpt-sol-61",
+        "execution_mode": "read_only",
+        "id": "balance-budget",
+        "label": "Balance-Budget",
+        "manager": "bob-glm-53",
+        "runnable": true,
+        "worker": "bob-ds-flash"
+      },
+      {
+        "critic": "bob-gpt-sol-61",
+        "id": "coding",
+        "label": "coding",
+        "manager": "bob-gpt-sol-61",
+        "reason": "GLM edit harness and Claude targeted-fix controls require verification",
+        "runnable": false,
+        "senior": "bob-claude-opus-55",
+        "worker": "bob-glm-53"
+      }
+    ],
+    "version": 1,
+    "worker_choices": {
+      "balance-budget": [
+        "bob-ds-flash",
+        "bob-qwen-strata"
+      ]
+    }
+  },
+  "/v1/models": {
+    "data": [
+      {
+        "bob": {
+          "backend": "glm_5_3",
+          "enabled": true,
+          "label": "GLM 5.3",
+          "model": "glm-5.3",
+          "transport": "text"
+        },
+        "created": 0,
+        "id": "bob-glm-53",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "kimi_code",
+          "disabled_reason": "Kimi subscription lapsed 2026-10 (operator, cost); credential still present so backend availability is key-presence only",
+          "enabled": false,
+          "label": "Kimi K3",
+          "model": "k3",
+          "transport": "text"
+        },
+        "created": 0,
+        "id": "bob-kimi-k3",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "deepseek_v4_flash",
+          "enabled": true,
+          "label": "DSv4.1 flash",
+          "model": "deepseek-v4-flash",
+          "transport": "text"
+        },
+        "created": 0,
+        "id": "bob-ds-flash",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "glm_5_3_flash_or",
+          "capabilities": "PAYG via OpenRouter; parallel-safe (no Z.AI serial-1 slot)",
+          "enabled": true,
+          "label": "GLM 5.3 Flash · OpenRouter",
+          "model": "z-ai/glm-5.3-flash",
+          "transport": "text"
+        },
+        "created": 0,
+        "id": "bob-glm-53-flash-or",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "codex_code",
+          "enabled": true,
+          "label": "GPT SOL 6.1",
+          "model": "gpt-6.1-sol",
+          "transport": "text"
+        },
+        "created": 0,
+        "id": "bob-gpt-sol-61",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "availability": "on_demand",
+          "backend": "qwen_research",
+          "enabled": true,
+          "label": "Qwen 3.8 Next IQ3XXS · Strata",
+          "model": "qwen3.8-flash-next-iq3_xxs",
+          "roles": [
+            "local_face",
+            "cheap_worker",
+            "cheap_researcher"
+          ],
+          "tools_verified": false,
+          "transport": "primary-pc-local-ssh"
+        },
+        "created": 0,
+        "id": "bob-qwen-strata",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_code",
+          "capabilities": "read_only; PC must be online",
+          "enabled": true,
+          "label": "Claude Opus 5.5",
+          "model": "claude-opus-5-5",
+          "transport": "primary-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-opus-55",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_code",
+          "capabilities": "read_only; PC must be online",
+          "enabled": true,
+          "label": "Claude Sonnet 5.5",
+          "model": "claude-sonnet-5-5",
+          "transport": "primary-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-sonnet-55",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_code",
+          "capabilities": "read_only; PC must be online; cheap worker tier",
+          "enabled": true,
+          "label": "Claude Haiku 5.5",
+          "model": "claude-haiku-5-5",
+          "transport": "primary-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-haiku-55",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+          "enabled": true,
+          "label": "Haiku 5.5 · Alternate",
+          "model": "claude-haiku-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-haiku",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+          "enabled": true,
+          "label": "Sonnet 5.5 · Alternate",
+          "model": "claude-sonnet-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-sonnet",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+          "effort": "medium",
+          "enabled": true,
+          "label": "Sonnet 5.5 · Alternate · med",
+          "model": "claude-sonnet-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-sonnet-med",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+          "effort": "high",
+          "enabled": true,
+          "label": "Sonnet 5.5 · Alternate · high",
+          "model": "claude-sonnet-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-sonnet-high",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota; opt-in",
+          "effort": "xhigh",
+          "enabled": true,
+          "label": "Sonnet 5.5 · Alternate · xhigh",
+          "model": "claude-sonnet-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-sonnet-xhigh",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+          "enabled": true,
+          "label": "Opus 5.5 · Alternate",
+          "model": "claude-opus-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-opus",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+          "effort": "medium",
+          "enabled": true,
+          "label": "Opus 5.5 · Alternate · med",
+          "model": "claude-opus-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-opus-med",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+          "effort": "high",
+          "enabled": true,
+          "label": "Opus 5.5 · Alternate · high",
+          "model": "claude-opus-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-opus-high",
+        "object": "model",
+        "owned_by": "bob"
+      },
+      {
+        "bob": {
+          "backend": "claude_alternate",
+          "capabilities": "read_only; Alternate PC online; alternate account quota (heaviest); opt-in",
+          "effort": "xhigh",
+          "enabled": true,
+          "label": "Opus 5.5 · Alternate · xhigh",
+          "model": "claude-opus-5-5",
+          "transport": "alternate-pc-cli"
+        },
+        "created": 0,
+        "id": "bob-claude-alternate-opus-xhigh",
+        "object": "model",
+        "owned_by": "bob"
+      }
+    ],
+    "object": "list"
+  }
+}

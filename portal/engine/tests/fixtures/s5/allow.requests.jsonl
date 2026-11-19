@@ -1,0 +1,3 @@
+{"id":"req-1","method":"hello","params":{"version":{"major":2,"minor":0},"limits":{"max_frame_bytes":1048576}}}
+{"id":"req-2","method":"session.create","params":{}}
+{"id":"req-3","method":"turn.start","params":{"model":"slice-model"}}

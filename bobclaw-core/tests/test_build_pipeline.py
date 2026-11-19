@@ -79,7 +79,7 @@ def test_role_backend_resolves_demo_fleet_split():
 def test_build_worker_backend_falls_back_to_state_backend():
     from core.nodes.dispatch import _build_worker_backend
     assert _build_worker_backend({"team": "demo-fleet"}) == "deepseek_v4_flash"
-    assert _build_worker_backend({"backend": "glm_5_2"}) == "glm_5_2"
+    assert _build_worker_backend({"backend": "glm_5_3"}) == "glm_5_3"
     assert _build_worker_backend({}) == "local"
 
 

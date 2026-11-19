@@ -23,6 +23,9 @@ leaks across hot reloads otherwise.
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import asyncio
 import logging
 import os
@@ -74,6 +77,8 @@ class OpenCodeServePool:
         self._load_instances()
 
     def _load_instances(self) -> None:
+        if execution_mode() == "worker":
+            return
         for host, port, workspace_dir in config.opencode_instances_parsed():
             client = OpenCodeServeClient(host, port)
             self._instances.append(_Instance(

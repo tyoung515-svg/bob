@@ -8,168 +8,163 @@
 
 ---
 
-BoB is a self-hosted, multi-agent orchestration platform. It runs on **your**
-machine, with **your** keys, and its job is everything *past* aggregating models:
-routing work to the right model, fanning it out across many, deliberating in a
-council, and — the part most tools skip — **verifying** the result before it reaches
-you.
+BoB is an always-on team of AI agents that you own. It runs on **your** machine,
+under **your** logins and keys. It sends each piece of work to the model that suits it,
+can have a second model review what the first one built, remembers what it learns, and
+lets you set how much it may do to your files, your PC and the network without asking.
 
-> **v0.99.0 — memory + bridge.** The CLI / MCP / agent front door is usable today; the
-> **desktop app** is the GUI (Android preview — there is no browser UI). Hardening and
-> GUI polish are tracked to v1.0. This is an honest early release: read `SECURITY.md`
-> before exposing the gateway.
+> **v0.99.1 — Windows app preview.** New in this release: a Windows installer, a desktop
+> app with seven agents, sign-in for ChatGPT and Claude subscriptions from inside the app,
+> and a Builder whose freedom you set. **Workflows are a preview:**
+> a run may stop before it finishes. Reaching BoB from Discord and from a phone is next.
+> This is an honest early release; read `SECURITY.md` before exposing the gateway.
 
 ## Why BoB
 
 The most capable models live behind someone else's login, and that access can change
-under you — new gates, price changes, regional restrictions, waitlists. Renting an
+under you: new gates, price changes, regional restrictions, waitlists. Renting an
 intelligence is not the same as owning your workflow. **BoB is the opposite bet:**
 your machine, your credentials, your data. Nobody can revoke it, because there is no
 one in the middle.
 
-BoB's value is the four things that come *after* "just call an LLM":
+What BoB adds comes after "just call an LLM":
 
-- **Verification.** BoB doesn't trust output — it checks it. Generated code runs in a
-  locked-down, network-denied Docker sandbox before it's accepted; a council can
-  ground its answer against the live web before converging; fan-out workers are
-  gated by a critic before their results are joined.
-- **Orchestration.** One request can route to a single fast face, fan out to many
-  workers, escalate through a health-aware backend chain, or convene a multi-voice
-  council — with round/width caps, plus per-turn cost caps on the metered paths
-  (fan-out and build), so a run can't stampede.
-- **Sovereignty.** Every backend is reached with your own key or the vendor's own
-  official CLI under your own login. BoB never proxies, resells, or multi-tenants
-  anyone's access. (See `COMPLIANCE.md`.)
-- **Completeness.** Faces, teams, profiles, memory, a build pipeline, a council, a
-  headless MCP server — the layer above aggregation, in one place you control.
+- **Sovereignty.** Every model is reached with your own key or your own subscription
+  sign-in. BoB never proxies, resells or shares anyone's access. (See `COMPLIANCE.md`.)
+- **Verification.** A workflow has its own review and fix stages, so what one model
+  builds is checked by another before it reaches you. *(Workflows are a preview.)* The
+  Builder works in an isolated worker whose network access is limited to an allowlist.
+- **Orchestration.** A request can go to a single agent, or run as a staged job in which
+  different agents, on different models, plan, build, review and fix.
+- **Always on.** BoB is a service, not a chat window. Its memory, projects and running
+  work carry on between conversations. On a server it runs around the clock; on a Windows
+  PC it runs while the desktop app is open.
+- **Your rules.** You choose how much freedom the Builder has: it proposes changes for
+  you to apply (Suggest), asks before each change (Approve), or makes ordinary edits and
+  runs ordinary commands on its own (Auto). A fourth mode with no questions exists; it
+  has to be confirmed and switches itself off after a while. Reaching into your Windows
+  PC needs a grant from you first.
 
-## Quickstart (Windows, headless-first)
+## Work at the level that fits the job
 
-**Prerequisites** (all three are required; setup fails closed without them):
+Some work wants a conversation. Some wants a crew you can walk away from. BoB lets you
+pick the level for each piece of work, and move between them.
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — **running**
-  (`docker info` must succeed). Hosts Postgres/Redis/Qdrant **and** the build/verify sandbox.
-- [`uv`](https://docs.astral.sh/uv/) — the Python environment manager (`uv --version`).
-- [**PowerShell 7+**](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)
-  (`pwsh`). Windows ships only PowerShell 5.1; the durability and service scripts need `pwsh`.
-  Quick install: `winget install Microsoft.PowerShell`.
-
-```powershell
-git clone https://github.com/tyoung515-svg/bob.git
-cd bob
-```
-
-For v0.98.1, set BoB up with the step-by-step guide in
-**[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — the Python environment from the pinned
-lockfiles, the Docker infrastructure, secrets, a model backend, and first login, with
-the known first-run gotchas on a fresh Windows box called out. It is also
-**agent-runnable**, if you'd rather drive setup from an AI agent. Upgrading an
-existing install is a separate, tag-to-tag runbook: **[`UPGRADE.md`](UPGRADE.md)**.
-
-> **One-command installer:** a single script that runs the whole flow end-to-end
-> (`install-bob.ps1`) is landing in **v1.0**. It ships in the tree now as a preview; for
-> v0.98.1 the step-by-step guide above is the supported path.
-
-Once BoB is up, the front door is **headless** (CLI / MCP / the JSON+WebSocket API) or the
-**Kotlin Multiplatform desktop app** (`bobclaw-app`). Log in as `admin` with the generated
-`BOBCLAW_PASSWORD` printed once during setup (only its bcrypt hash is stored in
-`.secrets/bobclaw.env`); login also requires a **TOTP 2FA code** — enroll the `TOTP_SECRET`
-(same file) in an authenticator app:
-`otpauth://totp/BoB:admin?secret=<TOTP_SECRET>&issuer=BoB`. The app is available in
-**English, Simplified Chinese (简), and Traditional Chinese (繁)** via the header toggle.
-
-v0.98.1 makes the desktop app a first-class cockpit: a **live Council Theater** (watch a
-council deliberate seat-by-seat as it streams), a **chat model/backend picker** with
-plain-language names, the **Ask-Bob helper bubble** (screen-aware Q&A over memory and
-teams, with guardrailed team edits), a **3D memory graph**, and an in-app **Approvals**
-screen.
-
-- **Stop:** `./scripts/win/stop-all.ps1`
-
-### Enabling a backend
-
-BoB needs at least one model backend. Each is enabled in `.secrets/bobclaw.env`, and
-**model IDs must match what your provider currently serves** — the example values are
-just placeholders. Core reads env at startup, so **restart core** after adding a key.
-
-| Backend (face) | What to set | Auth |
+| Level | What you do | What BoB does |
 | --- | --- | --- |
-| **Cloud API** (Anthropic / Google / DeepSeek / Z.AI / Kimi / MiniMax) | the provider's `*_API_KEY` + `*_MODEL` | paste your key |
-| **Claude CLI** (`planner-claude`) | `CC_CLI_PATH` (blank = resolve on PATH) | `claude setup-token` |
-| **Antigravity** (`planner-gemini`) | `AGY_CLI_PATH` | run `agy` once → Google login |
-| **Codex** (`planner-codex` / `planner-gpt`) | `CODEX_CLI_PATH`, `CODEX_HOME`; a LiteLLM proxy for non-OpenAI providers (`./scripts/win/start-litellm.ps1`) | ChatGPT login (GPT, native) / per-provider LiteLLM keys |
-| **Local** (Ollama / LM Studio) | `PREFERRED_LOCAL_MODEL` + the server URL | none |
+| **Talk to one agent** | Open a conversation with the Assistant, Planner, Researcher, Builder, Reviewer, Fixer or Orchestrator, and choose the provider and model for it. | Answers on that model, with your memory and projects in reach. |
+| **Hand a job to a crew** | Describe the outcome and start a workflow from the Library. | Runs plan, build, review and fix as separate stages, each with its own agent and model. *(Preview.)* |
+| **Leave it running** | Start the work and do something else. | Carries on in the background and collects anything that needs a decision under **Needs you**. *(Preview. Work you put on the calendar shows as due with a Run button; it does not start by itself yet.)* |
+| **Drive it from another agent** | Point an MCP-capable agent, such as Claude Code or Codex, at BoB. | Offers its agents and memory to that agent as tools, within the access you granted. *(From-source installs today.)* |
 
-> **Codex note:** `codex exec` routes non-OpenAI providers (GLM/DeepSeek/Qwen) through a
-> local **LiteLLM proxy** (`LITELLM_BASE_URL`, default `:4000`). Start it with
-> `./scripts/win/start-litellm.ps1` (sample: `litellm/config.yaml`); Codex 0.142+ needs a
-> per-file `~/.codex/<profile>.config.toml` with `wire_api = "responses"`. **GPT** under a
-> ChatGPT login runs **natively** (no proxy) via the `planner-gpt` face.
+## A library that grows with you
 
-### Memory & the local embedder (optional, default OFF)
+BoB is meant to get more capable the longer you use it. The **Library** is your
+inventory of apps, workflows and tools. Save a workflow that worked, sketch a new one on
+a canvas, keep an app BoB built for you. Each thing you add is something you can run
+again, change, or build the next thing on.
 
-BoB's memory module (`MEMORY_ENABLED`) stores extracted facts as vectors and recalls
-them into future turns. When enabled:
+## Install
 
-- **Embedder** — the default `embed_text` slot is **`qwen3-embedding-4b`** (2560-dim),
-  served by `./scripts/win/start-embedder.ps1` on `:8081` (set `BOBCLAW_EMBED_GGUF` to
-  your GGUF; qwen3 embedding models use last-token pooling, the launcher's default).
-  Chosen from the author-blind paraphrase eval in
-  `bobclaw-core/evals/retrieval/CEILING.md` — recall@10 **65%** vs 40% for the 0.6B
-  tier. The CPU-light previous default (`granite-embedding-311m`) remains a documented
-  alternative in `config/memory_slots.toml`.
-- **Vector store** — Docker Qdrant by default. An **experimental zero-Docker path**
-  (the `zvec` embedded store, run in a supervised child process) can be opted into via
-  `config/memory_stores.toml` + `pip install zvec==0.5.1`. Qdrant stays the shipping
-  default; the zvec path's known limitation is approximate-search recall a few points
-  below exact search (see `CHANGELOG.md`).
-- **Write safety** — every memory writer must hold a single-writer OS-level write
-  fence (default ON with memory; a second writer degrades to read-only with honest
-  health rather than corrupting the store).
+There are three ways in. The installer is the quickest on a Windows PC. Docker and
+from source are for a home server, and for anyone who wants to work on BoB itself.
 
-### Bringing it back up
+### Windows installer (preview)
 
-`stop-all` / a reboot stops the host services (Docker restarts itself). To relaunch,
-re-run `./install-bob.ps1` (idempotent) or the lighter `./scripts/win/start-local.ps1`,
-which brings up infra + core + gateway without requiring local embedding models.
+You need 64-bit Windows 10 (version 2004 or later) or Windows 11, about 20 GB of free
+disk space, an administrator account for the install, and an authenticator app on your
+phone.
+
+1. Download `BoB_0.99.1_x64-setup.exe` from
+   [Releases](https://github.com/tyoung515-svg/bob/releases) and run it. The installer is
+   not signed yet, so Windows shows "Windows protected your PC"; choose **More info**, then
+   **Run anyway**.
+2. Open BoB and choose **Set up Bob on this PC**. BoB installs its runtime into its own
+   WSL 2 distribution. If WSL is not installed, setup shows the three steps to add it;
+   that needs one restart. Docker Desktop is not required.
+3. Create your lane: a name and a password of at least 10 characters. A lane is one
+   person's private space, with its own login, conversations, memory and workspace.
+4. Scan the QR code with your authenticator app. BoB asks for a code when you sign in
+   and when you change your password or security settings.
+5. Optionally install the local embedder (about 0.6 GB), which lets BoB find memories by
+   meaning.
+6. Connect a model, as described below, and start a conversation.
+
+To update later, run the newer installer over the one you have, open BoB and press
+**Upgrade** on the **BoB update available** card. BoB saves a backup of its runtime first
+and keeps your lane, memory and sign-ins.
+
+### Docker or from source
+
+Follow **[`AGENTS-SETUP.md`](AGENTS-SETUP.md)**. It covers the datastores, the database
+migrations, secrets, your lane, a model backend and first sign-in, and an AI agent can run
+it for you. Upgrading an existing install is a separate runbook:
+**[`UPGRADE.md`](UPGRADE.md)**.
+
+## Connect a model
+
+BoB needs at least one model. In the desktop app, use first-run setup or
+**Settings → Keys & sign-ins**.
+
+| How | Providers | What happens |
+| --- | --- | --- |
+| **Claude subscription** | Claude | You sign in on Anthropic's own page. BoB then runs Anthropic's own Claude Code program, unmodified, under your login. |
+| **ChatGPT subscription** | ChatGPT | You sign in on OpenAI's own page, through OpenAI's Codex program. BoB then sends your turns to OpenAI's Codex service with that sign-in. |
+| **API key** | OpenAI, Anthropic, DeepSeek, Google, GLM (Z.ai), Kimi (Moonshot), Qwen (Alibaba Model Studio) | You paste a key. It is stored in your lane on your machine. |
+| **Local models** | Ollama, LM Studio, llama.cpp | Available on from-source installs. |
+
+Each provider has a default model. In any conversation you can pick **Provider**, then
+**Model**, for the next turn.
 
 ## What's inside
 
-Four services (see **[`ARCHITECTURE.md`](ARCHITECTURE.md)** for the full picture):
+| Part | Role |
+| --- | --- |
+| Desktop app | The window you work in: agents, workspace, tasks, projects, memory, library, and the things that need your decision. |
+| `bobclaw-core` | The engine: agents, routing, workflows, memory and all model backends. |
+| `bobclaw-gateway` | Login (password and authenticator), chat, and the REST and WebSocket API. |
+| Broker and workers | Carry requests between the app and the runtime, and run Builder work in isolation with a network allowlist. |
+| Runtime image | Everything above, with Postgres, Redis, Qdrant and a local embedder, packaged as one WSL distribution for the installer. |
+| `bobclaw-tui`, `bobclaw-telegram` | A terminal front end and a Telegram front end, for from-source installs. |
+| `bobclaw-app` | The earlier Kotlin desktop and Android app. It does not work with this release and is kept until the mobile app is rebuilt. |
 
-| Service | Port | Role |
-| --- | --- | --- |
-| `bobclaw-core` | 7825 | LangGraph engine — routing, faces, fan-out, council, memory, build pipeline, all model backends |
-| `bobclaw-gateway` | 7826 | Auth (JWT + TOTP), chat, REST + WebSocket API (JSON only — the desktop app is the GUI) |
-| `bobclaw-claude-pipeline` | 7823 | Claude build-session wrapper |
-| `bobclaw-app` | — | Kotlin Multiplatform GUI — desktop; Android preview. Localized EN / 简 / 繁 |
+## Status and scope
 
-Backends span cloud APIs (Anthropic, Google, DeepSeek, Z.AI/GLM, Moonshot/Kimi,
-MiniMax), subscription CLIs run under your own login (`claude`, `codex`, `agy`,
-`kimi`), and fully-local model servers (Ollama, LM Studio, llama.cpp). All model IDs
-are configurable — set your provider's current model in `.secrets/bobclaw.env`.
+**Works in this release:** the installer and first-run setup; seven agents with several
+conversations at once; ChatGPT and Claude sign-in and API keys; choosing a model per
+conversation; Builder writes and commands with approvals; memory with a local embedder;
+projects, tasks and the library.
 
-Every face is told, on each turn, that it's running inside BoB — its name, role, and the
-backend serving it — so it answers from its real deployment rather than "I have no idea where
-I'm running." This is on by default (`BOB_IDENTITY_ENABLED`; set it false for a bare model).
+**Preview:** workflows and unattended runs.
+
+**Not yet:** scheduled work that starts by itself, a Discord link, a phone app, a signed
+installer, and desktop apps for macOS and Linux.
+
+BoB is for one owner per install. Lanes keep each person's conversations, memory and
+workspace apart, and code that a model runs in one lane cannot read another lane's files
+or sign-ins. The services behind the lanes share one database, though, so lanes are not a
+wall between people who do not trust each other. BoB listens on loopback only by default
+and is not a hardened multi-tenant public service; see `SECURITY.md` before changing
+that. This build ships with generous limits, so that a job can finish. You can tighten
+them yourself.
+
+## Roadmap to 1.0
+
+- **Next small releases:** a Discord link, so you can reach BoB away from your PC; more of
+  the preview features switched on as they prove themselves.
+- **1.0:** workflows out of preview, scheduled work that starts by itself, a signed
+  installer, and BoB staying up on Windows without the app window.
+- **After 1.0:** a mobile app.
 
 ## Documentation
 
-- **[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — step-by-step / agent-runnable install
-- **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — services, ports, and the operating model (when to council vs. single-dispatch, teams, capability classes)
+- **[`AGENTS-SETUP.md`](AGENTS-SETUP.md)** — Docker and from-source install, step by step or run by an agent
+- **[`UPGRADE.md`](UPGRADE.md)** — upgrading an existing Docker or from-source install
+- **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — services and the operating model
 - **[`SECURITY.md`](SECURITY.md)** — the loopback-by-default posture; read before exposing anything
-- **[`COMPLIANCE.md`](COMPLIANCE.md)** — using your own subscriptions/keys within each vendor's terms
+- **[`COMPLIANCE.md`](COMPLIANCE.md)** — using your own subscriptions and keys within each vendor's terms
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — running the tests, project layout
 - **[`CHANGELOG.md`](CHANGELOG.md)** — release notes
-
-## Status & scope
-
-v0.98.1 is headless-usable and single-operator, with a **desktop GUI** (Android preview). It
-is **loopback by default**; the gateway can be exposed for trusted remote access **behind a
-TLS-terminating reverse proxy** (see `SECURITY.md`), reached via the native client over an
-SSH tunnel. `core` and the datastores stay loopback, and it is not a hardened multi-tenant
-public service. The one-command installer, containerized topology, one-click packaging, and
-cross-platform support are on the roadmap to v1.0+.
 
 ## License
 

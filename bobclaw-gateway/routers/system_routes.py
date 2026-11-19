@@ -2,10 +2,11 @@
 BoBClaw Gateway — System Routes
 
 GET /health         — liveness check
-GET /system/ports   — service port map
+GET /system/ports   — service port map + server clock
 GET /system/config  — safe (non-secret) configuration
 """
 import logging
+from datetime import datetime, timezone
 
 from aiohttp import web
 
@@ -33,12 +34,19 @@ async def health(request: web.Request) -> web.Response:
 
 @router.get("/system/ports")
 async def system_ports(request: web.Request) -> web.Response:
-    """Return service-to-port mapping (requires authentication via middleware)."""
+    """Return service-to-port mapping + server clock (auth via middleware).
+
+    The clock fields exist so the MCP ``get_server_time`` action tool (which
+    proxies this route) actually returns the time — 2026-10-01 F1 fix.
+    """
+    now = datetime.now(timezone.utc)
     return web.json_response(
         {
             "gateway": config.PORT,
             "core": 7825,
             "claude_pipeline": 7823,
+            "server_time_utc": now.isoformat().replace("+00:00", "Z"),
+            "server_time_epoch": now.timestamp(),
         }
     )
 

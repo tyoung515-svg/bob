@@ -16,6 +16,7 @@ from typing import AsyncGenerator, Optional
 import aiohttp
 
 from core.config import config
+from core.lane_config import configured_mode, get_lane, chat_model, chat_model_entry
 
 
 # ─── Data types ───────────────────────────────────────────────────────────────
@@ -54,7 +55,8 @@ class LocalModelRouter:
                 if resp.status != 200:
                     return []
                 data = await resp.json(content_type=None)
-                return [m["id"] for m in data.get("data", [])]
+                return [m["id"] for m in data.get("data", [])
+                        if not configured_mode() or chat_model_entry(m)]
         except Exception:
             return []
 
@@ -140,13 +142,21 @@ class LocalModelRouter:
                 ("ollama",   config.OLLAMA_URL),
                 ("lmstudio", config.LMSTUDIO_URL),
             ]:
+                if configured_mode() and url not in {get_lane().values.get("OLLAMA_URL"), get_lane().values.get("LMSTUDIO_URL")} :
+                    continue
+                if not url:
+                    continue
                 models = await self._fetch_models(session, url)
+                if configured_mode():
+                    models = [m for m in models if chat_model(m)]
                 if not models:
                     continue
                 resident = await self._fetch_resident(session, name, url)
                 # If the residency probe returned nothing usable, treat the
                 # installed list as the resident set (preserves legacy behavior
                 # when the backend doesn't expose a state endpoint).
+                if configured_mode():
+                    resident = [m for m in resident if m in models]
                 if not resident:
                     resident = list(models)
                 backends.append(

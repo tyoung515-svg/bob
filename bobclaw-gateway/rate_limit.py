@@ -9,6 +9,7 @@ load-bearing.
 """
 from __future__ import annotations
 
+import logging
 import math
 import time
 from typing import Awaitable, Callable
@@ -16,6 +17,8 @@ from typing import Awaitable, Callable
 from aiohttp import web
 
 from client_ip import client_ip
+
+logger = logging.getLogger(__name__)
 
 # Paths the rate limiter does not see. /health is skipped to avoid throttling
 # k8s liveness probes; /ws/chat is a long-lived WS handshake (rate-limit per
@@ -80,18 +83,28 @@ def make_rate_limit_middleware(
 ) -> Callable[[web.Request, Callable], Awaitable[web.StreamResponse]]:
     """Factory: build an aiohttp middleware bound to a fresh TokenBucket."""
     bucket = TokenBucket(rate_per_minute=rate_per_minute, burst=burst)
+    # Debug-only, bounded by registered route templates (never IDs/query strings).
+    route_counts: dict[tuple[str, str], int] = {}
 
     @web.middleware
     async def rate_limit_middleware(request: web.Request, handler):
         if _is_bypassed(request.path):
             return await handler(request)
 
+        if logger.isEnabledFor(logging.DEBUG):
+            resource = request.match_info.route.resource
+            route = resource.canonical if resource is not None else '<unmatched>'
+            key = (request.match_info.route.method, route)
+            route_counts[key] = route_counts.get(key, 0) + 1
+            logger.debug('rate_limit request method=%s route=%s count=%d', *key, route_counts[key])
         allowed, retry_after = bucket.consume(_request_key(request))
         if not allowed:
+            seconds = max(1, math.ceil(retry_after))
             return web.json_response(
-                {"error": "rate limit exceeded"},
+                {"error": "rate limit exceeded", "code": "rate_limited",
+                 "retry_after_seconds": seconds},
                 status=429,
-                headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+                headers={"Retry-After": str(seconds)},
             )
         return await handler(request)
 

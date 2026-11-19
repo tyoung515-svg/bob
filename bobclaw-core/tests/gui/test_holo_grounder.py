@@ -136,7 +136,7 @@ def test_decorrelation_registered():
     # HOLO_BACKEND must be in FAMILY_BY_BACKEND (registration)
     assert HOLO_BACKEND in FAMILY_BY_BACKEND
     # Decorrelation with all listed backends
-    for b in ("deepseek_v4_flash", "glm_5_2", "claude_api", "claude_code",
+    for b in ("deepseek_v4_flash", "glm_5_3", "claude_api", "claude_code",
               "gemini_pro", "kimi_code", "minimax", "local"):
         assert is_decorrelated(HOLO_BACKEND, b) is True
     # Same-backend decorrelation is False

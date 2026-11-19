@@ -11,6 +11,9 @@ import re
 from typing import TYPE_CHECKING
 
 from core import teams
+from core.roster import get_roster
+
+_routing = get_roster().routing
 from core.backends.local_router import LocalModelRouter
 
 if TYPE_CHECKING:
@@ -38,7 +41,7 @@ _CODE_SHAPED = re.compile(
 )
 
 # CoCouncil (P1b): the face that triggers the multi-voice deliberation branch.
-_COUNCIL_FACE_ID = "council-max"
+_COUNCIL_FACE_ID = _routing.council_face
 
 
 def _build_council_spec(state: "AgentState") -> dict:
@@ -156,7 +159,7 @@ async def _select_face(state: "AgentState") -> tuple[str | None, str | None]:
     # (overview), and Kimi is the recorded backup — see worker-deepseek.yaml.
     # (No Kimi membership/PAYG bulk split: DeepSeek has no per-account cap, and
     # fan-out width/wave-chunking is handled in dispatch_node, not here.)
-    worker_face = "worker-deepseek"
+    worker_face = _routing.intent_faces.worker
 
     if state.get("dispatch_subtask") is not None:
         return worker_face, current_face
@@ -168,10 +171,10 @@ async def _select_face(state: "AgentState") -> tuple[str | None, str | None]:
     # Planning intent detection
     if _PLAN_INTENT.search(task):
         if _CODE_SHAPED.search(task):
-            return "planner-kimi", current_face
+            return _routing.intent_faces.plan_code, current_face
         # Concept-shaped planning goes to the senior reasoning tier (MiniMax-M3),
         # not Opus — claude_api is reserved for explicit use to control API cost.
-        return "planner-minimax", current_face
+        return _routing.intent_faces.plan_concept, current_face
 
     return None, None
 
@@ -229,6 +232,9 @@ async def _t1_fastpath_face(state: "AgentState", cache=None) -> "str | None":
 
 async def route_node(state: "AgentState") -> dict:
     """LangGraph node: choose the backend for the current conversation turn."""
+    from core.lane_config import configured_mode
+    if configured_mode():
+        return await _configured_route(state)
     # FU1 D2 pause-with-teeth: refuse a turn whose NAMED flight is auto-paused over budget
     # BEFORE any routing/work. None ⇒ proceed (flag OFF / ambient / live-face / not paused) —
     # byte-identical. The refusal carries flight_refused so _route_after_recall ENDs the turn.
@@ -256,7 +262,7 @@ async def route_node(state: "AgentState") -> dict:
     # `backend` is a harmless placeholder (the council nodes pick per-seat
     # backends themselves). Additive: fires ONLY for face_id == council-max.
     if face_id == _COUNCIL_FACE_ID:
-        escalation_backend = "claude_api"
+        escalation_backend = _routing.escalation_backend
         try:
             from core.faces.registry import get_default_registry
             face = get_default_registry().get_face(face_id)
@@ -269,7 +275,7 @@ async def route_node(state: "AgentState") -> dict:
                 exc_info=True,
             )
         return {
-            "backend": "local",
+            "backend": _routing.preferred_backend,
             "face_id": face_id,
             "escalation_backend": escalation_backend,
             "cc_posture": {},
@@ -277,6 +283,16 @@ async def route_node(state: "AgentState") -> dict:
         }
 
     # ── Profile-driven council (Phase 3a) ────────────────────────────────────
+    if state.get("agent_service_single_turn"):
+        from core.config import KNOWN_BACKENDS
+        selected = state.get("backend_override")
+        local_strata = (selected == "qwen_research" and
+                        state.get("model_override") == "qwen3.8-flash-next-iq3_xxs")
+        if selected not in KNOWN_BACKENDS and not local_strata:
+            return {"error": "Invalid agent-service backend"}
+        return {"backend": selected, "escalation_backend": None,
+                "council_spec": None, "tools_allowed": []}
+
     # A saved profile with a council `shape` runs the council subgraph with its seats
     # + role prompts + bounds — generalizing the council-max branch to any
     # conversation. A profile without a shape is just a roster (use `team=`).
@@ -293,9 +309,9 @@ async def route_node(state: "AgentState") -> dict:
             hierarchical = True
         if prof and prof.get("shape"):
             return {
-                "backend": "local",
+                "backend": _routing.preferred_backend,
                 "face_id": face_id,
-                "escalation_backend": "claude_api",
+                "escalation_backend": _routing.escalation_backend,
                 "cc_posture": {},
                 "council_spec": _build_council_spec_from_profile(
                     prof, emit_events=bool(state.get("emit_events"))
@@ -318,7 +334,7 @@ async def route_node(state: "AgentState") -> dict:
                     f"valid: {sorted(KNOWN_BACKENDS)}"
                 ),
             }
-        escalation_backend = "claude_api"
+        escalation_backend = _routing.escalation_backend
         cc_posture: dict = {}
         try:
             from core.faces.registry import get_default_registry
@@ -343,7 +359,7 @@ async def route_node(state: "AgentState") -> dict:
     # escalation_backend so execute_node's 429 / NoOpenCodeAvailable
     # fallbacks honour face intent rather than defaulting to kimi_platform.
     if model_override:
-        escalation_backend = "claude_api"
+        escalation_backend = _routing.escalation_backend
         cc_posture = {}
         try:
             from core.faces.registry import get_default_registry
@@ -408,8 +424,8 @@ async def route_node(state: "AgentState") -> dict:
         )
 
     # Resolve face preferences
-    preferred_backend = "local"
-    escalation_backend = "claude_api"
+    preferred_backend = _routing.preferred_backend
+    escalation_backend = _routing.escalation_backend
     cc_posture: dict = {}
     try:
         from core.faces.registry import get_default_registry
@@ -470,7 +486,7 @@ async def route_node(state: "AgentState") -> dict:
         }
 
     # ── Workspace validation for workspace-bound workers ─────────────────────
-    if face_id == "worker-opencode":
+    if face_id == _routing.workspace_worker_face:
         workspace = state.get("workspace_dir")
         if not workspace:
             return {
@@ -504,3 +520,79 @@ async def route_node(state: "AgentState") -> dict:
             }
         ],
     }
+
+
+async def _configured_route(state: dict) -> dict:
+    """Configured lanes have explicit defaults, pins and declared team choices."""
+    from core.lane_config import (get_lane, require_backend, catalog,
+                                  LaneConfigurationError, normalize_backend)
+    from core.faces.registry import get_default_registry
+    from core.flight.enforcement import paused_flight_refusal
+    refusal = await paused_flight_refusal(state)
+    if refusal is not None:
+        return refusal
+    lane = get_lane()
+    await catalog(_router)
+    try:
+        from core.config import KNOWN_BACKENDS
+        if state.get("backend_override"):
+            require_backend(normalize_backend(state["backend_override"]), state.get("model_override"))
+        elif state.get("model_override") in KNOWN_BACKENDS:
+            require_backend(normalize_backend(state["model_override"]))
+        teams.require_team(state.get("team") or teams.get_active_team())
+        profile_name = state.get("profile_name")
+        profile = teams.load_profile(profile_name) if profile_name else None
+        if profile_name and profile is None:
+            raise LaneConfigurationError(f"needs provider/configuration profile {profile_name}")
+        if profile:
+            teams.require_profile(profile)
+            if profile.get("shape"):
+                # No default council seats or auxiliary providers in this mode.
+                seats = profile.get("seats") or []
+                spec = {"mode": profile["shape"], "seats": [s.get("posture") for s in seats],
+                        "profile": {s.get("posture"): s for s in seats},
+                        "synth_backend": profile.get("synth_backend"),
+                        "bounds": profile.get("protocol_bounds") or {}}
+                from core.lane_config import require_council
+                require_council(spec)
+                return {"backend": profile["synth_backend"], "council_spec": spec,
+                        "escalation_backend": None, "tools_allowed": []}
+        if lane.default_error():
+            raise LaneConfigurationError(lane.default_error())
+        registry = get_default_registry()
+        from core.chat_policy import explicit_work_turn
+        hierarchical = bool(state.get("hierarchical") or (profile or {}).get("hierarchical"))
+        ordinary_chat = not explicit_work_turn({**state, "hierarchical": hierarchical})
+        face_id = ((state.get("selected_face_id") if ordinary_chat else None)
+                   or state.get("face_id") or "assistant")
+        if face_id not in registry:
+            raise LaneConfigurationError(f"needs provider/configuration face {face_id}")
+        pinned = state.get("pin_authoritative") or (profile or {}).get("pin_authoritative")
+        if not ordinary_chat and not pinned and not state.get("backend_override") and not state.get("model_override"):
+            if state.get("dispatch_subtask") is not None or state.get("phase") in {"dispatch", "execute", "build", "worker"}:
+                face_id = "assistant"
+            elif _PLAN_INTENT.search(state.get("task", "")):
+                face_id = "reviewer" if _CODE_SHAPED.search(state.get("task", "")) else "researcher"
+        face = registry.get_face(face_id)
+        chosen = normalize_backend(state.get("backend_override") or await teams.resolve(
+            face.role, face=face, team=state.get("team")))
+        model = state.get("model_override")
+        # Older callers use model_override as a backend selector.
+        from core.config import KNOWN_BACKENDS
+        if not state.get("backend_override") and model in KNOWN_BACKENDS:
+            chosen, model = model, None
+        require_backend(chosen, model)
+        escalation = teams.escalation_for(face.role, face=face, team=state.get("team")) or None
+        if escalation:
+            require_backend(escalation)
+        if chosen == "local":
+            best = _router.get_best_backend()
+            if not best:
+                raise LaneConfigurationError("needs provider local: no permitted chat models")
+            chosen = best.name
+        return {"backend": chosen, "face_id": face_id, "escalation_backend": escalation,
+                "cc_posture": dict(face.cc_posture), "codex_posture": dict(face.codex_posture),
+                "tools_allowed": [], "council_spec": None, "model_override": model,
+                "chat_single_pass": ordinary_chat, "hierarchical": hierarchical}
+    except (LaneConfigurationError, KeyError, ValueError) as exc:
+        return {"error": str(exc), "backend": None, "escalation_backend": None}

@@ -1,0 +1,29 @@
+{
+  "run": "a — happy path: allow_once, cat the fixture file, success result",
+  "frames": [
+    "turn.started",
+    "tool.call",
+    "authority.decided",
+    "approval.requested",
+    "approval.resolved",
+    "tool.started",
+    "tool.result",
+    "turn.completed"
+  ],
+  "ledger_kinds": [
+    "lineage",
+    "turn.start",
+    "step.context",
+    "tool.call",
+    "authority.decided",
+    "approval.requested",
+    "approval.resolved",
+    "tool.started",
+    "tool.result",
+    "turn.end"
+  ],
+  "tool_result_status": "succeeded",
+  "turn_status": "succeeded",
+  "fixture_bytes": "bob-slice-fixture\n",
+  "deny_reason": null
+}

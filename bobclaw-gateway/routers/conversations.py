@@ -41,6 +41,23 @@ def _get_user_id(request: web.Request) -> str:
     return request.get("user", {}).get("sub", "admin")
 
 
+async def workflow_owner(pool,user_id,conversation_id):
+    if pool is None: return None
+    try: identifier=UUID(conversation_id)
+    except (ValueError,TypeError,AttributeError): return None
+    row=await pool.fetchrow('''SELECT r.id AS run_id,r.topology FROM agent_run_steps s JOIN agent_runs r
+        ON (r.lane,r.owner,r.id)=(s.lane,s.owner,s.run_id) WHERE s.conversation_id=$1 AND r.owner=$2
+        AND r.topology='workflow/v1' AND r.status NOT IN ('completed','stopped','expired','failed','blocked','unknown') LIMIT 1''',identifier,user_id)
+    return row['run_id'] if row and row.get('topology')=='workflow/v1' else None
+
+
+async def require_unowned(pool,user_id,conversation_id):
+    import json
+    run=await workflow_owner(pool,user_id,conversation_id)
+    if run:
+        raise web.HTTPConflict(text=json.dumps({'error':'conversation_owned_by_run','run_id':run}),content_type='application/json')
+
+
 @router.get("/conversations")
 async def list_conversations(request: web.Request) -> web.Response:
     limit = max(1, min(int(request.query.get("limit", "20")), 100))
@@ -194,6 +211,7 @@ async def archive_conversation(request: web.Request) -> web.Response:
     conv_id = request.match_info["conv_id"]
     pool = _get_pool(request)
     user_id = _get_user_id(request)
+    await require_unowned(pool,user_id,conv_id)
     result = await pool.execute(
         "UPDATE conversations SET is_archived = TRUE, updated_at = NOW() WHERE id = $1 AND user_id = $2 AND is_archived = FALSE",
         conv_id,
@@ -250,6 +268,7 @@ async def update_conversation(request: web.Request) -> web.Response:
 
     pool = _get_pool(request)
     user_id = _get_user_id(request)
+    await require_unowned(pool,user_id,conv_id)
 
     args = [conv_id]
     set_clauses = []
@@ -283,6 +302,7 @@ async def assign_conversation_project(request: web.Request) -> web.Response:
     project_id = body.get("project_id") or None
     pool = _get_pool(request)
     user_id = _get_user_id(request)
+    await require_unowned(pool,user_id,conv_id)
 
     # Verify the conversation exists and is owned by the caller.
     conv = await pool.fetchrow(

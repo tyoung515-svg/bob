@@ -1,0 +1,17 @@
+{
+  "allowlist": [
+    "pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
+    "crates.io", "static.crates.io", "proxy.golang.org", "sum.golang.org",
+    "github.com", "api.github.com", "codeload.github.com",
+    "objects.githubusercontent.com", "raw.githubusercontent.com", "gitlab.com",
+    "huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co",
+    "cdn-lfs-eu-1.hf.co", "cas-bridge.xethub.hf.co", "cas-server.xethub.hf.co",
+    "transfer.xethub.hf.co", "docs.python.org", "developer.mozilla.org"
+  ],
+  "upload_hosts": [],
+  "profiles": {
+    "codex": ["api.openai.com", "chatgpt.com", "auth.openai.com"],
+    "mcp": [],
+    "claude": ["api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com"]
+  }
+}

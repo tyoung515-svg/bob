@@ -1,7 +1,7 @@
 id: scout
 name: "Scout & Absorb"
 audience: "every AI-tool user drowning in model/tool churn (non-developers included)"
-first_user: Travis
+first_user: operator
 wow_flow: "Weekly digest of new models, tools, and pricing changes, with curated recommendations."
 faces:
   - ref: source-fetch

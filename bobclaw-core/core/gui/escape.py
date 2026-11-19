@@ -24,6 +24,9 @@ critic/backend/node/HTTP module, makes no model call, and does no I/O at import.
 
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import os
 import subprocess
 from collections.abc import Callable, Mapping
@@ -266,6 +269,8 @@ class DockerSandboxRunner:
         self._allow_host = allow_host
 
     def run(self, workspace: "Path", argv: "list[str]", *, timeout: int) -> ScriptRun:
+        if execution_mode() == "worker":
+            worker_client.refuse()
         from core.build import sandbox  # lazy: keep escape.py import-light
 
         mode = sandbox.resolve_mode()
@@ -309,14 +314,24 @@ class DockerSandboxRunner:
                 "PYTHONIOENCODING": "utf-8",
                 "PYTHONDONTWRITEBYTECODE": "1",
             }
-            proc = subprocess.run(
-                list(argv),
-                cwd=str(workspace),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=child_env,
-            )
+            if execution_mode() == "legacy":
+                proc = subprocess.run(
+                    list(argv),
+                    cwd=str(workspace),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=child_env,
+                )
+            else:
+                proc = worker_client.refuse(
+                    list(argv),
+                    cwd=str(workspace),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=child_env,
+                )
         except subprocess.TimeoutExpired as e:
             return ScriptRun(
                 returncode=124,

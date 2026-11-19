@@ -34,6 +34,7 @@ import logging
 from dataclasses import asdict
 
 from core.config import COUNCIL_SEAT_BACKENDS, COUNCIL_SYNTH_TIMEOUT_SECONDS
+from core.roster import get_roster
 from core.council.engine import CouncilEngine
 from core.council.events import PHASE_BLOCKED, emit_council_event
 from core.nodes._l0_events import _append_agent_turn_event
@@ -121,8 +122,10 @@ async def synthesize_node(state: "dict") -> dict:
     ``council_handoff``.
     """
     spec = state.get("council_spec") or {}
+    from core.lane_config import require_council
+    require_council(spec)
     topic = state.get("task", "")
-    synth_backend = spec.get("synth_backend") or "minimax"
+    synth_backend = spec.get("synth_backend") or get_roster().defaults.council_synth_backend
 
     # P2: after a grounded restart, panel_results accumulates BOTH the prior
     # round's entries and the re-run round's (the reducer is operator.add). Read
@@ -178,7 +181,12 @@ async def synthesize_node(state: "dict") -> dict:
         b for b in (COUNCIL_SEAT_BACKENDS.get("synth", {}).get("fallback_chain") or [])
         if b and b != synth_backend
     ]
+    from core.lane_config import configured_mode, require_backend
+    if configured_mode():
+        _synth_fallbacks = list(spec.get("synth_fallback_chain") or [])
     synth_candidates = [synth_backend, *_synth_fallbacks]
+    for candidate in synth_candidates:
+        require_backend(candidate)
     synth_messages = [
         {"role": "system", "content": _COUNCIL_SYSTEM_BASE},
         {"role": "user", "content": synth_prompt},

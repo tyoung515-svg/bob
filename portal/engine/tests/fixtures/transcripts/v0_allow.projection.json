@@ -1,0 +1,111 @@
+{
+  "call": {
+    "call_id": "call-1",
+    "decided_outcome": "ask",
+    "decided_source": "rule",
+    "error_code": null,
+    "n_results": 1,
+    "output_digest": "sha256:ff6aa3cc22d9ef2969bf5a120886ce2c3df40289bb0e196dc961df7044119cac",
+    "resolution": "allow",
+    "status": "succeeded",
+    "terminal_state": "merged",
+    "witness_present": true
+  },
+  "frames": [
+    {
+      "caused_by": null,
+      "chain": [],
+      "correlation_id": null,
+      "event": "turn.started",
+      "ordinal": "2",
+      "seq": 1,
+      "status": null
+    },
+    {
+      "caused_by": "external",
+      "chain": [],
+      "correlation_id": "call-1",
+      "event": "tool.call",
+      "ordinal": "4",
+      "seq": 2,
+      "status": null
+    },
+    {
+      "caused_by": "4",
+      "chain": [
+        {
+          "reason": "proposed",
+          "rule": null,
+          "state": "proposed"
+        },
+        {
+          "reason": "approval_route_selected",
+          "rule": "rules/default.rules#rule-1",
+          "state": "approval_required"
+        }
+      ],
+      "correlation_id": "call-1",
+      "event": "authority.decided",
+      "ordinal": "5",
+      "seq": 3,
+      "status": null
+    },
+    {
+      "caused_by": "5",
+      "chain": [],
+      "correlation_id": "call-1",
+      "event": "approval.requested",
+      "ordinal": "6",
+      "seq": 4,
+      "status": null
+    },
+    {
+      "caused_by": "6",
+      "chain": [
+        {
+          "reason": "reviewer_approved",
+          "rule": "rules/default.rules#rule-1",
+          "state": "approved"
+        }
+      ],
+      "correlation_id": "call-1",
+      "event": "approval.resolved",
+      "ordinal": "7",
+      "seq": 5,
+      "status": null
+    },
+    {
+      "caused_by": "7",
+      "chain": [],
+      "correlation_id": "call-1",
+      "event": "tool.started",
+      "ordinal": "8",
+      "seq": 6,
+      "status": null
+    },
+    {
+      "caused_by": "8",
+      "chain": [
+        {
+          "reason": "effect_incorporated",
+          "rule": "rules/default.rules#rule-1",
+          "state": "merged"
+        }
+      ],
+      "correlation_id": "call-1",
+      "event": "tool.result",
+      "ordinal": "9",
+      "seq": 7,
+      "status": "succeeded"
+    },
+    {
+      "caused_by": "9",
+      "chain": [],
+      "correlation_id": null,
+      "event": "turn.completed",
+      "ordinal": "10",
+      "seq": 8,
+      "status": "succeeded"
+    }
+  ]
+}

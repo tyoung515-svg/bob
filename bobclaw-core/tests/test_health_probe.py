@@ -166,8 +166,8 @@ async def test_cached_health_memoizes_within_ttl(monkeypatch):
         return True
 
     monkeypatch.setattr(hp, "_client_health", counting)
-    assert await hp._cached_health("glm_5_2") is True
-    assert await hp._cached_health("glm_5_2") is True
+    assert await hp._cached_health("glm_5_3") is True
+    assert await hp._cached_health("glm_5_3") is True
     assert calls["n"] == 1   # second call served from cache
 
 
@@ -180,11 +180,11 @@ async def test_cached_health_reprobes_after_expiry(monkeypatch):
         return True
 
     monkeypatch.setattr(hp, "_client_health", counting)
-    await hp._cached_health("glm_5_2")
+    await hp._cached_health("glm_5_3")
     # Force the entry stale (expiry in the past) — the cache_is_fresh gate must re-probe.
-    _expiry, val = hp._health_cache["glm_5_2"]
-    hp._health_cache["glm_5_2"] = (-1.0, val)
-    await hp._cached_health("glm_5_2")
+    _expiry, val = hp._health_cache["glm_5_3"]
+    hp._health_cache["glm_5_3"] = (-1.0, val)
+    await hp._cached_health("glm_5_3")
     assert calls["n"] == 2
 
 
@@ -194,7 +194,7 @@ async def test_cached_health_fail_open_on_raise(monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(hp, "_client_health", boom)
-    assert await hp._cached_health("glm_5_2") is True   # raise ⇒ available
+    assert await hp._cached_health("glm_5_3") is True   # raise ⇒ available
 
 
 @pytest.mark.asyncio
@@ -205,7 +205,7 @@ async def test_cached_health_fail_open_on_timeout(monkeypatch):
 
     monkeypatch.setenv("BOBCLAW_HEALTH_PROBE_TIMEOUT", "0.05")
     monkeypatch.setattr(hp, "_client_health", hang)
-    assert await hp._cached_health("glm_5_2") is True   # timeout ⇒ available
+    assert await hp._cached_health("glm_5_3") is True   # timeout ⇒ available
 
 
 # ── A3 (JOAT v1.1): Redis-shared reachability cache (opt-in, fail-open) ──────────
@@ -256,14 +256,14 @@ async def test_cached_health_redis_share_off_never_touches_redis(monkeypatch):
     import core.nodes.execute as ex
     monkeypatch.setattr(ex, "_get_redis", _boom)
     monkeypatch.setattr(hp, "_client_health", lambda b: _async(True))
-    assert await hp._cached_health("glm_5_2") is True   # process-local only
+    assert await hp._cached_health("glm_5_3") is True   # process-local only
 
 
 @pytest.mark.asyncio
 async def test_cached_health_redis_hit_skips_probe(monkeypatch):
     """A sibling worker's shared 'healthy' is reused — the local probe is NOT called."""
     monkeypatch.setenv("BOBCLAW_HEALTH_PROBE_REDIS", "1")
-    fake = _FakeRedis(seed={hp._health_key("glm_5_2"): "1"})
+    fake = _FakeRedis(seed={hp._health_key("glm_5_3"): "1"})
     _wire_fake_redis(monkeypatch, fake)
     calls = {"n": 0}
 
@@ -272,9 +272,9 @@ async def test_cached_health_redis_hit_skips_probe(monkeypatch):
         return False   # would say DOWN — but the Redis hit must win, proving no probe
 
     monkeypatch.setattr(hp, "_client_health", counting)
-    assert await hp._cached_health("glm_5_2") is True
+    assert await hp._cached_health("glm_5_3") is True
     assert calls["n"] == 0                          # served from the shared cache
-    assert hp._health_cache["glm_5_2"][1] is True   # local fallback refreshed
+    assert hp._health_cache["glm_5_3"][1] is True   # local fallback refreshed
 
 
 @pytest.mark.asyncio
@@ -320,9 +320,9 @@ async def test_cached_health_unhealthy_probe_not_published(monkeypatch):
     fake = _FakeRedis()
     _wire_fake_redis(monkeypatch, fake)
     monkeypatch.setattr(hp, "_client_health", lambda b: _async(False))
-    assert await hp._cached_health("glm_5_2") is False   # local negative owns it
+    assert await hp._cached_health("glm_5_3") is False   # local negative owns it
     assert fake.set_calls == []                          # nothing published
-    assert hp._health_key("glm_5_2") not in fake.store
+    assert hp._health_key("glm_5_3") not in fake.store
 
 
 @pytest.mark.asyncio
@@ -338,9 +338,9 @@ async def test_cached_health_redis_fail_open_to_local_probe(monkeypatch):
         return True
 
     monkeypatch.setattr(hp, "_client_health", counting)
-    assert await hp._cached_health("glm_5_2") is True   # local probe used
+    assert await hp._cached_health("glm_5_3") is True   # local probe used
     assert calls["n"] == 1
-    assert hp._health_cache["glm_5_2"][1] is True       # local cache still written
+    assert hp._health_cache["glm_5_3"][1] is True       # local cache still written
 
 
 # ── live_health_probe: throttle + cache + fail-open composed ─────────────────────

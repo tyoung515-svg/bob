@@ -11,11 +11,11 @@ import logging
 from aiohttp import web
 
 from auth import (
+    classify_totp,
     create_access_token,
     create_agent_token,
     decode_access_token,
     verify_password_plain,
-    verify_totp_with_replay_protection,
 )
 from core.permissions import Scope
 from db import (
@@ -44,17 +44,37 @@ async def login(request: web.Request) -> web.Response:
     password = body.get("password", "")
     totp_code = body.get("totp_code") or ""
 
-    if not verify_password_plain(password):
-        return web.json_response({"error": "Invalid credentials"}, status=401)
+    from core import credential_state
+    if credential_state.enabled():
+        from credential_auth import proof
+        from core.execution.models import ExecutionError
+        try:
+            # A link nonce is not a source identity for public login. Use the
+            # verified transport peer plus the aggregate owner bucket.
+            if not await proof(password, totp_code, 'login', request.remote or 'unknown', require_totp=False):
+                return web.json_response({'error': 'Invalid credentials'}, status=401)
+        except ExecutionError as exc:
+            response = web.json_response({'error': {'code': exc.code}}, status=exc.status)
+            if exc.status == 429:
+                response.headers['Retry-After'] = str(exc.detail['retry_after'])
+            return response
+    else:
+        if not verify_password_plain(password):
+            return web.json_response({"error": "Invalid credentials"}, status=401)
+        totp_result = await classify_totp(totp_code)
+        if totp_result == 'replay':
+            return web.json_response({'error': 'TOTP code already used; wait for the next code'}, status=401)
+        if totp_result != 'ok':
+            return web.json_response({'error': 'Invalid TOTP code'}, status=401)
 
-    if not await verify_totp_with_replay_protection(totp_code):
-        return web.json_response({"error": "Invalid TOTP code"}, status=401)
 
+    from security_notice import notice
     access_token = create_access_token()
     refresh_token = await create_refresh_token()
 
     return web.json_response(
         {
+            **notice(),
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "Bearer",

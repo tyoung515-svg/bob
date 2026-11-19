@@ -349,10 +349,10 @@ async def test_make_citation_check_bridges_r4(monkeypatch):
 
     # run_citation_agent is imported LAZILY from core.research.citation inside _cite -> patch the SOURCE module.
     monkeypatch.setattr("core.research.citation.run_citation_agent", fake_run_citation_agent)
-    cite = make_citation_check(retriever_for=lambda c: None, actor_backend="glm_5_2")
+    cite = make_citation_check(retriever_for=lambda c: None, actor_backend="glm_5_3")
     claim = mk_claim("a", "is", 1)
     out = await cite([claim])
-    assert out is sentinel and seen["claims"] == [claim] and seen["actor_backend"] == "glm_5_2"
+    assert out is sentinel and seen["claims"] == [claim] and seen["actor_backend"] == "glm_5_3"
 
 
 # ── 14. construction validation ───────────────────────────────────────────────

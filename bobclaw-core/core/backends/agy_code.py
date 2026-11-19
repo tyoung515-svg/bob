@@ -37,6 +37,9 @@ Streaming is message-level (one block) — agy buffers the whole reply.
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import asyncio
 import json
 import logging
@@ -445,15 +448,26 @@ class AntigravityClient:
     async def health_check(self) -> bool:
         """Return True if ``agy --version`` succeeds (no turn, no quota burn)."""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                self.cli_path,
-                "--version",
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.repo,
-                env=self._subprocess_env(),
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    self.cli_path,
+                    "--version",
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.repo,
+                    env=self._subprocess_env(),
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    self.cli_path,
+                    "--version",
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.repo,
+                    env=self._subprocess_env(),
+                )
         except (FileNotFoundError, NotADirectoryError, OSError):
             return False
         try:
@@ -478,8 +492,6 @@ class AntigravityClient:
         spawn-context ``env_overrides`` layer on top (idempotent for the home
         keys — the builder derives them from the same AGY_HOME).
         """
-        # Defensive: fail loud BEFORE spawning if the argv (which INCLUDES the -p
-        # prompt for agy) would overflow the OS command-line limit.
         if _argv_byte_length(argv) > _ARGV_BYTE_LIMIT:
             raise AgyError(
                 f"agy argv is {_argv_byte_length(argv)} bytes, over the "
@@ -491,14 +503,24 @@ class AntigravityClient:
         if env_overrides:
             env = {**(env if env is not None else os.environ), **env_overrides}
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,  # CRITICAL: agy -p hangs otherwise
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,  # CRITICAL: agy -p hangs otherwise
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,  # CRITICAL: agy -p hangs otherwise
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise AgyError(f"agy CLI not found at {self.cli_path!r}: {exc}") from exc
         except OSError as exc:
@@ -509,7 +531,6 @@ class AntigravityClient:
                 f"WinError 206 / 'command line too long', the -p prompt or an "
                 f"--add-dir arg is oversized"
             ) from exc
-
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout

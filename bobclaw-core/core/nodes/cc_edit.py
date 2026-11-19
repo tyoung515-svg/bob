@@ -24,6 +24,9 @@ This module owns the diff parser, the apply primitive, and the routing seam.
 """
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import glob
 import logging
 import os
@@ -318,15 +321,26 @@ def _git_apply_numstat_paths(patch: str, project_dir: str) -> list[str]:
     :class:`CCApplyError`, so nothing is applied.
     """
     try:
-        proc = subprocess.run(
-            ["git", "-c", "core.quotePath=false", "apply", "--numstat", "-"],
-            input=patch,
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=60,
-        )
+        if execution_mode() == "legacy":
+            proc = subprocess.run(
+                ["git", "-c", "core.quotePath=false", "apply", "--numstat", "-"],
+                input=patch,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+            )
+        else:
+            proc = worker_client.run(
+                ["git", "-c", "core.quotePath=false", "apply", "--numstat", "-"],
+                input=patch,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+            )
     except FileNotFoundError as exc:
         raise CCApplyError(f"git not found on PATH: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -429,20 +443,36 @@ def _run_git_apply(
 ) -> subprocess.CompletedProcess:
     """Run ``git apply [extra_args]`` feeding *patch* on stdin from *project_dir*."""
     try:
-        return subprocess.run(
-            ["git", "apply", *extra_args, "-"],
-            input=patch,
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            # Force UTF-8 for stdin/stdout: real CC diffs contain non-ASCII
-            # (em-dashes, etc.). Without this, subprocess uses the platform
-            # default (cp1252 on Windows), the stdin writer thread crashes on an
-            # un-encodable char, git never receives the patch, and `git apply -`
-            # blocks until the timeout. (Caught by the C4 live E2E, 2026-06-15.)
-            encoding="utf-8",
-            timeout=60,
-        )
+        if execution_mode() == "legacy":
+            return subprocess.run(
+                ["git", "apply", *extra_args, "-"],
+                input=patch,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                # Force UTF-8 for stdin/stdout: real CC diffs contain non-ASCII
+                # (em-dashes, etc.). Without this, subprocess uses the platform
+                # default (cp1252 on Windows), the stdin writer thread crashes on an
+                # un-encodable char, git never receives the patch, and `git apply -`
+                # blocks until the timeout. (Caught by the C4 live E2E, 2026-06-15.)
+                encoding="utf-8",
+                timeout=60,
+            )
+        else:
+            return worker_client.run(
+                ["git", "apply", *extra_args, "-"],
+                input=patch,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                # Force UTF-8 for stdin/stdout: real CC diffs contain non-ASCII
+                # (em-dashes, etc.). Without this, subprocess uses the platform
+                # default (cp1252 on Windows), the stdin writer thread crashes on an
+                # un-encodable char, git never receives the patch, and `git apply -`
+                # blocks until the timeout. (Caught by the C4 live E2E, 2026-06-15.)
+                encoding="utf-8",
+                timeout=60,
+            )
     except FileNotFoundError as exc:
         raise CCApplyError(f"git not found on PATH: {exc}") from exc
     except subprocess.TimeoutExpired as exc:

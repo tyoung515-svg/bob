@@ -156,7 +156,7 @@ async def test_true_claim_pv_published():
     retr = FakeRetriever([mk_source(0, "Holo3 reaches 77.8% on OSWorld.", SourceKind.PRIMARY)])
     res = await run_citation_gate(
         claim=Claim(subject="Holo3", predicate="scores", numeric_value="77.8", cited_source_id="s0"),
-        retrieve=retr.retrieve, actor_backend="glm_5_2", send=number_in_source_send(),
+        retrieve=retr.retrieve, actor_backend="glm_5_3", send=number_in_source_send(),
     )
     assert res.verified is True
     assert res.tag == VerificationTag.PV
@@ -164,14 +164,14 @@ async def test_true_claim_pv_published():
     assert res.committed_tag is None
     assert res.decorrelated is True
     # pin the resolved critic at the PV site too (a hard-coded decorrelated=True would NOT satisfy this)
-    assert res.critic_backend and is_decorrelated("glm_5_2", res.critic_backend)
+    assert res.critic_backend and is_decorrelated("glm_5_3", res.critic_backend)
 
 
 async def test_true_vendor_vs():
     retr = FakeRetriever([mk_source(0, "Vendor sheet: device draws 77.8 watts.", SourceKind.VENDOR)])
     res = await run_citation_gate(
         claim=Claim(subject="device", predicate="draws", numeric_value="77.8", cited_source_id="s0"),
-        retrieve=retr.retrieve, actor_backend="glm_5_2", send=number_in_source_send(),
+        retrieve=retr.retrieve, actor_backend="glm_5_3", send=number_in_source_send(),
     )
     assert res.verified is True
     assert res.tag == VerificationTag.VS  # ENTAILED + VENDOR
@@ -186,7 +186,7 @@ async def test_wrong_claim_exhausted_surfaced():
     ])
     claim = Claim(subject="Holo3", predicate="scores", numeric_value="80.4", cited_source_id="s0")
     report = await run_citation_agent(
-        claims=[claim], retriever_for=lambda c: retr.retrieve, actor_backend="glm_5_2",
+        claims=[claim], retriever_for=lambda c: retr.retrieve, actor_backend="glm_5_3",
         send=number_in_source_send(),
     )
     res = report.results[0]
@@ -212,7 +212,7 @@ async def test_firewall_holds():
     free_text = "the source clearly states 77.8 and never 80.4 anywhere in the body"
     claim = Claim(subject="Holo3", predicate="scores", numeric_value="80.4", cited_source_id="s0")
     await run_citation_gate(
-        claim=claim, retrieve=retr.retrieve, actor_backend="glm_5_2",
+        claim=claim, retrieve=retr.retrieve, actor_backend="glm_5_3",
         send=always_not_entailed_send(free_text),
     )
     valid_codes = {r.value for r in RetryReason}
@@ -238,7 +238,7 @@ async def test_entailment_not_citation_exists():
     retr = FakeRetriever([mk_source(0, "Holo3 reaches 77.8% on OSWorld.", SourceKind.PRIMARY)])
     res = await run_citation_gate(
         claim=Claim(subject="Holo3", predicate="scores", numeric_value="80.4", cited_source_id="s0"),
-        retrieve=retr.retrieve, actor_backend="glm_5_2", send=number_in_source_send(),
+        retrieve=retr.retrieve, actor_backend="glm_5_3", send=number_in_source_send(),
     )
     assert len(retr.reqs) >= 1  # retrieve was called
     assert any(r is not None for r in retr.returns)  # a Source was actually returned => the citation EXISTS
@@ -273,11 +273,11 @@ async def test_decorrelation_surfaced():
     retr = FakeRetriever([mk_source(0, "a is 1", SourceKind.PRIMARY)])
     res = await run_citation_gate(
         claim=Claim(subject="a", predicate="is", numeric_value="1", cited_source_id="s0"),
-        retrieve=retr.retrieve, actor_backend="glm_5_2", send=number_in_source_send(),
+        retrieve=retr.retrieve, actor_backend="glm_5_3", send=number_in_source_send(),
     )
     assert res.decorrelated is True
-    assert is_decorrelated("glm_5_2", res.critic_backend)
-    assert family_of(res.critic_backend) != family_of("glm_5_2")
+    assert is_decorrelated("glm_5_3", res.critic_backend)
+    assert family_of(res.critic_backend) != family_of("glm_5_3")
     # OD#6 floor-family decorrelation (no model call): qwen_research resolves a cross-family critic
     crit = decorrelated_critic_backend("qwen_research")
     assert is_decorrelated("qwen_research", crit)
@@ -304,7 +304,7 @@ async def test_report_assembly_default_fail():
     report = await run_citation_agent(
         claims=[true1, vendorc, wrong, true2],
         retriever_for=lambda c: retrievers[c.bid_key].retrieve,
-        actor_backend="glm_5_2", send=number_in_source_send(),
+        actor_backend="glm_5_3", send=number_in_source_send(),
     )
     assert len(report.published) == 4  # 3 verified (2 PV + 1 VS) + 1 exhausted are all is_complete
     assert any(c["bid_key"] == wrong.bid_key for c in report.could_not_verify)
@@ -321,7 +321,7 @@ async def test_report_assembly_default_fail():
 
 async def test_empty_claim_set_reverts():
     report = await run_citation_agent(
-        claims=[], retriever_for=lambda c: None, actor_backend="glm_5_2", send=number_in_source_send(),
+        claims=[], retriever_for=lambda c: None, actor_backend="glm_5_3", send=number_in_source_send(),
     )
     assert report.decision["decision"] == "REVERT"
     assert report.complete is False  # no vacuous FAST_FORWARD
@@ -358,11 +358,11 @@ def test_lks_retriever_factory_binds_query(monkeypatch):
 def test_citation_false_pass_rate_low():
     planted = [
         LabeledItem("t1", {"subject": "a", "predicate": "is", "numeric_value": "5",
-                           "source_text": "a is 5", "actor_backend": "glm_5_2"}, Label.TRUE),
+                           "source_text": "a is 5", "actor_backend": "glm_5_3"}, Label.TRUE),
         LabeledItem("w1", {"subject": "a", "predicate": "is", "numeric_value": "9",
-                           "source_text": "a is 5", "actor_backend": "glm_5_2"}, Label.WRONG),
+                           "source_text": "a is 5", "actor_backend": "glm_5_3"}, Label.WRONG),
     ]
-    bd = citation_false_pass_rate(planted, send=number_in_source_send(), default_actor_backend="glm_5_2")
+    bd = citation_false_pass_rate(planted, send=number_in_source_send(), default_actor_backend="glm_5_3")
     assert bd["false_pass_rate"] == 0.0
     assert bd["n_wrong"] == 1
     assert bd["n_true"] == 1
@@ -380,7 +380,7 @@ async def test_cite_draft_extract_then_gate():
     retr = FakeRetriever([mk_source(0, "Holo3 reaches 77.8% on OSWorld.", SourceKind.PRIMARY)])
     report = await cite_draft(
         draft="Holo3 scores 77.8 on OSWorld.", retriever_for=lambda c: retr.retrieve,
-        actor_backend="glm_5_2", model_send=extractor, send=number_in_source_send(),
+        actor_backend="glm_5_3", model_send=extractor, send=number_in_source_send(),
     )
     # (i) the extractor result flowed into the gate; (ii) the verified PV report fast-forwards
     assert report.counts["total"] == 1
@@ -397,7 +397,7 @@ async def test_cite_draft_extract_backend_override():
 
     retr = FakeRetriever([mk_source(0, "a is 5", SourceKind.PRIMARY)])
     await cite_draft(
-        draft="a is 5", retriever_for=lambda c: retr.retrieve, actor_backend="glm_5_2",
+        draft="a is 5", retriever_for=lambda c: retr.retrieve, actor_backend="glm_5_3",
         extract_backend="extractor_backend", model_send=extractor, send=number_in_source_send(),
     )
     assert seen["backend"] == "extractor_backend"  # the extractor step honors extract_backend, not actor_backend
@@ -409,7 +409,7 @@ async def test_cite_draft_empty_extraction_reverts():
 
     report = await cite_draft(
         draft="no quantitative claims here", retriever_for=lambda c: None,
-        actor_backend="glm_5_2", model_send=empty_extractor, send=number_in_source_send(),
+        actor_backend="glm_5_3", model_send=empty_extractor, send=number_in_source_send(),
     )
     assert report.counts["total"] == 0
     assert report.decision["decision"] == "REVERT"  # no vacuous FAST_FORWARD on an empty extraction
@@ -421,9 +421,9 @@ async def test_construction_validation():
     with pytest.raises(CitationAgentError):
         await run_citation_agent(claims=[], retriever_for=lambda c: None, actor_backend="")
     with pytest.raises(CitationAgentError):
-        await run_citation_agent(claims=[], retriever_for=lambda c: None, actor_backend="glm_5_2", concurrency=0)
+        await run_citation_agent(claims=[], retriever_for=lambda c: None, actor_backend="glm_5_3", concurrency=0)
     with pytest.raises(CitationAgentError):
-        await run_citation_agent(claims=[], retriever_for=lambda c: None, actor_backend="glm_5_2", max_attempts=0)
+        await run_citation_agent(claims=[], retriever_for=lambda c: None, actor_backend="glm_5_3", max_attempts=0)
     # cite_draft validates FAIL-FAST (before the extractor LLM call) — an invalid config raises with NO call
     calls = []
 

@@ -18,7 +18,7 @@ Adds a MANAGER tier ABOVE the flat fan-out (dispatch→worker→join):
 Additive + gated on ``hierarchical``: a turn without the trigger never reaches
 these nodes, so every existing path is byte-identical. Roles resolve through the
 active team (built-in ``hier-fleet``: apex=kimi_code, worker=deepseek_v4_flash,
-critic=glm_5_2) — mirroring the build pipeline's ``teams.role_backend`` split.
+critic=glm_5_3) — mirroring the build pipeline's ``teams.role_backend`` split.
 
 Realization note (WORKER_FANOUT_DESIGN OPEN-2's revisable-realization clause):
 the mini-manager runs its workers by DIRECT REUSE of ``worker_node`` (gather),
@@ -107,6 +107,10 @@ def _route_after_manager_dispatch(state: dict) -> Union[list[Send], str]:
         or state.get("backend") or "local"
     )
     critic_backend = teams.role_backend(state.get("team"), "critic") or ""
+    from core.lane_config import require_backend
+    for selected in (worker_backend, apex_backend, critic_backend):
+        if selected:
+            require_backend(selected)
     return [
         Send(
             "mini_manager",
@@ -139,6 +143,9 @@ async def mini_manager_node(sub_state: dict) -> dict:
     subtasks = sub_state.get("section_subtasks") or []
     worker_backend = sub_state.get("worker_backend", "local")
     apex_backend = sub_state.get("apex_backend") or worker_backend
+    from core.lane_config import require_backend
+    require_backend(worker_backend)
+    require_backend(apex_backend)
     escalation = sub_state.get("escalation_backend")
     scope = sub_state.get("scope")
     recalled = sub_state.get("recalled_facts") or []
@@ -220,7 +227,7 @@ async def mini_manager_node(sub_state: dict) -> dict:
 async def manager_join_node(state: dict) -> dict:
     """Reduce ``section_results`` by idx, run the FIRST final audit, emit the answer.
 
-    The critic (e.g. glm_5_2) audits the assembled sections — fail-open: a failed
+    The critic (e.g. glm_5_3) audits the assembled sections — fail-open: a failed
     audit must never break the turn (the assembled answer still surfaces). Sets
     ``error`` only when EVERY section failed (best-effort, mirrors join_node).
     """
@@ -244,15 +251,18 @@ async def manager_join_node(state: dict) -> dict:
             "gaps. Give a SHORT audit verdict (1-3 sentences).\n\n" + assembled
         )
         # Stand in a healthy backend when the primary critic hard-fails (e.g. the
-        # glm_5_2 HTTP path is balance-dead) — mirrors run_critic so the final audit
+        # glm_5_3 HTTP path is balance-dead) — mirrors run_critic so the final audit
         # is not silently lost. Still fail-open: if BOTH fail, skip (assembled answer
         # surfaces regardless).
         audit_backends = [critic_backend]
-        fb = config.CRITIC_FALLBACK_BACKEND
+        from core.lane_config import configured_mode, get_lane, require_backend
+        fb = (get_lane().values.get("CRITIC_FALLBACK_BACKEND") if configured_mode()
+              else config.CRITIC_FALLBACK_BACKEND)
         if fb and fb != critic_backend:
             audit_backends.append(fb)
         for ab in audit_backends:
             try:
+                require_backend(ab)
                 verdict = await asyncio.wait_for(
                     _send_to_backend([{"role": "user", "content": audit_prompt}], ab),
                     timeout=WORKER_TIMEOUT_SECONDS,

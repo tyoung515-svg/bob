@@ -26,6 +26,7 @@ import re
 from typing import Callable, Optional
 
 from core.mcp_tools.profiles import ShortcutProfile
+from core.roster import get_roster
 
 # Reuse the _select_face intent signals so a profile's job-shape matches what the heuristic
 # would key on (kept local to avoid importing route.py — a cycle; regexes mirror route.py).
@@ -91,14 +92,7 @@ def epsilon_should_explore(rate: float, roll: float) -> bool:
 # caller keeps the _select_face heuristic (never a blind route). SES-tunable (SPEC §8: a
 # thin capability-class→backend registry is the follow-on; until then profiles bind to
 # these faces / their JOAT roles).
-_CLASS_FACE: dict[str, str] = {
-    "worker": "worker-deepseek",
-    "route_cheap": "worker-deepseek",
-    "plan_code": "planner-kimi",
-    "synth_mid": "planner-minimax",
-    "plan_concept": "planner-minimax",
-    "synth_deep": "planner-minimax",
-}
+_CLASS_FACE: dict[str, str] = dict(get_roster().routing.class_faces)
 
 
 def class_to_face(capability_class: Optional[str]) -> Optional[str]:
@@ -107,7 +101,9 @@ def class_to_face(capability_class: Optional[str]) -> Optional[str]:
     listed; anything unknown returns None (safe)."""
     if not capability_class:
         return None
-    return _CLASS_FACE.get(str(capability_class).strip())
+    from core.lane_config import configured_mode
+    bindings = get_roster().routing.class_faces if configured_mode() else _CLASS_FACE
+    return bindings.get(str(capability_class).strip())
 
 
 async def lookup_two_tier(cache, job_shape: str, project: str):

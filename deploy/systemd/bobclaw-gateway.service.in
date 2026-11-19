@@ -1,0 +1,19 @@
+[Unit]
+Description=BoBClaw gateway
+Wants=bobclaw-core.service
+After=bobclaw-core.service
+
+[Service]
+Type=simple
+WorkingDirectory="@BOB_HOME@/bobclaw-gateway"
+EnvironmentFile="@BOB_ENV_FILE@"
+Environment="PYTHONPATH=@BOB_HOME@/bobclaw-core"
+Environment=PYTHONUNBUFFERED=1
+Environment=BOBCLAW_GATEWAY_PORT=7836
+Environment=CORE_URL=http://127.0.0.1:7835
+ExecStart="@BOB_HOME@/.venv/bin/python" gateway.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

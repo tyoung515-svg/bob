@@ -12,6 +12,7 @@ class InMemoryPostgresPool:
         self.projects: dict[str, dict[str, Any]] = {}
         self.agent_bindings: dict[str, dict[str, Any]] = {}
         self.channel_bindings: dict[str, dict[str, Any]] = {}
+        self.workflow_conversation_runs = {}
         self._conversation_seq = 0
         self._message_seq = 0
         self._idea_seq = 0
@@ -375,6 +376,20 @@ class InMemoryPostgresPool:
 
     async def fetchrow(self, query: str, *args):
         normalized = " ".join(query.lower().split())
+        if 'from agent_run_steps s join agent_runs r' in normalized:
+            run=self.workflow_conversation_runs.get((str(args[0]),args[1]))
+            return {'run_id':run,'topology':'workflow/v1'} if run else None
+
+        # Approvals: owner-agnostic id read used by the portal agent guard
+        # (SELECT id, user_id, status FROM approvals WHERE id = $1). Returns the
+        # row regardless of owner so the guard can tell foreign from missing.
+        if (
+            "from approvals" in normalized
+            and "where id = $1" in normalized
+            and "user_id = $2" not in normalized
+        ):
+            (approval_id,) = args
+            return self.approvals.get(str(approval_id))
 
         # Approvals: SELECT by id
         if "from approvals" in normalized and "where id = $1 and user_id = $2" in normalized:
@@ -575,6 +590,12 @@ class InMemoryPostgresPool:
                 "project_description": project.get("description") if project else None,
                 "project_instructions": project["instructions"] if project else None,
             }
+
+        # chat.py F1 fix: stored face pin for the agent-token face check
+        if normalized.startswith("select face_id from conversations"):
+            conversation_id = args[0]
+            conv = self.conversations.get(conversation_id)
+            return {"face_id": conv.get("face_id")} if conv else None
 
         # SELECT id from conversations with is_archived filter (assign ownership check)
         if "select id from conversations" in normalized and "is_archived = false" in normalized:

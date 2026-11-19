@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Awaitable, Callable, Optional
 
+from core.lane_config import configured_mode, get_lane, require_backend, selectable_backends
 from core import teams
 from core.config import KNOWN_BACKENDS, MAX_WORKER_USD_BY_BACKEND
 
@@ -30,7 +31,7 @@ _SYSTEM = (
 def _palette_line() -> str:
     return ", ".join(
         f"{b} (${MAX_WORKER_USD_BY_BACKEND[b]:.3f}/worker)"
-        for b in sorted(MAX_WORKER_USD_BY_BACKEND)
+        for b in sorted(selectable_backends())
     )
 
 
@@ -78,9 +79,9 @@ def _sanitize_roles(raw_roles) -> dict:
         if not isinstance(spec, dict):
             continue
         backend = spec.get("backend")
-        if backend not in KNOWN_BACKENDS:
+        if backend not in selectable_backends():
             continue
-        chain = [b for b in (spec.get("escalation_chain") or []) if b in KNOWN_BACKENDS]
+        chain = [b for b in (spec.get("escalation_chain") or []) if b in selectable_backends()]
         out[role] = {"backend": backend, "escalation_chain": chain}
     return out
 
@@ -103,7 +104,9 @@ async def propose_team(
         {"role": "user", "content": _build_prompt(goal)},
     ]
     try:
-        raw = await send(messages, _PROPOSER_BACKEND)
+        chosen = get_lane().default_backend if configured_mode() else _PROPOSER_BACKEND
+        require_backend(chosen)
+        raw = await send(messages, chosen)
     except Exception as exc:  # noqa: BLE001 — surface, don't crash the request
         logger.warning("team proposer backend failed: %s", exc)
         return {"goal": goal, "name": "", "roles": {}, "raw": "", "error": str(exc)}
@@ -157,12 +160,12 @@ def _sanitize_draft(parsed) -> dict:
         for role in teams.ROLES:
             valid = []
             for slot in teams._as_slots(raw_roles.get(role)):
-                if slot["backend"] not in KNOWN_BACKENDS:
+                if slot["backend"] not in selectable_backends():
                     continue
                 valid.append({
                     "name": slot["name"],
                     "backend": slot["backend"],
-                    "escalation_chain": [e for e in slot["escalation_chain"] if e in KNOWN_BACKENDS],
+                    "escalation_chain": [e for e in slot["escalation_chain"] if e in selectable_backends()],
                     "role_prompt": slot["role_prompt"],
                 })
             if valid:
@@ -173,7 +176,7 @@ def _sanitize_draft(parsed) -> dict:
     if isinstance(shape, str) and shape in teams._PROFILE_SHAPES:
         draft["shape"] = shape
     synth = parsed.get("synth_backend")
-    if isinstance(synth, str) and synth in KNOWN_BACKENDS:
+    if isinstance(synth, str) and synth in selectable_backends():
         draft["synth_backend"] = synth
     bounds = parsed.get("protocol_bounds")
     if isinstance(bounds, dict):
@@ -228,7 +231,9 @@ async def refine_team(
     })
     fallback = draft if (draft and draft.get("roles")) else {"name": "", "roles": {}}
     try:
-        raw = await send(msgs, _PROPOSER_BACKEND)
+        chosen = get_lane().default_backend if configured_mode() else _PROPOSER_BACKEND
+        require_backend(chosen)
+        raw = await send(msgs, chosen)
     except Exception as exc:  # noqa: BLE001
         logger.warning("team refine backend failed: %s", exc)
         return {"reply": f"(assistant error: {exc})", "draft": fallback, "raw": "", "error": str(exc)}

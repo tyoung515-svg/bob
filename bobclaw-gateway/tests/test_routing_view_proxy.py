@@ -43,7 +43,7 @@ class TestRoutingViewProxy(unittest.TestCase):
                     "active_team": request.query.get("team"),
                     "teams": ["cloud-heavy", "local-first"],
                     "faces": [{"id": "worker-deepseek", "role": "worker",
-                               "resolved_backend": "glm_5_2",
+                               "resolved_backend": "glm_5_3",
                                "escalation_chain": ["deepseek_v4_flash"],
                                "tool_capable": True}],
                 })
@@ -89,7 +89,7 @@ class TestRoutingViewProxy(unittest.TestCase):
         self.assertEqual(resp.status, 200)
         body = self._run(resp.json())
         self.assertEqual(body["teams"], ["cloud-heavy", "local-first"])
-        self.assertEqual(body["faces"][0]["resolved_backend"], "glm_5_2")
+        self.assertEqual(body["faces"][0]["resolved_backend"], "glm_5_3")
 
     def test_forwards_team_and_format_query(self):
         self._run(self._client.get(

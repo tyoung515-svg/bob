@@ -48,7 +48,7 @@ async def _send_raises(messages, backend):
 # ── family taxonomy + decorrelation ─────────────────────────────────────────────
 def test_family_of_mapped():
     assert family_of("deepseek_v4_flash") == "deepseek"
-    assert family_of("glm_5_2") == "glm"
+    assert family_of("glm_5_3") == "glm"
     assert family_of("claude_code") == "claude"
     assert family_of("claude_api") == "claude"
     assert family_of("agy_code") == "gemini"
@@ -61,7 +61,9 @@ def test_family_of_unmapped_is_own_string():
 
 
 def test_is_decorrelated():
-    assert is_decorrelated("deepseek_v4_flash", "glm_5_2") is True
+    assert is_decorrelated("codex_code", "openai_codex") is False
+    assert is_decorrelated("openai_codex", "codex_code") is False
+    assert is_decorrelated("deepseek_v4_flash", "glm_5_3") is True
     assert is_decorrelated("claude_api", "claude_code") is False  # same family
     assert is_decorrelated("deepseek_v4_flash", "deepseek_v4_flash") is False
 
@@ -95,7 +97,7 @@ def test_decorrelated_critic_default_cross_family():
     # THE decorrelation property: actor=deepseek => critic family != deepseek.
     crit = decorrelated_critic_backend("deepseek_v4_flash")
     assert family_of(crit) != "deepseek"
-    crit_glm = decorrelated_critic_backend("glm_5_2")
+    crit_glm = decorrelated_critic_backend("glm_5_3")
     assert family_of(crit_glm) != "glm"
 
 
@@ -105,7 +107,7 @@ def test_decorrelated_critic_team_cross_family_chosen(monkeypatch):
         "core.teams.role_backend",
         lambda team, role: "deepseek_v4_flash" if role == "critic" else None,
     )
-    crit = decorrelated_critic_backend("glm_5_2", team="t")  # actor glm, team critic deepseek
+    crit = decorrelated_critic_backend("glm_5_3", team="t")  # actor glm, team critic deepseek
     assert crit == "deepseek_v4_flash"
 
 
@@ -121,9 +123,9 @@ def test_decorrelated_critic_team_same_family_skipped(monkeypatch):
 
 def test_decorrelated_critic_candidates_in_order():
     crit = decorrelated_critic_backend(
-        "deepseek_v4_flash", candidates=["deepseek_v4_flash", "glm_5_2", "claude_api"]
+        "deepseek_v4_flash", candidates=["deepseek_v4_flash", "glm_5_3", "claude_api"]
     )
-    assert crit == "glm_5_2"  # first cross-family in the candidate list
+    assert crit == "glm_5_3"  # first cross-family in the candidate list
 
 
 def test_decorrelated_critic_none_raises(monkeypatch):
@@ -251,10 +253,10 @@ def test_verifier_resolution_error_is_failsafe_false():
 async def test_verify_explicit_cross_family_override_ok():
     res = await verify_post_condition(
         step="s", statement="x", result="y", actor_backend="deepseek_v4_flash",
-        critic_backend="glm_5_2", send=_send_holds,
+        critic_backend="glm_5_3", send=_send_holds,
     )
     assert res.passed is True
-    assert res.critic_backend == "glm_5_2"
+    assert res.critic_backend == "glm_5_3"
 
 
 async def test_verify_prompt_carries_step_statement_result_and_no_label():
@@ -312,7 +314,7 @@ async def test_make_verifier_is_event_loop_safe():
     async def _holds(messages, backend):
         return '{"verdict": "holds", "reasons": []}'
 
-    verifier = make_postcondition_verifier(send=_holds, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=_holds, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     # this test function itself runs inside an event loop (asyncio_mode=auto)
     assert verifier({"step": "s", "statement": "x", "result": "y"}) is True
@@ -341,7 +343,7 @@ def test_falsepass_perfect_verifier_zero():
         verdict = "holds" if "SATISFIED" in content else "violated"
         return json.dumps({"verdict": verdict, "reasons": []})
 
-    verifier = make_postcondition_verifier(send=perfect, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=perfect, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     out = false_pass_rate(_planted_set(), verifier)
     assert out["false_pass_rate"] == 0.0
@@ -353,7 +355,7 @@ def test_falsepass_blind_verifier_one():
     async def blind(messages, backend):
         return json.dumps({"verdict": "holds", "reasons": []})
 
-    verifier = make_postcondition_verifier(send=blind, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=blind, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     out = false_pass_rate(_planted_set(), verifier)
     assert out["false_pass_rate"] == 1.0
@@ -367,7 +369,7 @@ def test_falsepass_partial_verifier_exact_fraction():
         verdict = "holds" if ("SATISFIED" in content or "EDGE" in content) else "violated"
         return json.dumps({"verdict": verdict, "reasons": []})
 
-    verifier = make_postcondition_verifier(send=partial, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=partial, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     out = false_pass_rate(_planted_set(), verifier)
     assert abs(out["false_pass_rate"] - 1 / 3) < 1e-9
@@ -383,7 +385,7 @@ def test_verifier_drops_a_stray_label_key_from_the_prompt():
         seen["user"] = next(m["content"] for m in messages if m["role"] == "user")
         return '{"verdict": "holds", "reasons": []}'
 
-    verifier = make_postcondition_verifier(send=_capture, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=_capture, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     verifier({"step": "s", "statement": "x", "result": "r", "label": "WRONG_LEAK_TOKEN"})
     assert "WRONG_LEAK_TOKEN" not in seen["user"]
@@ -396,7 +398,7 @@ def test_falsepass_verifier_never_sees_a_label():
         seen_contents.append(next(m["content"] for m in messages if m["role"] == "user"))
         return json.dumps({"verdict": "holds", "reasons": []})
 
-    verifier = make_postcondition_verifier(send=capture, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=capture, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     false_pass_rate(_planted_set(), verifier)
     assert len(seen_contents) == 5  # one critic call per item
@@ -410,7 +412,7 @@ def test_verifier_accepts_alt_post_condition_key():
         seen["user"] = next(m["content"] for m in messages if m["role"] == "user")
         return '{"verdict": "holds", "reasons": []}'
 
-    verifier = make_postcondition_verifier(send=_capture, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=_capture, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     assert verifier({"step": "s", "post_condition": "ALT_KEY_STMT", "result": "r"}) is True
     assert "ALT_KEY_STMT" in seen["user"]
@@ -425,7 +427,7 @@ def test_verifier_empty_statement_returns_false_no_critic_call():
         calls.append(backend)
         return json.dumps({"verdict": "holds", "reasons": []})
 
-    verifier = make_postcondition_verifier(send=never_called, critic_backend="glm_5_2",
+    verifier = make_postcondition_verifier(send=never_called, critic_backend="glm_5_3",
                                            default_actor_backend="deepseek_v4_flash")
     assert verifier({"step": "s", "result": "r"}) is False
     assert verifier({"step": "s", "statement": "", "result": "r"}) is False

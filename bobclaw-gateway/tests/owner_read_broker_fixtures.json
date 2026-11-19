@@ -1,0 +1,17 @@
+[
+  {"name":"memory first page","op":"memory.list","args":{"limit":50},"call":["POST","/agent-memory/list",{"limit":50}],"response":{"items":[{"source_id":"event:1","owner":"orchid-7","kind":"bob_event","excerpt":"!!!","revision":"abc"}],"next_cursor":"opaque","snapshot":"snapshot","coverage":{"complete_corpus":false}}},
+  {"name":"memory cursor filter","op":"memory.list","args":{"cursor":"opaque","kind":"bob_event"},"call":["POST","/agent-memory/list",{"limit":50,"cursor":"opaque","kind":"bob_event"}],"response":{"items":[],"next_cursor":null,"snapshot":"snapshot","coverage":{}}},
+  {"name":"server roots","op":"files.roots","args":{},"call":["GET","/files/roots",null],"response":{"items":[{"attachment_id":"opaque","project_id":"project","label":"Project","read_only":true}]}},
+  {"name":"directory page","op":"files.list","args":{"attachment_id":"opaque"},"call":["POST","/files/list",{"attachment_id":"opaque","path":""}],"response":{"items":[{"name":"hello","path":"hello","dir":false,"size":3}],"next_cursor":null}},
+  {"name":"file chunk","op":"files.read","args":{"attachment_id":"opaque","path":"hello","max_bytes":2},"call":["POST","/files/read",{"attachment_id":"opaque","path":"hello","offset":0,"max_bytes":2}],"response":{"content":"ab","encoding":"utf-8","revision":"abc","truncated":true,"next_offset":2}},
+  {"name":"binary chunk","op":"files.read","args":{"attachment_id":"opaque","path":"binary","offset":2},"call":["POST","/files/read",{"attachment_id":"opaque","path":"binary","offset":2,"max_bytes":65536}],"response":{"content":"AP8=","encoding":"base64","revision":"abc","truncated":false,"next_offset":null}},
+  {"name":"memory limit","op":"memory.list","args":{"limit":51},"error":"invalid_args"},
+  {"name":"memory bool limit","op":"memory.list","args":{"limit":true},"error":"invalid_args"},
+  {"name":"memory arbitrary owner","op":"memory.list","args":{"owner":"foreign"},"error":"invalid_args"},
+  {"name":"unknown root fields","op":"files.roots","args":{"root":"/etc"},"error":"invalid_args"},
+  {"name":"file bounds","op":"files.read","args":{"attachment_id":"opaque","path":"hello","max_bytes":65537},"error":"invalid_args"},
+  {"name":"file traversal","op":"files.read","args":{"attachment_id":"opaque","path":"../secret"},"error":"invalid_args"},
+  {"name":"file absolute","op":"files.read","args":{"attachment_id":"opaque","path":"/etc/passwd"},"error":"invalid_args"},
+  {"name":"file drive","op":"files.read","args":{"attachment_id":"opaque","path":"C:/secret"},"error":"invalid_args"},
+  {"name":"file encoded traversal","op":"files.read","args":{"attachment_id":"opaque","path":"%2e%2e/secret"},"error":"invalid_args"}
+]

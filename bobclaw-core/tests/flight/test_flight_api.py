@@ -13,7 +13,7 @@ from core.faces.registry import FaceRegistry
 from core.flight import service as flight_service
 from core.telemetry import spend as spend_mod
 
-PROFILES_DIR = Path(__file__).parent.parent.parent / "core" / "faces" / "profiles"
+PROFILES_DIR = Path(__file__).resolve().parents[3] / "bobclaw-core" / "tests" / "fixtures" / "deployment" / "faces"
 
 
 class _FakeHashRedis:

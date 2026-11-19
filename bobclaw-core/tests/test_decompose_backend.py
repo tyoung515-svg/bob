@@ -71,7 +71,7 @@ async def test_decompose_node_uses_requested_backend(monkeypatch):
     sent = AsyncMock(return_value=NUMBERED)
     monkeypatch.setattr("core.nodes.execute._send_to_backend", sent)
 
-    state = {"task": COMPLEX_TASK, "backend": "deepseek_v4_flash", "face_id": "assistant"}
+    state = {"task": COMPLEX_TASK, "backend": "deepseek_v4_flash", "face_id": "researcher"}
     result = await decompose_node(state)
 
     assert result.get("subtasks") == ["Set up database", "Create API routes", "Write tests"]

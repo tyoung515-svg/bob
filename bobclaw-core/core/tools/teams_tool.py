@@ -11,6 +11,7 @@ import json
 
 from langchain_core.tools import tool
 
+from core.lane_config import configured_mode, get_lane, require_backend, selectable_backends
 from core import teams
 from core.config import MAX_FANOUT_WIDTH_BY_BACKEND, MAX_WORKER_USD_BY_BACKEND
 
@@ -27,7 +28,7 @@ def list_backends() -> str:
             "max_usd_per_worker": MAX_WORKER_USD_BY_BACKEND[b],
             "max_fanout_width": MAX_FANOUT_WIDTH_BY_BACKEND.get(b),
         }
-        for b in sorted(MAX_WORKER_USD_BY_BACKEND)
+        for b in sorted(selectable_backends())
     ]
     return json.dumps({"backends": backends, "roles": list(teams.ROLES)})
 

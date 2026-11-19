@@ -1,0 +1,279 @@
+# Example deployment deployment roster. No credentials; schema owned by core.roster.
+# Selected explicitly with BOB_ROSTER_FILE; never an unset default.
+schema_version: 1
+profiles_dir: faces
+agent_services:
+  models:
+    bob-glm-53:
+      label: GLM 5.3
+      backend: glm_5_3
+      model: glm-5.3
+      transport: text
+      enabled: false
+      disabled_reason: GLM down for now (operator, 2026-11-02; subscription ended 2026-10-28)
+    bob-kimi-k3:
+      label: Kimi K3
+      backend: kimi_code
+      model: k3
+      transport: text
+      enabled: false
+      disabled_reason: Kimi subscription lapsed 2026-10 (operator, cost); credential still
+        present so backend availability is key-presence only
+    bob-ds-flash:
+      label: DSv4.1 flash
+      backend: deepseek_v4_flash
+      model: deepseek-v4-flash
+      # Observed from DeepSeek on 2026-11-17.
+      reported_model_names: [deepseek-flash]
+      transport: text
+      enabled: true
+    bob-glm-53-flash-or:
+      label: GLM 5.3 Flash · OpenRouter
+      backend: glm_5_3_flash_or
+      model: z-ai/glm-5.3-flash
+      transport: text
+      enabled: true
+      capabilities: PAYG via OpenRouter; parallel-safe (no Z.AI serial-1 slot)
+    bob-gpt-sol-61:
+      label: GPT SOL 6.1
+      backend: codex_code
+      model: gpt-6.1-sol
+      transport: text
+      enabled: true
+    bob-qwen-strata:
+      label: Qwen 3.8 Next IQ3XXS · Strata
+      backend: qwen_research
+      model: qwen3.8-flash-next-iq3_xxs
+      transport: primary-pc-local-ssh
+      enabled: true
+      availability: on_demand
+      roles:
+      - local_face
+      - cheap_worker
+      - cheap_researcher
+      tools_verified: false
+    bob-claude-opus-55:
+      label: Claude Opus 5.5
+      backend: claude_code
+      model: claude-opus-5-5
+      transport: primary-pc-cli
+      enabled: true
+      capabilities: read_only; PC must be online
+    bob-claude-sonnet-55:
+      label: Claude Sonnet 5.5
+      backend: claude_code
+      model: claude-sonnet-5-5
+      transport: primary-pc-cli
+      enabled: true
+      capabilities: read_only; PC must be online
+    bob-claude-haiku-55:
+      label: Claude Haiku 5.5
+      backend: claude_code
+      model: claude-haiku-5-5
+      transport: primary-pc-cli
+      enabled: true
+      capabilities: read_only; PC must be online; cheap worker tier
+    bob-claude-alternate-haiku:
+      label: Haiku 5.5 · Alternate
+      backend: claude_alternate
+      model: claude-haiku-5-5
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota; opt-in
+    bob-claude-alternate-sonnet:
+      label: Sonnet 5.5 · Alternate
+      backend: claude_alternate
+      model: claude-sonnet-5-5
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota; opt-in
+    bob-claude-alternate-sonnet-med:
+      label: Sonnet 5.5 · Alternate · med
+      backend: claude_alternate
+      model: claude-sonnet-5-5
+      effort: medium
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota; opt-in
+    bob-claude-alternate-sonnet-high:
+      label: Sonnet 5.5 · Alternate · high
+      backend: claude_alternate
+      model: claude-sonnet-5-5
+      effort: high
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota; opt-in
+    bob-claude-alternate-sonnet-xhigh:
+      label: Sonnet 5.5 · Alternate · xhigh
+      backend: claude_alternate
+      model: claude-sonnet-5-5
+      effort: xhigh
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota; opt-in
+    bob-claude-alternate-opus:
+      label: Opus 5.5 · Alternate
+      backend: claude_alternate
+      model: claude-opus-5-5
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota (heaviest); opt-in
+    bob-claude-alternate-opus-med:
+      label: Opus 5.5 · Alternate · med
+      backend: claude_alternate
+      model: claude-opus-5-5
+      effort: medium
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota (heaviest); opt-in
+    bob-claude-alternate-opus-high:
+      label: Opus 5.5 · Alternate · high
+      backend: claude_alternate
+      model: claude-opus-5-5
+      effort: high
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota (heaviest); opt-in
+    bob-claude-alternate-opus-xhigh:
+      label: Opus 5.5 · Alternate · xhigh
+      backend: claude_alternate
+      model: claude-opus-5-5
+      effort: xhigh
+      transport: alternate-pc-cli
+      enabled: true
+      capabilities: read_only; Alternate PC online; alternate account quota (heaviest); opt-in
+  teams:
+    balance-budget:
+      label: Balance-Budget
+      manager: bob-gpt-sol-61
+      worker: bob-ds-flash
+      critic: bob-claude-opus-55
+      bulk: null
+      runnable: true
+      execution_mode: read_only
+      bulk_status: Bulk-seat identity unresolved; require_bulk is blocked
+    coding:
+      label: coding
+      manager: bob-gpt-sol-61
+      worker: bob-glm-53
+      critic: bob-gpt-sol-61
+      senior: bob-claude-opus-55
+      runnable: false
+      reason: GLM edit harness and Claude targeted-fix controls require verification; GLM worker seat down for now (2026-11-02)
+  worker_choices:
+    balance-budget:
+    - bob-ds-flash
+    - bob-qwen-strata
+builtin_teams:
+  cloud-heavy:
+    apex:
+      backend: claude_code
+      escalation_chain:
+      - claude_api
+    worker:
+      backend: deepseek_v4_flash
+      escalation_chain:
+      - deepseek_v4
+      - kimi_code
+    critic:
+      backend: local
+      escalation_chain:
+      - minimax
+  local-first:
+    apex:
+      backend: minimax
+      escalation_chain:
+      - claude_api
+    worker:
+      backend: local
+      escalation_chain:
+      - deepseek_v4_flash
+    critic:
+      backend: local
+      escalation_chain:
+      - minimax
+  demo-fleet:
+    apex:
+      backend: claude_api
+      escalation_chain:
+      - claude_code
+    worker:
+      backend: deepseek_v4_flash
+      escalation_chain:
+      - deepseek_v4
+      - kimi_code
+    critic:
+      backend: minimax
+      escalation_chain:
+      - deepseek_v4
+  hier-fleet:
+    apex:
+      backend: kimi_cli
+      escalation_chain:
+      - kimi_code
+      - claude_api
+    worker:
+      backend: deepseek_v4_flash
+      escalation_chain:
+      - deepseek_v4
+    critic:
+      backend: minimax
+      escalation_chain:
+      - deepseek_v4
+routing:
+  intent_faces:
+    worker: worker-deepseek
+    plan_code: planner-kimi
+    plan_concept: planner-minimax
+  class_faces:
+    worker: worker-deepseek
+    route_cheap: worker-deepseek
+    plan_code: planner-kimi
+    synth_mid: planner-minimax
+    plan_concept: planner-minimax
+    synth_deep: planner-minimax
+  council_face: council-max
+  workspace_worker_face: worker-opencode
+  preferred_backend: local
+  escalation_backend: claude_api
+defaults:
+  face_preferred_backend: local
+  face_escalation_backend: claude_api
+  execute_fallbacks:
+    opencode_unavailable: kimi_platform
+    claude_throttled: claude_api
+    agy_throttled: gemini_pro
+    codex_throttled: opencode_serve
+    kimi_429: kimi_platform
+    pi_429: kimi_platform
+    pi_error: kimi_platform
+  gate_critic_backend: minimax
+  critic_fallback_backend: deepseek_v4_flash
+  council_seat_backends:
+    framer:
+      backend: claude_code
+      fallback_chain:
+      - deepseek_v4_flash
+      - minimax
+    stress:
+      backend: agy_code
+      fallback_chain:
+      - gemini_flash
+      - deepseek_v4_flash
+    wildcard:
+      backend: deepseek_v4_flash
+      fallback_chain:
+      - kimi_code
+      - minimax
+    synth:
+      backend: minimax
+      fallback_chain:
+      - claude_code
+      - deepseek_v4_flash
+  council_default_seats:
+  - framer
+  - stress
+  - wildcard
+  council_default_synth_posture: synth
+  council_synth_backend: minimax
+  council_ground_backend: claude_code

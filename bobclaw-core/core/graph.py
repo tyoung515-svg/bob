@@ -67,14 +67,26 @@ class AgentState(TypedDict):
     task: str
     # Stable BoBClaw conversation id from the HTTP request.
     conversation_id: Optional[str]
+    request_id: Optional[str]
+    stopped_reason: Optional[str]
+    step_extensions: int
+    step_questions_allowed: bool
     # the response-language locale (BCP-47-ish: "en" | "zh-Hans" | "zh-Hant"); optional, default "en"; absent/"en" => no directive => byte-identical.
     locale: Optional[str]
     # Gateway-derived user identity (JWT subject). Threaded into tool contextvars.
     user_id: Optional[str]
+    # How this turn's prior-conversation block was fitted to the model's context budget (core/context):
+    # backend hint, window/budget tokens, messages in/kept/omitted. Stamped onto the L0 turn event.
+    history_fit: Optional[dict]
     # Active face / persona
     face_id: str
+    selected_face_id: Optional[str]  # ingress choice; topology only, never authority
+    chat_single_pass: Optional[bool]  # configured ordinary chat, stamped after admission
     # Optional model name override supplied by the user
     model_override: Optional[str]
+    # Per-turn reasoning effort for a CLI seat that supports it (Claude's --effort).
+    # Absent ⇒ the seat's own default, byte-identical for every backend that ignores it.
+    model_effort: Optional[str]
     # Optional backend override supplied by the user (hard route override,
     # e.g. "deepseek_v4_flash"). When set, route_node skips face resolution.
     backend_override: Optional[str]
@@ -90,6 +102,7 @@ class AgentState(TypedDict):
     # Set for an agent-token turn (the gateway) or by a profile that opts in. The
     # heuristic can never select an explicitly-pinned face (e.g. planner-cc-edit).
     pin_authoritative: Optional[bool]
+    agent_service_single_turn: Optional[bool]
     # Resolved backend name or URL (set by route_node)
     backend: str
     # Tools the active face is allowed to use
@@ -102,6 +115,8 @@ class AgentState(TypedDict):
     artifacts: Annotated[list[dict], operator.add]
     # Last error message, if any
     error: Optional[str]
+    error_type: Optional[str]
+    turn_id: str
     # Optional dispatch subtask from planner decomposition
     dispatch_subtask: Optional[dict]
     # Subtasks produced by decompose_node (used by route_node for bulk-dispatch heuristic)
@@ -184,6 +199,12 @@ class AgentState(TypedDict):
     # front-adjacent system card (identity-card pattern) ONLY when config.PAGE_CONTEXT_ENABLED
     # is on — flag off ⇒ prompt assembly byte-identical. None/absent for every non-bubble turn.
     page_context: Optional[dict]
+    work_context: Optional[dict]
+    work_context_vouch: Optional[str]
+    workflow_context: Optional[dict]
+    workflow_context_vouch: Optional[str]
+    pc_context: Optional[dict]
+    pc_context_vouch: Optional[str]
     # ── Gate Router scope (GR-P2/P4) ──
     # Declared blast radius/intent for the job. Threaded to the cc_edit Gate
     # path and to fan-out workers for scope-drift review. None/{} when absent.
@@ -343,6 +364,8 @@ def _route_after_recall(state: AgentState) -> str:
     # Absent (flag off / ambient / not paused) ⇒ byte-identical.
     if state.get("flight_refused"):
         return END
+    if state.get("agent_service_single_turn"):
+        return END if state.get("error") else "execute"
     # Verification spine §2.6 tier-1 (MS-2): its OWN arm, gated on the explicit
     # post_condition trigger so non-postcondition turns are byte-identical. Taken
     # first; the post-condition critic is a leaf node (→ END).
@@ -618,6 +641,7 @@ def build_graph(checkpointer=None):
         _route_after_recall,
         {
             "dispatch": "dispatch",
+            "execute": "execute",
             "panel_dispatch": "panel_dispatch",
             "council": "council",
             "plan_contracts": "plan_contracts",

@@ -41,7 +41,7 @@ def test_research_forest_manifest_fields():
     m = load_manifest(MANIFEST)
     # Required fields all present + F0's chosen values.
     assert m.name == "Research Forest"
-    assert m.first_user == "Travis"
+    assert m.first_user == "operator"
     assert m.lks_namespace == "research_forest"
     assert m.audience  # non-empty
     assert m.wow_flow  # non-empty

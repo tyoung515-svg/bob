@@ -436,6 +436,12 @@ async def grounding_node(state: dict) -> dict:
     # ── Spawn the read-only WebSearch verifier (claude_code, direct). ─────────
     # NOT via _send_to_backend — claude_code is a subprocess called through
     # ClaudeCodeClient directly (mirrors execute_node's posture→argv mapping).
+    from core.lane_config import configured_mode, get_lane, require_backend, LaneConfigurationError
+    if configured_mode():
+        ground_backend = get_lane().values.get("COUNCIL_GROUND_BACKEND")
+        require_backend(ground_backend)
+        if ground_backend != "claude_code":
+            raise LaneConfigurationError("needs provider/configuration claude_code grounding")
     if COUNCIL_GROUND_BACKEND != "claude_code":
         # Only claude_code is wired in P2 (Gemini second-verifier deferred).
         logger.warning(

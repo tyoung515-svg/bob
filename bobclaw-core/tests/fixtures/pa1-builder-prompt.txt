@@ -1,0 +1,102 @@
+Continue the authorized BoB workflow rehearsal, now as the BUILDER-PROPOSAL role.
+Source: planner message 94b4962f-83b9-4a56-9a60-a562dcd55400; contract artifact SHA256 7ccb51e108a394866b6498186cbe319c07bc7dcc359e30197227f3d1815ac3b6.
+This is a separate role turn on the same backend, not another independently executing agent.
+
+Consume the exact contract below as supplied evidence. The prior planner-only goal meant that earlier turn stopped at planning; this turn authorizes the proposed code diff. Produce a unified diff adding only greet.py and test_greet.py. Implement the exact two greeting cases and unittest checks. Map AC-1, AC-2 and AC-3 to the proposed code. Preserve the task/project/source IDs. Do not create another project or team, ask questions, search the web, or save memories.
+
+The patch must be labeled UNAPPLIED and the command python -m unittest -v must be labeled NOT RUN. No filesystem/worker authority is exposed. Return no invented workspace, run or execution receipt. Do not perform a reviewer pass yet; that will be requested separately.
+
+PLANNER CONTRACT:
+{
+  "task_id": "TASK-BOB-REHEARSAL-0001",
+  "goal": "Specify a tiny Python function greet(name) that returns a personalized greeting, with an accompanying unittest module. Contract only; no code is produced in this task.",
+  "project_id": "919d7df8-16bf-4e40-8e22-2b1f67e849f4",
+  "project_name": "BoB setup rehearsal 2026-11-04",
+  "workspace": {
+    "workspace_id": "UNRESOLVED",
+    "filesystem_root": "UNRESOLVED",
+    "authority": "UNRESOLVED — no sandbox or write grant is bound in this profile",
+    "status": "no workspace provisioned; no run created; no execution receipt exists"
+  },
+  "mode": {
+    "dispatch": "PROPOSAL-ONLY",
+    "worker_dispatch_exposed": false,
+    "filesystem_authority": "unresolved",
+    "builder_may": [
+      "propose a unified diff labeled UNAPPLIED",
+      "state the test command labeled NOT RUN"
+    ],
+    "builder_may_not": [
+      "claim a patch was applied",
+      "claim tests were executed or passed",
+      "cite a run ID or workspace ID"
+    ]
+  },
+  "source_ids": [
+    "BOB-BOOTSTRAP-REHEARSAL-20261104-1",
+    "bob.setup@1:debfaa9fe813515f28ff779b11de9deb7b2bd89f152fa4e6cd52a47df8d98902"
+  ],
+  "evidence_refs": {
+    "backends_catalog": "list_backends -> [deepseek_v4_flash]",
+    "project_receipt": "create_project -> 919d7df8-16bf-4e40-8e22-2b1f67e849f4",
+    "team_receipt": "create_team -> bob-setup-rehearsal-20261104 (apex/worker/critic = deepseek_v4_flash)",
+    "runtime_capability_card": "lane=alex, face=assistant, selected_backend=deepseek_v4_flash"
+  },
+  "allowed_relative_paths": [
+    "greet.py",
+    "test_greet.py"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "statement": "greet(\"Alex\") returns exactly \"Hello, Alex!\"",
+      "check": "assertEqual(greet(\"Alex\"), \"Hello, Alex!\")"
+    },
+    {
+      "id": "AC-2",
+      "statement": "greet(\"\") returns exactly \"Hello, world!\" (empty input falls back to 'world')",
+      "check": "assertEqual(greet(\"\"), \"Hello, world!\")"
+    },
+    {
+      "id": "AC-3",
+      "statement": "Both acceptance checks live in test_greet.py and are collected by unittest discovery",
+      "check": "test class present in test_greet.py, no other files touched"
+    }
+  ],
+  "test_command": {
+    "command": "python -m unittest -v",
+    "status": "PROPOSED — NOT RUN",
+    "cwd": "UNRESOLVED (depends on the workspace root, which is not provisioned)"
+  },
+  "limits": {
+    "tasks_in_scope": 1,
+    "max_files_touched": 2,
+    "files_are": [
+      "greet.py",
+      "test_greet.py"
+    ],
+    "dependencies": [],
+    "no_new_dependencies": true,
+    "no_external_packages": true,
+    "no_network": true,
+    "no_writes_outside_allowed_paths": true,
+    "no_git_operations": true
+  },
+  "handoff_requirements": {
+    "to": "builder (proposal-only role)",
+    "must_return": [
+      "unified diff for greet.py and test_greet.py, explicitly labeled UNAPPLIED",
+      "the test command restated and labeled NOT RUN",
+      "a per-acceptance mapping AC-1 / AC-2 / AC-3 -> the asserted behavior in the diff",
+      "an explicit statement that no workspace, run ID, or execution receipt exists"
+    ],
+    "reject_if": [
+      "any acceptance criterion is missing or unmapped",
+      "any claim of application, execution, or pass/fail results",
+      "any path outside the allowed list",
+      "any invented workspace or run identifier"
+    ],
+    "reviewer_note": "Independent verification is not available in this profile: apex and critic are the same backend (deepseek_v4_flash). Any 'critic' pass is a same-model self-review, not independent verification."
+  },
+  "status": "PROPOSAL-ONLY — awaiting builder proposal in a later turn"
+}

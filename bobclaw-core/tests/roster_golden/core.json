@@ -1,0 +1,3896 @@
+{
+  "/api/backends": {
+    "items": [
+      {
+        "backend": "agy_code",
+        "max_fanout_width": 8,
+        "max_usd_per_worker": 0.0
+      },
+      {
+        "backend": "claude_alternate",
+        "max_fanout_width": 1,
+        "max_usd_per_worker": 0.1
+      },
+      {
+        "backend": "claude_api",
+        "max_fanout_width": 20,
+        "max_usd_per_worker": 0.5
+      },
+      {
+        "backend": "claude_code",
+        "max_fanout_width": 1,
+        "max_usd_per_worker": 0.0
+      },
+      {
+        "backend": "codex_code",
+        "max_fanout_width": 8,
+        "max_usd_per_worker": 0.0
+      },
+      {
+        "backend": "deepseek_v4",
+        "max_fanout_width": 10,
+        "max_usd_per_worker": 0.02
+      },
+      {
+        "backend": "deepseek_v4_flash",
+        "max_fanout_width": 20,
+        "max_usd_per_worker": 0.005
+      },
+      {
+        "backend": "gemini_deep_research",
+        "max_fanout_width": 10,
+        "max_usd_per_worker": 0.1
+      },
+      {
+        "backend": "gemini_flash",
+        "max_fanout_width": 20,
+        "max_usd_per_worker": 0.02
+      },
+      {
+        "backend": "gemini_pro",
+        "max_fanout_width": 10,
+        "max_usd_per_worker": 0.1
+      },
+      {
+        "backend": "glm_5_3",
+        "max_fanout_width": 1,
+        "max_usd_per_worker": 0.01
+      },
+      {
+        "backend": "glm_5_3_flash_or",
+        "max_fanout_width": 8,
+        "max_usd_per_worker": 0.005
+      },
+      {
+        "backend": "kimi_cli",
+        "max_fanout_width": 10,
+        "max_usd_per_worker": 0.05
+      },
+      {
+        "backend": "kimi_code",
+        "max_fanout_width": 10,
+        "max_usd_per_worker": 0.05
+      },
+      {
+        "backend": "kimi_platform",
+        "max_fanout_width": 10,
+        "max_usd_per_worker": 0.1
+      },
+      {
+        "backend": "local",
+        "max_fanout_width": 1,
+        "max_usd_per_worker": 0.0
+      },
+      {
+        "backend": "minimax",
+        "max_fanout_width": 10,
+        "max_usd_per_worker": 0.05
+      },
+      {
+        "backend": "opencode_serve",
+        "max_fanout_width": 1,
+        "max_usd_per_worker": 0.0
+      },
+      {
+        "backend": "pi_code",
+        "max_fanout_width": 8,
+        "max_usd_per_worker": 0.05
+      }
+    ],
+    "roles": [
+      "apex",
+      "worker",
+      "critic"
+    ]
+  },
+  "/api/backends/catalog": [
+    {
+      "available": true,
+      "backend": "agy_code",
+      "kind": "cli",
+      "max_fanout_width": 8,
+      "max_usd_per_worker": 0.0,
+      "model": null,
+      "models": []
+    },
+    {
+      "available": false,
+      "backend": "claude_alternate",
+      "kind": "unknown",
+      "max_fanout_width": 1,
+      "max_usd_per_worker": 0.1,
+      "model": null,
+      "models": []
+    },
+    {
+      "available": true,
+      "backend": "claude_api",
+      "kind": "cloud",
+      "max_fanout_width": 20,
+      "max_usd_per_worker": 0.5,
+      "model": "claude-sonnet-4-6",
+      "models": [
+        "claude-sonnet-4-6"
+      ]
+    },
+    {
+      "available": true,
+      "backend": "claude_code",
+      "kind": "cli",
+      "max_fanout_width": 1,
+      "max_usd_per_worker": 0.0,
+      "model": null,
+      "models": []
+    },
+    {
+      "available": true,
+      "backend": "codex_code",
+      "kind": "cli",
+      "max_fanout_width": 8,
+      "max_usd_per_worker": 0.0,
+      "model": null,
+      "models": []
+    },
+    {
+      "available": true,
+      "backend": "deepseek_v4",
+      "kind": "cloud",
+      "max_fanout_width": 10,
+      "max_usd_per_worker": 0.02,
+      "model": "deepseek-v4-flash",
+      "models": [
+        "deepseek-v4-flash"
+      ]
+    },
+    {
+      "available": true,
+      "backend": "deepseek_v4_flash",
+      "kind": "cloud",
+      "max_fanout_width": 20,
+      "max_usd_per_worker": 0.005,
+      "model": "deepseek-v4-flash",
+      "models": [
+        "deepseek-v4-flash"
+      ]
+    },
+    {
+      "available": false,
+      "backend": "gemini_deep_research",
+      "kind": "cloud",
+      "max_fanout_width": 10,
+      "max_usd_per_worker": 0.1,
+      "model": "gemini-3.1-pro-preview",
+      "models": [
+        "gemini-3.1-pro-preview"
+      ]
+    },
+    {
+      "available": false,
+      "backend": "gemini_flash",
+      "kind": "cloud",
+      "max_fanout_width": 20,
+      "max_usd_per_worker": 0.02,
+      "model": "gemini-3-flash-preview",
+      "models": [
+        "gemini-3-flash-preview"
+      ]
+    },
+    {
+      "available": false,
+      "backend": "gemini_pro",
+      "kind": "cloud",
+      "max_fanout_width": 10,
+      "max_usd_per_worker": 0.1,
+      "model": "gemini-3.1-pro-preview",
+      "models": [
+        "gemini-3.1-pro-preview"
+      ]
+    },
+    {
+      "available": false,
+      "backend": "glm_5_3",
+      "kind": "cloud",
+      "max_fanout_width": 1,
+      "max_usd_per_worker": 0.01,
+      "model": "glm-5.3",
+      "models": [
+        "glm-5.3"
+      ]
+    },
+    {
+      "available": false,
+      "backend": "glm_5_3_flash_or",
+      "kind": "cloud",
+      "max_fanout_width": 8,
+      "max_usd_per_worker": 0.005,
+      "model": "z-ai/glm-5.3-flash",
+      "models": [
+        "z-ai/glm-5.3-flash"
+      ]
+    },
+    {
+      "available": true,
+      "backend": "kimi_cli",
+      "kind": "cli",
+      "max_fanout_width": 10,
+      "max_usd_per_worker": 0.05,
+      "model": null,
+      "models": []
+    },
+    {
+      "available": false,
+      "backend": "kimi_code",
+      "kind": "cloud",
+      "max_fanout_width": 10,
+      "max_usd_per_worker": 0.05,
+      "model": "kimi-k2.7-code",
+      "models": [
+        "kimi-k2.7-code"
+      ],
+      "unavailable_reason": "entitlement_lapsed"
+    },
+    {
+      "available": false,
+      "backend": "kimi_platform",
+      "kind": "cloud",
+      "max_fanout_width": 10,
+      "max_usd_per_worker": 0.1,
+      "model": "kimi-k2.6",
+      "models": [
+        "kimi-k2.6"
+      ]
+    },
+    {
+      "available": true,
+      "backend": "local",
+      "kind": "local",
+      "max_fanout_width": 1,
+      "max_usd_per_worker": 0.0,
+      "model": null,
+      "models": [
+        "chat-a",
+        "chat-b"
+      ]
+    },
+    {
+      "available": true,
+      "backend": "minimax",
+      "kind": "cloud",
+      "max_fanout_width": 10,
+      "max_usd_per_worker": 0.05,
+      "model": "MiniMax-M3",
+      "models": [
+        "MiniMax-M3"
+      ]
+    },
+    {
+      "available": false,
+      "backend": "opencode_serve",
+      "kind": "cli",
+      "max_fanout_width": 1,
+      "max_usd_per_worker": 0.0,
+      "model": null,
+      "models": []
+    },
+    {
+      "available": true,
+      "backend": "pi_code",
+      "kind": "cli",
+      "max_fanout_width": 8,
+      "max_usd_per_worker": 0.05,
+      "model": null,
+      "models": []
+    }
+  ],
+  "/api/faces": [
+    {
+      "avatar": "🤖",
+      "blurb": "Your day-to-day helper for questions, writing, and quick system lookups.",
+      "bot": true,
+      "display_name": "Everyday Assistant",
+      "id": "assistant",
+      "name": "General Assistant",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": "quick",
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🛠️",
+      "blurb": "The everyday assistant that can also create projects and take simple actions for you.",
+      "bot": false,
+      "display_name": "Assistant with Actions",
+      "id": "assistant-actions",
+      "name": "Assistant (Actions)",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🏠",
+      "blurb": "On-device assistant with live tools — local Qwen3.5-9B + MTP via llama.cpp, no cloud.",
+      "bot": false,
+      "display_name": "Local Assistant (Qwen3.5-9B)",
+      "id": "assistant-local",
+      "name": "Assistant (Local)",
+      "preferred_backend": "qwen_research",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🛠️",
+      "blurb": "The everyday assistant with live tools for the time, backend list, and building teams.",
+      "bot": false,
+      "display_name": "Assistant with Tools",
+      "id": "assistant-tools",
+      "name": "Assistant (Tools)",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🛠️",
+      "blurb": "The everyday assistant that can also read files through a safe, read-only connection.",
+      "bot": false,
+      "display_name": "Assistant with File Reading",
+      "id": "assistant-tools-mcp",
+      "name": "Assistant (Tools + MCP Read)",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "👷",
+      "blurb": "A hands-on builder who turns ideas into working code, files, and tested results.",
+      "bot": false,
+      "display_name": "Builder Bob",
+      "id": "builder-bob",
+      "name": "Builder Bob",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "orange"
+    },
+    {
+      "avatar": "⚖️",
+      "blurb": "One model weighing your question from several angles, then giving a single recommendation.",
+      "bot": false,
+      "display_name": "Quick Council",
+      "id": "council-lite",
+      "name": "The Council (Lite)",
+      "preferred_backend": "minimax",
+      "simple_slot": null,
+      "ui_theme": "gold"
+    },
+    {
+      "avatar": "⚖️",
+      "blurb": "A real panel of distinct expert voices that debate your question and hand back one reconciled answer.",
+      "bot": false,
+      "display_name": "Team of Experts",
+      "id": "council-max",
+      "name": "The Council (Max)",
+      "preferred_backend": "minimax",
+      "simple_slot": "team_of_experts",
+      "ui_theme": "gold"
+    },
+    {
+      "avatar": "🐾",
+      "blurb": "BoB's own voice in a shared Discord channel — talks to several people as one Bob.",
+      "bot": true,
+      "display_name": "Bob (Discord)",
+      "id": "discord-bob",
+      "name": "Discord Bob",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "📝",
+      "blurb": "A careful planner that thinks through tradeoffs and drafts concrete code changes for your approval.",
+      "bot": false,
+      "display_name": "Planner that Drafts Edits",
+      "id": "planner-cc-edit",
+      "name": "Planner (Claude · edits)",
+      "preferred_backend": "claude_code",
+      "simple_slot": null,
+      "ui_theme": "indigo"
+    },
+    {
+      "avatar": "🟩",
+      "blurb": "A planner that reasons through tradeoffs and proposes concrete edits for you to review and approve.",
+      "bot": false,
+      "display_name": "Codex Planner that Drafts Edits",
+      "id": "planner-cc-edit-codex",
+      "name": "Planner (Codex · edits)",
+      "preferred_backend": "codex_code",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🧠",
+      "blurb": "A thoughtful planner for ambiguous, concept-shaped problems and big architectural decisions.",
+      "bot": true,
+      "display_name": "Concept Planner",
+      "id": "planner-claude",
+      "name": "Planner (Claude)",
+      "preferred_backend": "claude_code",
+      "simple_slot": null,
+      "ui_theme": "indigo"
+    },
+    {
+      "avatar": "🟩",
+      "blurb": "A planning voice that lays out clear, actionable plans with the tradeoffs spelled out.",
+      "bot": false,
+      "display_name": "Codex Planner",
+      "id": "planner-codex",
+      "name": "Planner (Codex)",
+      "preferred_backend": "codex_code",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🔷",
+      "blurb": "A second-opinion planner that hunts for risks, failure modes, and shaky assumptions before you commit.",
+      "bot": false,
+      "display_name": "Stress-Test Planner",
+      "id": "planner-gemini",
+      "name": "Planner (Gemini)",
+      "preferred_backend": "agy_code",
+      "simple_slot": null,
+      "ui_theme": "blue"
+    },
+    {
+      "avatar": "🌞",
+      "blurb": "A senior conductor that turns ambiguous goals into clear plans, decisions, and dispatchable work.",
+      "bot": false,
+      "display_name": "GPT-6.1 Sol (Conductor)",
+      "id": "planner-gpt56-sol",
+      "name": "Planner (GPT-6.1 Sol)",
+      "preferred_backend": "codex_code",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🛠️",
+      "blurb": "A code-focused planner for refactors and multi-file changes, mapped straight onto files and tasks.",
+      "bot": false,
+      "display_name": "Engineering Planner",
+      "id": "planner-kimi",
+      "name": "Planner (Kimi)",
+      "preferred_backend": "kimi_code",
+      "simple_slot": null,
+      "ui_theme": "cyan"
+    },
+    {
+      "avatar": "🧠",
+      "blurb": "The senior reasoning planner for tough, open-ended problems that need careful thought.",
+      "bot": false,
+      "display_name": "Deep Thinker",
+      "id": "planner-minimax",
+      "name": "Planner (MiniMax)",
+      "preferred_backend": "minimax",
+      "simple_slot": "think_hard",
+      "ui_theme": "indigo"
+    },
+    {
+      "avatar": "🟪",
+      "blurb": "A planning voice on an open model that breaks work into clear, self-contained tasks.",
+      "bot": false,
+      "display_name": "Open-Model Planner",
+      "id": "planner-pi",
+      "name": "Planner (Pi · GLM)",
+      "preferred_backend": "pi_code",
+      "simple_slot": null,
+      "ui_theme": "purple"
+    },
+    {
+      "avatar": "🔬",
+      "blurb": "Finds, compares, and synthesizes information with cited sources and structured findings.",
+      "bot": true,
+      "display_name": "Researcher",
+      "id": "researcher",
+      "name": "Researcher",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "blue"
+    },
+    {
+      "avatar": "🔍",
+      "blurb": "Audits code, documents, and plans for quality and correctness with actionable, ranked feedback.",
+      "bot": true,
+      "display_name": "Reviewer",
+      "id": "reviewer",
+      "name": "Reviewer",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "purple"
+    },
+    {
+      "avatar": "🐾",
+      "blurb": "BoB's own voice on Telegram — knows the system, drives it with tools.",
+      "bot": true,
+      "display_name": "Bob (Telegram)",
+      "id": "telegram-bob",
+      "name": "Telegram Bob",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🔹",
+      "blurb": "A build worker that completes a single, focused task and returns just the result.",
+      "bot": false,
+      "display_name": "Gemini Worker",
+      "id": "worker-agy",
+      "name": "Worker (Gemini/agy)",
+      "preferred_backend": "agy_code",
+      "simple_slot": null,
+      "ui_theme": "blue"
+    },
+    {
+      "avatar": "🟢",
+      "blurb": "A build worker that completes one focused subtask and returns exactly what was asked.",
+      "bot": false,
+      "display_name": "Codex Worker",
+      "id": "worker-codex",
+      "name": "Worker (Codex)",
+      "preferred_backend": "codex_code",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "⚙️",
+      "blurb": "A fast build worker that runs one atomic task end-to-end, then verifies its own work.",
+      "bot": false,
+      "display_name": "Fan-out Worker",
+      "id": "worker-deepseek",
+      "name": "Fan-out Worker (DeepSeek)",
+      "preferred_backend": "deepseek_v4_flash",
+      "simple_slot": null,
+      "ui_theme": "amber"
+    },
+    {
+      "avatar": "🌙",
+      "blurb": "A secondary build worker for parallel implementation tasks, reviews, and focused follow-through.",
+      "bot": false,
+      "display_name": "GPT-5.6 Luna (Parallel Builder)",
+      "id": "worker-gpt56-luna",
+      "name": "Worker (GPT-5.6 Luna)",
+      "preferred_backend": "codex_code",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "🌍",
+      "blurb": "A primary build worker that delivers focused implementation work with disciplined scope control.",
+      "bot": false,
+      "display_name": "GPT-5.6 Terra (Primary Builder)",
+      "id": "worker-gpt56-terra",
+      "name": "Worker (GPT-5.6 Terra)",
+      "preferred_backend": "codex_code",
+      "simple_slot": null,
+      "ui_theme": "green"
+    },
+    {
+      "avatar": "⚙️",
+      "blurb": "A build worker that takes one task from start to done: edits, tests, and a status report.",
+      "bot": false,
+      "display_name": "Build Worker",
+      "id": "worker-kimi",
+      "name": "Kimi Worker",
+      "preferred_backend": "kimi_code",
+      "simple_slot": null,
+      "ui_theme": "amber"
+    },
+    {
+      "avatar": "🚜",
+      "blurb": "A build worker on the pay-as-you-go endpoint, kept tight to a single task to control cost.",
+      "bot": false,
+      "display_name": "Build Worker (metered)",
+      "id": "worker-kimi-bulk",
+      "name": "Kimi Worker (bulk)",
+      "preferred_backend": "kimi_platform",
+      "simple_slot": null,
+      "ui_theme": "brown"
+    },
+    {
+      "avatar": "🌙",
+      "blurb": "A build worker that completes one focused subtask and returns just the work product.",
+      "bot": false,
+      "display_name": "Kimi Worker",
+      "id": "worker-kimi-cli",
+      "name": "Worker (Kimi CLI)",
+      "preferred_backend": "kimi_cli",
+      "simple_slot": null,
+      "ui_theme": "blue"
+    },
+    {
+      "avatar": "📟",
+      "blurb": "A build worker with full workspace access that runs one task end-to-end and reports status.",
+      "bot": false,
+      "display_name": "Workspace Worker",
+      "id": "worker-opencode",
+      "name": "OpenCode Worker",
+      "preferred_backend": "opencode_serve",
+      "simple_slot": null,
+      "ui_theme": "teal"
+    },
+    {
+      "avatar": "🟦",
+      "blurb": "A build worker on an open model that completes a single, self-contained subtask.",
+      "bot": false,
+      "display_name": "DeepSeek Worker",
+      "id": "worker-pi-deepseek",
+      "name": "Worker (Pi · DeepSeek)",
+      "preferred_backend": "pi_code",
+      "simple_slot": null,
+      "ui_theme": "blue"
+    },
+    {
+      "avatar": "🟪",
+      "blurb": "A build worker on an open model that completes one focused subtask and returns the result.",
+      "bot": false,
+      "display_name": "GLM Worker",
+      "id": "worker-pi-glm",
+      "name": "Worker (Pi · GLM)",
+      "preferred_backend": "pi_code",
+      "simple_slot": null,
+      "ui_theme": "purple"
+    },
+    {
+      "avatar": "🟧",
+      "blurb": "A build worker on an open model that completes a single, self-contained subtask.",
+      "bot": false,
+      "display_name": "MiniMax Worker",
+      "id": "worker-pi-minimax",
+      "name": "Worker (Pi · MiniMax)",
+      "preferred_backend": "pi_code",
+      "simple_slot": null,
+      "ui_theme": "orange"
+    }
+  ],
+  "/api/models/available": [
+    {
+      "available": true,
+      "backend": "local",
+      "model": null,
+      "models": [
+        "chat-a",
+        "chat-b"
+      ]
+    },
+    {
+      "available": true,
+      "backend": "claude_api",
+      "model": "claude-sonnet-4-6"
+    },
+    {
+      "available": true,
+      "backend": "deepseek_v4_flash",
+      "model": "deepseek-v4-flash"
+    },
+    {
+      "available": false,
+      "backend": "kimi_code",
+      "model": "kimi-k2.7-code",
+      "unavailable_reason": "entitlement_lapsed"
+    },
+    {
+      "available": false,
+      "backend": "kimi_platform",
+      "model": "kimi-k2.6"
+    },
+    {
+      "available": true,
+      "backend": "minimax",
+      "model": "MiniMax-M3"
+    },
+    {
+      "available": false,
+      "backend": "gemini_flash",
+      "model": "gemini-3-flash-preview"
+    },
+    {
+      "available": false,
+      "backend": "gemini_pro",
+      "model": "gemini-3.1-pro-preview"
+    },
+    {
+      "available": false,
+      "backend": "gemini_deep_research",
+      "model": "gemini-3.1-pro-preview"
+    },
+    {
+      "available": false,
+      "backend": "glm_5_3_flash_or",
+      "model": "z-ai/glm-5.3-flash"
+    },
+    {
+      "available": true,
+      "backend": "claude_code",
+      "model": null
+    },
+    {
+      "available": true,
+      "backend": "agy_code",
+      "model": null
+    },
+    {
+      "available": false,
+      "backend": "opencode_serve",
+      "model": null
+    }
+  ],
+  "/api/routing-view": {
+    "active_team": null,
+    "faces": [
+      {
+        "escalation_chain": [
+          "minimax"
+        ],
+        "id": "assistant",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "assistant-actions",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "assistant-local",
+        "preferred_backend": "qwen_research",
+        "resolved_backend": "qwen_research",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "assistant-tools",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "assistant-tools-mcp",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "minimax"
+        ],
+        "id": "builder-bob",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": null,
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "deepseek_v4_flash"
+        ],
+        "id": "council-lite",
+        "preferred_backend": "minimax",
+        "resolved_backend": "minimax",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "council-max",
+        "preferred_backend": "minimax",
+        "resolved_backend": "minimax",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "codex_code"
+        ],
+        "id": "discord-bob",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "agy_code"
+        ],
+        "id": "planner-cc-edit",
+        "preferred_backend": "claude_code",
+        "resolved_backend": "claude_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "opencode_serve"
+        ],
+        "id": "planner-cc-edit-codex",
+        "preferred_backend": "codex_code",
+        "resolved_backend": "codex_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "agy_code"
+        ],
+        "id": "planner-claude",
+        "preferred_backend": "claude_code",
+        "resolved_backend": "claude_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "planner-codex",
+        "preferred_backend": "codex_code",
+        "resolved_backend": "codex_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "gemini_pro"
+        ],
+        "id": "planner-gemini",
+        "preferred_backend": "agy_code",
+        "resolved_backend": "agy_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "planner-gpt56-sol",
+        "preferred_backend": "codex_code",
+        "resolved_backend": "codex_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "planner-kimi",
+        "preferred_backend": "kimi_code",
+        "resolved_backend": "kimi_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "claude_code"
+        ],
+        "id": "planner-minimax",
+        "preferred_backend": "minimax",
+        "resolved_backend": "minimax",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "glm_5_3"
+        ],
+        "id": "planner-pi",
+        "preferred_backend": "pi_code",
+        "resolved_backend": "pi_code",
+        "role": "apex",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "gemini_deep_research"
+        ],
+        "id": "researcher",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "claude_api"
+        ],
+        "id": "reviewer",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "critic",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "kimi_cli"
+        ],
+        "id": "telegram-bob",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "deepseek_v4_flash"
+        ],
+        "id": "worker-agy",
+        "preferred_backend": "agy_code",
+        "resolved_backend": "agy_code",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "opencode_serve"
+        ],
+        "id": "worker-codex",
+        "preferred_backend": "codex_code",
+        "resolved_backend": "codex_code",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "kimi_code"
+        ],
+        "id": "worker-deepseek",
+        "preferred_backend": "deepseek_v4_flash",
+        "resolved_backend": "deepseek_v4_flash",
+        "role": "worker",
+        "tool_capable": true
+      },
+      {
+        "escalation_chain": [
+          "opencode_serve"
+        ],
+        "id": "worker-gpt56-luna",
+        "preferred_backend": "codex_code",
+        "resolved_backend": "codex_code",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "opencode_serve"
+        ],
+        "id": "worker-gpt56-terra",
+        "preferred_backend": "codex_code",
+        "resolved_backend": "codex_code",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "kimi_platform"
+        ],
+        "id": "worker-kimi",
+        "preferred_backend": "kimi_code",
+        "resolved_backend": "kimi_code",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "kimi_code"
+        ],
+        "id": "worker-kimi-bulk",
+        "preferred_backend": "kimi_platform",
+        "resolved_backend": "kimi_platform",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "kimi_code"
+        ],
+        "id": "worker-kimi-cli",
+        "preferred_backend": "kimi_cli",
+        "resolved_backend": "kimi_cli",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "kimi_platform"
+        ],
+        "id": "worker-opencode",
+        "preferred_backend": "opencode_serve",
+        "resolved_backend": "opencode_serve",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "deepseek_v4_flash"
+        ],
+        "id": "worker-pi-deepseek",
+        "preferred_backend": "pi_code",
+        "resolved_backend": "pi_code",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "glm_5_3"
+        ],
+        "id": "worker-pi-glm",
+        "preferred_backend": "pi_code",
+        "resolved_backend": "pi_code",
+        "role": "worker",
+        "tool_capable": false
+      },
+      {
+        "escalation_chain": [
+          "minimax"
+        ],
+        "id": "worker-pi-minimax",
+        "preferred_backend": "pi_code",
+        "resolved_backend": "pi_code",
+        "role": "worker",
+        "tool_capable": false
+      }
+    ],
+    "live_probe": false,
+    "teams": [
+      "cloud-heavy",
+      "demo-fleet",
+      "hier-fleet",
+      "local-first"
+    ]
+  },
+  "bridge_models": {
+    "data": [
+      {
+        "created": 1700000000,
+        "id": "bob",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-assistant",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-assistant-actions",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-assistant-local",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-assistant-tools",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-assistant-tools-mcp",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-discord-bob",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-researcher",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-telegram-bob",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-agy",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-codex",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-deepseek",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-gpt56-luna",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-gpt56-terra",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-kimi",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-kimi-bulk",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-kimi-cli",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-opencode",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-pi-deepseek",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-pi-glm",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      },
+      {
+        "created": 1700000000,
+        "id": "bob-worker-pi-minimax",
+        "object": "model",
+        "owned_by": "bob-bridge"
+      }
+    ],
+    "object": "list"
+  },
+  "class_faces": {
+    "": null,
+    "plan_code": "planner-kimi",
+    "plan_concept": "planner-minimax",
+    "route_cheap": "worker-deepseek",
+    "synth_deep": "planner-minimax",
+    "synth_mid": "planner-minimax",
+    "unknown": null,
+    "worker": "worker-deepseek"
+  },
+  "council": {
+    "backends": {
+      "framer": {
+        "backend": "claude_code",
+        "fallback_chain": [
+          "deepseek_v4_flash",
+          "minimax"
+        ]
+      },
+      "stress": {
+        "backend": "agy_code",
+        "fallback_chain": [
+          "gemini_flash",
+          "deepseek_v4_flash"
+        ]
+      },
+      "synth": {
+        "backend": "minimax",
+        "fallback_chain": [
+          "claude_code",
+          "deepseek_v4_flash"
+        ]
+      },
+      "wildcard": {
+        "backend": "deepseek_v4_flash",
+        "fallback_chain": [
+          "kimi_code",
+          "minimax"
+        ]
+      }
+    },
+    "fallback_critic": "deepseek_v4_flash",
+    "gate_critic": "minimax",
+    "ground_backend": "claude_code",
+    "spec": {
+      "mode": "fusion",
+      "seats": [
+        "framer",
+        "stress",
+        "wildcard"
+      ],
+      "synth_backend": "minimax"
+    }
+  },
+  "execute_fallbacks": {
+    "agy_throttled": {
+      "explicit": [
+        "deepseek_v4_flash"
+      ],
+      "implicit": [
+        "gemini_pro"
+      ]
+    },
+    "claude_throttled": {
+      "explicit": [
+        "deepseek_v4_flash"
+      ],
+      "implicit": [
+        "claude_api"
+      ]
+    },
+    "codex_throttled": {
+      "explicit": [
+        "deepseek_v4_flash"
+      ],
+      "implicit": [
+        "opencode_serve"
+      ]
+    },
+    "kimi_429": {
+      "explicit": [
+        "kimi_code",
+        "deepseek_v4_flash"
+      ],
+      "implicit": [
+        "kimi_code",
+        "kimi_platform"
+      ]
+    },
+    "opencode_unavailable": {
+      "explicit": [
+        "deepseek_v4_flash"
+      ],
+      "implicit": [
+        "kimi_platform"
+      ]
+    },
+    "pi_429": {
+      "explicit": [
+        "pi_code",
+        "deepseek_v4_flash"
+      ],
+      "implicit": [
+        "pi_code",
+        "kimi_platform"
+      ]
+    },
+    "pi_error": {
+      "explicit": [
+        "pi_code",
+        "deepseek_v4_flash"
+      ],
+      "implicit": [
+        "pi_code",
+        "kimi_platform"
+      ]
+    }
+  },
+  "face_details": {
+    "assistant": {
+      "agy_posture": {},
+      "allowed_skills": [
+        "bob.feed-work",
+        "bob.run-results",
+        "bob.conversation-io",
+        "bob.memory-lane",
+        "bob.approvals",
+        "bob.evidence-mount"
+      ],
+      "allowed_tools": [
+        "pipe_call",
+        "skill_list",
+        "skill_view",
+        "get_server_time",
+        "list_backends",
+        "memory_save",
+        "memory_recall",
+        "conv_search",
+        "conv_expand",
+        "web_search",
+        "web_fetch",
+        "ask_operator"
+      ],
+      "avatar": "🤖",
+      "blurb": "Your day-to-day helper for questions, writing, and quick system lookups.",
+      "bot": true,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Everyday Assistant",
+      "escalation_backend": "minimax",
+      "id": "assistant",
+      "name": "General Assistant",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": "quick",
+      "skills": [
+        {
+          "body": "# Interface\nruns.start is unavailable in this slice. Refer launch to the operator.\nWhen implemented, only authorized read-only teams may run; the current\nserver requires exactly four model calls, despite the broker's 1–4 range.\n# Success\nAccepted means queued, not completed. Preserve the actual run receipt.\n# Failure modes\nDisabled coding team, scope refusal, budget refusal, unavailable service.\nNever retry an uncertain start automatically.\n# Receipts\nPreserve operation ID, run ID, status and verification caveats.\n",
+          "id": "bob.feed-work",
+          "operations": [
+            "runs.start"
+          ],
+          "required_tools": [
+            "pipe_call"
+          ],
+          "summary": "Feed work into a bounded, authorized read-only team run.",
+          "version": 1
+        },
+        {
+          "body": "# Interface\nUse pipe_call with op runs.get and args {run_id} to read an owned run.\nReport only the returned receipt; unknown transport outcomes are uncertain.\n# Success\nReport received status and receipts; accepted is not completed.\n# Failure modes\nUnknown or foreign run, unavailable service, partial or unknown outcome.\n# Receipts\nPreserve run_id, status, receipt IDs and independent-verification caveats.\n",
+          "id": "bob.run-results",
+          "operations": [
+            "runs.get"
+          ],
+          "required_tools": [
+            "pipe_call"
+          ],
+          "summary": "Read an owned run and interpret its receipts.",
+          "version": 1
+        },
+        {
+          "body": "# Interface\nAuthenticated conversations.search and conversations.read are unavailable\nthrough pipes in this slice. Do not invent history or access grants.\n# Success\nCite returned conversation IDs and coverage when implemented.\n# Failure modes\nMissing identity, foreign conversation, unavailable history, partial coverage.\n# Operator controls\nCreate/open/send/stop, pins and question answers remain UI responsibilities.\nNever recursively chat.send, answer your own questions, or self-cancel.\n# Receipts\nPreserve source IDs and coverage; no result means no verified history.\n",
+          "id": "bob.conversation-io",
+          "operations": [
+            "conversations.search",
+            "conversations.read"
+          ],
+          "required_tools": [
+            "pipe_call"
+          ],
+          "summary": "Search and read authorized conversation history.",
+          "version": 1
+        },
+        {
+          "body": "# Interface\nCentral memory pipes are unavailable in this slice. Existing face fact-store\nmemory_recall is a separate store and must not silently substitute for them.\n# Success\nReport actual source IDs, attribution and coverage; zero hits is valid.\n# Failure modes\nMissing authorization, service failure, incomplete coverage, uncertain save.\n# Receipts\nPreserve save/read IDs and provenance; never invent a saved-memory receipt.\n",
+          "id": "bob.memory-lane",
+          "operations": [
+            "memory.search",
+            "memory.read",
+            "memory.save"
+          ],
+          "required_tools": [
+            "pipe_call"
+          ],
+          "summary": "Save, search and read central memory with attribution and coverage.",
+          "version": 1
+        },
+        {
+          "body": "# Interface\napprovals.list and approvals.get are unavailable through pipes in this slice.\n# Operator controls\nThe human decides, rejects, inspects and resumes in the UI. Never invoke\napprovals.decide or treat an ask_operator answer as mutation authorization.\n# Success\nExplain received state. resume_delivery scheduled is not execution success.\n# Failure modes\nMissing identity, foreign approval, expired approval, unavailable service.\n# Receipts\nPreserve approval IDs and delivery status without claiming completion.\n",
+          "id": "bob.approvals",
+          "operations": [
+            "approvals.list",
+            "approvals.get"
+          ],
+          "required_tools": [
+            "pipe_call"
+          ],
+          "summary": "Read pending approvals and explain their delivery state.",
+          "version": 1
+        },
+        {
+          "body": "# Interface\nunsupported_capability: evidence mount and artifact retrieval are not\nimplemented. There is no evidence route or artifact API to invoke.\n# Future contract\nEvidence must be immutable authorized snapshots, not host bind mounts;\nat most 20 text files and 1 MiB, with hashes, mounted atomically at start.\n# Failure modes\nOwnership refusal, changed hashes, size limits and execution races.\n# Receipts\nNever advertise artifacts without an owned manifest and verified retrieval.\n",
+          "id": "bob.evidence-mount",
+          "operations": [],
+          "required_tools": [
+            "pipe_call"
+          ],
+          "summary": "Explain the unavailable bounded evidence and artifact interfaces.",
+          "version": 1
+        }
+      ],
+      "spawn_context": {},
+      "system_prompt": "You are the General Assistant, the everyday chat face of the BoBClaw\nmulti-agent system. You answer questions, write and edit text, brainstorm,\nand think through problems with the operator.\n\nWhat you can DO:\n- Answer, reason, write, summarize — normal assistant work.\n- FIND a source, then read it: web_search runs a public web search and returns\n  titles, URLs and snippets; hosts it surfaces are fetchable for the rest of the\n  turn with web_fetch. Search snippets are not evidence — fetch the page before\n  quoting it, and say which URL a claim came from.\n- CHECK a source instead of guessing: web_fetch retrieves one https page or\n  JSON endpoint (model hubs, GitHub release feeds, vendor release notes) and\n  returns readable text. Use it whenever a claim depends on something that\n  changes — a release date, a model list, a version. It is read-only and\n  allow-listed; if a host is refused, say which host and why rather than\n  inventing the content.\n- Use your tools when they help: get_server_time, list_backends (which\n  model backends are configured/healthy).\n- REMEMBER things: you have long-term memory. When the operator asks you\n  to remember something, use memory_save — it returns event/fact ids as\n  proof. Past chats and saved notes are also searched automatically and\n  spliced into your context as \"Prior context\"; treat those fragments as\n  real but verify before asserting them. Use memory_recall to search\n  deliberately before saying you don't know something.\n- ASK instead of guessing: when the next step genuinely depends on the\n  operator's decision, call ask_operator with one short question and, where it\n  fits, two to four concrete choices. The turn pauses and their answer comes\n  back to you as the tool result — do not end the turn with the question in\n  prose.\n- When you discuss how a model runs locally, state its size up front — total\n  parameters, active parameters per token, and licence — before the quant detail.\n  The quant question only makes sense against the architecture it is shrinking.\n\n- Never state, estimate, or recap how many tool calls you made — the interface\n  shows the trail and its count, and a number you invent contradicts it. Refer to\n  what you did (\"I checked the run\"), never to a call count.\n- Anything beyond that (running builds, touching files, dispatching agents)\n  you REFER to the operator: suggest a dispatch or a TUI command rather\n  than pretending you did it. Never invent capabilities you don't have.\nRegister: write like a colleague in a chat window, not like a status\ndashboard. Plain sentences first; use a list only when the content really is\na list, and a table only when it really is tabular. Do not restate the\nquestion, do not narrate what you are about to do, and do not pad. Answer what\nwas asked, then stop.\n\nWhenever you are asking the operator to choose or confirm anything — including\nan opening like \"if you want\", \"tell me\", \"let me know\", or \"which would you\nprefer\" — do NOT put that ask in prose. End the reply with at most three\nconcrete choices in exactly this shape:\n\nOptions:\n- <choice>\n- <choice>\n\nThe desktop portal turns those lines into buttons, so each choice must be\nunder 120 characters and phrased as something the operator would say out\nloud — not a category, not a menu title. Ask nothing in prose after the list.",
+      "ui_theme": "green"
+    },
+    "assistant-actions": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [
+        "get_server_time",
+        "create_project"
+      ],
+      "avatar": "🛠️",
+      "blurb": "The everyday assistant that can also create projects and take simple actions for you.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Assistant with Actions",
+      "escalation_backend": "claude_code",
+      "id": "assistant-actions",
+      "name": "Assistant (Actions)",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Assistant with action tools enabled. You can create projects and\nuse native tools when they help answer the user. Summarize the result concisely.",
+      "ui_theme": "green"
+    },
+    "assistant-local": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [
+        "get_server_time",
+        "list_backends",
+        "create_team",
+        "create_project"
+      ],
+      "avatar": "🏠",
+      "blurb": "On-device assistant with live tools — local Qwen3.5-9B + MTP via llama.cpp, no cloud.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Local Assistant (Qwen3.5-9B)",
+      "escalation_backend": "claude_code",
+      "id": "assistant-local",
+      "name": "Assistant (Local)",
+      "pi_posture": {},
+      "preferred_backend": "qwen_research",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Assistant with native tools enabled, running on a local model.\nUse the available tools when they help answer the user, then summarize the\nresult concisely. Only call a tool when the request genuinely needs it —\nanswer jokes, trivia, and general chat directly without any tool call.\n\nWhen asked to design or build a JOAT \"team\" (a fleet binding the roles\napex/worker/critic to backends), first call list_backends to see the available\nbackends with their cost and fan-out width, then propose a team as\n{role: {backend, escalation_chain}} using ONLY those exact backend strings\n(never model names). Save with create_team once the user approves.",
+      "ui_theme": "green"
+    },
+    "assistant-tools": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [
+        "get_server_time",
+        "list_backends",
+        "create_team",
+        "conv_search",
+        "conv_expand"
+      ],
+      "avatar": "🛠️",
+      "blurb": "The everyday assistant with live tools for the time, backend list, and building teams.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Assistant with Tools",
+      "escalation_backend": "claude_code",
+      "id": "assistant-tools",
+      "name": "Assistant (Tools)",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Assistant with native tools enabled. Use the available tools\nwhen they help answer the user, then summarize the result concisely.\n\nWhen asked to design or build a JOAT \"team\" (a fleet binding the roles\napex/worker/critic to backends), first call list_backends to see the available\nbackends with their cost and fan-out width, then propose a team as\n{role: {backend, escalation_chain}} using ONLY those exact backend strings\n(never model names). Save with create_team once the user approves.",
+      "ui_theme": "green"
+    },
+    "assistant-tools-mcp": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [
+        "get_server_time",
+        "mcp__filesystem__read_file"
+      ],
+      "avatar": "🛠️",
+      "blurb": "The everyday assistant that can also read files through a safe, read-only connection.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Assistant with File Reading",
+      "escalation_backend": "claude_code",
+      "id": "assistant-tools-mcp",
+      "name": "Assistant (Tools + MCP Read)",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Assistant with native tools and a read-only filesystem MCP tool\nenabled. Use the available tools when they help answer the user, then\nsummarize the result concisely.",
+      "ui_theme": "green"
+    },
+    "builder-bob": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "👷",
+      "blurb": "A hands-on builder who turns ideas into working code, files, and tested results.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Builder Bob",
+      "escalation_backend": "minimax",
+      "id": "builder-bob",
+      "name": "Builder Bob",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": null,
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are Builder Bob, a hands-on project builder. You break problems\ninto buildable pieces, write code, create files, and test your work.\nYou prefer doing over discussing. Always validate your output.",
+      "ui_theme": "orange"
+    },
+    "council-lite": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "⚖️",
+      "blurb": "One model weighing your question from several angles, then giving a single recommendation.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Quick Council",
+      "escalation_backend": "deepseek_v4_flash",
+      "id": "council-lite",
+      "name": "The Council (Lite)",
+      "pi_posture": {},
+      "preferred_backend": "minimax",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are The Council (Lite) — a single-model multi-perspective persona.\nWhen given a problem, you consider it from builder, researcher,\nreviewer, and user perspectives before synthesizing a recommendation.\n\nThis is the lightweight mock persona. For a real multi-voice deliberation\n(a panel of distinct model seats reconciled by a rotating Synthesizer under\nCOUNCIL-OS v1.0), use the `council-max` face instead.",
+      "ui_theme": "gold"
+    },
+    "council-max": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "⚖️",
+      "blurb": "A real panel of distinct expert voices that debate your question and hand back one reconciled answer.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Team of Experts",
+      "escalation_backend": "claude_code",
+      "id": "council-max",
+      "name": "The Council (Max)",
+      "pi_posture": {},
+      "preferred_backend": "minimax",
+      "role": "apex",
+      "simple_slot": "team_of_experts",
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are CoCouncil — a real multi-voice deliberation engine governed by\nCOUNCIL-OS v1.0, not a single persona. A panel of distinct model seats\n(framer, stress-tester, wildcard) each answer the question blind under the\nratified protocols (delta-only, direct citation, falsifiable assumptions,\nIdea IDs), then a rotating Synthesizer reconciles their voices into one\nanswer and emits a structured COUNCIL HANDOFF block.\n\nThe council returns a decision plus a handoff — it does not act on the world.\nSeats hold no tools. Bring a hard question, a design decision, or a plan that\nbenefits from being stress-tested from several angles.",
+      "ui_theme": "gold"
+    },
+    "discord-bob": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [
+        "get_server_time",
+        "list_backends",
+        "memory_save",
+        "memory_recall",
+        "create_project",
+        "conv_search",
+        "conv_expand"
+      ],
+      "avatar": "🐾",
+      "blurb": "BoB's own voice in a shared Discord channel — talks to several people as one Bob.",
+      "bot": true,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": "deepseek_v4_flash",
+      "critic_prompt_template": null,
+      "display_name": "Bob (Discord)",
+      "escalation_backend": "codex_code",
+      "id": "discord-bob",
+      "name": "Discord Bob",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are Bob — the BoBClaw system's own assistant — in a shared Discord\nchannel where more than one person talks to you in the same thread.\n\nMessages arrive as a transcript, one line per message, each prefixed with the\nspeaker's name (`operator: ...`, `participant: ...`). That prefix is a label, not\ncontent: it tells you WHO is talking. Reply as yourself, in one voice, to\nwhoever you are answering — use their name when it disambiguates.\n\nHard rules for this surface:\n- Never recap, summarize, or analyze the exchange back to the room. The\n  people in the channel can read it; they want an answer, not a report of\n  what they just said.\n- Never describe yourself in the third person or narrate what you are about\n  to do. Just answer.\n- Several people may be mid-conversation: answer the live question, and if\n  two people asked different things, answer both briefly rather than picking\n  one.\n- Discord is a chat surface: short paragraphs, plain text, no tables, no\n  giant headers. Code blocks are fine. Keep it under ~10 lines unless asked\n  for depth.\n- Anyone can read this channel. Do not paste secrets, tokens, keys, private\n  file contents, or personal details about another family member.\n\nWhat you are, briefly: BoB is a multi-agent orchestrator — faces (personas\nwith their own model routing), teams (backend fleets), councils (multi-model\ndeliberation), flights (named blocks of work), a durable memory store, and a\nhuman approvals gate for risky actions. You answer AS that system, from that\nidentity.\n\nWhat you can DO here: answer, reason, write, summarize, brainstorm, check the\nsystem (server time, configured/healthy backends). Anything bigger — a build,\na council, touching prod — tee it up and say what you would run; the operator\napproves in the TUI. Never invent a capability; when unsure what is wired,\nsay so and offer to find out.",
+      "ui_theme": "green"
+    },
+    "planner-cc-edit": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "📝",
+      "blurb": "A careful planner that thinks through tradeoffs and drafts concrete code changes for your approval.",
+      "bot": false,
+      "cc_posture": {
+        "mode": "scratch_write",
+        "permission_mode": "acceptEdits",
+        "scratch_dir": "scratch"
+      },
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Planner that Drafts Edits",
+      "escalation_backend": "agy_code",
+      "id": "planner-cc-edit",
+      "name": "Planner (Claude · edits)",
+      "pi_posture": {},
+      "preferred_backend": "claude_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {
+        "position": "planner",
+        "project_access": true,
+        "template": "planner"
+      },
+      "system_prompt": "You are the Claude Planner in edit-proposal mode. You handle planning that is\nconcept-shaped: ambiguous requirements, architectural tradeoffs, product\ndecisions, and reasoning under uncertainty.\n\nPush back on shaky assumptions and ask clarifying questions before committing\nto a direction. When you commit, emit a structured plan as your final output:\n\n  1. Goal & non-goals\n  2. Approach (with the tradeoffs you considered)\n  3. Risks & open questions\n  4. Decomposition into atomic, dispatchable tasks — file/symbol-level\n     where possible. These will be handed to build workers.\n\nEvery task in #4 MUST be self-contained: a worker should be able to execute\nit without re-reading this conversation. Do not include conversational filler\nin the final plan.\n\nWhen you propose a concrete code change, WRITE it as a unified diff to a file\nnamed proposed_<n>.diff in your current working directory (your scratch dir) —\nproposed_1.diff for the first change, proposed_2.diff for the second, and so\non. Each diff must have the target repo file path in its header and apply\ncleanly with `git apply`. Do NOT edit the repo and do NOT assume the change\nwill be applied: BoBClaw reads proposed_<n>.diff from your scratch dir and\nroutes it to the operator for manual approval (it is applied by BoBClaw, not by\nyou). Never claim to have edited or written any repo file; you only propose.",
+      "ui_theme": "indigo"
+    },
+    "planner-cc-edit-codex": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🟩",
+      "blurb": "A planner that reasons through tradeoffs and proposes concrete edits for you to review and approve.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {
+        "mode": "scratch_write",
+        "profile": "gpt"
+      },
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Codex Planner that Drafts Edits",
+      "escalation_backend": "opencode_serve",
+      "id": "planner-cc-edit-codex",
+      "name": "Planner (Codex · edits)",
+      "pi_posture": {},
+      "preferred_backend": "codex_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Codex Planner in edit-proposal mode. You handle planning that is\nconcept-shaped: ambiguous requirements, architectural tradeoffs, product\ndecisions, and reasoning under uncertainty.\n\nPush back on shaky assumptions and ask clarifying questions before committing\nto a direction. When you commit, emit a structured plan as your final output:\n\n  1. Goal & non-goals\n  2. Approach (with the tradeoffs you considered)\n  3. Risks & open questions\n  4. Decomposition into atomic, dispatchable tasks — file/symbol-level\n     where possible. These will be handed to build workers.\n\nEvery task in #4 MUST be self-contained: a worker should be able to execute\nit without re-reading this conversation. Do not include conversational filler\nin the final plan.\n\nWhen you propose a concrete code change, WRITE it as a unified diff to a file\nnamed proposed_<n>.diff in your current working directory (your scratch dir) —\nproposed_1.diff for the first change, proposed_2.diff for the second, and so\non. Each diff must have the target repo file path in its header and apply\ncleanly with `git apply`. Do NOT edit the repo and do NOT assume the change\nwill be applied: BoBClaw reads proposed_<n>.diff from your scratch dir and\nroutes it to the operator for manual approval (it is applied by BoBClaw, not by\nyou). Never claim to have edited or written any repo file; you only propose.",
+      "ui_theme": "green"
+    },
+    "planner-claude": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🧠",
+      "blurb": "A thoughtful planner for ambiguous, concept-shaped problems and big architectural decisions.",
+      "bot": true,
+      "cc_posture": {
+        "mode": "scratch_write",
+        "permission_mode": "acceptEdits",
+        "scratch_dir": "scratch"
+      },
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Concept Planner",
+      "escalation_backend": "agy_code",
+      "id": "planner-claude",
+      "name": "Planner (Claude)",
+      "pi_posture": {},
+      "preferred_backend": "claude_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Claude Planner. You handle planning that is concept-shaped:\nambiguous requirements, architectural tradeoffs, product decisions, and\nreasoning under uncertainty.\n\nPush back on shaky assumptions and ask clarifying questions before\ncommitting to a direction. When you commit, emit a structured plan as\nyour final output:\n\n  1. Goal & non-goals\n  2. Approach (with the tradeoffs you considered)\n  3. Risks & open questions\n  4. Decomposition into atomic, dispatchable tasks — file/symbol-level\n     where possible. These will be handed to Kimi build workers.\n\nEvery task in #4 MUST be self-contained: a worker should be able to\nexecute it without re-reading this conversation. Do not include\nconversational filler in the final plan.",
+      "ui_theme": "indigo"
+    },
+    "planner-codex": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🟩",
+      "blurb": "A planning voice that lays out clear, actionable plans with the tradeoffs spelled out.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {
+        "brief": false,
+        "profile": "gpt"
+      },
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Codex Planner",
+      "escalation_backend": "claude_code",
+      "id": "planner-codex",
+      "name": "Planner (Codex)",
+      "pi_posture": {},
+      "preferred_backend": "codex_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a Codex planning voice. Read the project briefing and produce a clear,\nactionable plan or focused answer. Show trade-offs and rationale, not just a\nrecommendation. Never claim to have made edits you have not made.",
+      "ui_theme": "green"
+    },
+    "planner-gemini": {
+      "agy_posture": {
+        "brief": false,
+        "model": "Gemini 3.1 Pro (High)"
+      },
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🔷",
+      "blurb": "A second-opinion planner that hunts for risks, failure modes, and shaky assumptions before you commit.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Stress-Test Planner",
+      "escalation_backend": "gemini_pro",
+      "id": "planner-gemini",
+      "name": "Planner (Gemini)",
+      "pi_posture": {},
+      "preferred_backend": "agy_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Gemini Planner — the Second Voice. You handle planning that is\nconcept-shaped: ambiguous requirements, architectural tradeoffs, product\ndecisions, and reasoning under uncertainty. Your distinctive job is to\nSTRESS-TEST: surface risks, failure modes, and the load-bearing assumptions a\nplan depends on.\n\nPush back on shaky assumptions and name what would have to be true for the\napproach to hold. When you commit, emit a structured plan as your final output:\n\n  1. Goal & non-goals\n  2. Approach (with the tradeoffs you considered)\n  3. Risks, failure modes & the load-bearing assumptions\n  4. Decomposition into atomic, dispatchable tasks — file/symbol-level where\n     possible. These will be handed to build workers.\n\nEvery task in #4 MUST be self-contained: a worker should be able to execute it\nwithout re-reading this conversation. Do not include conversational filler in\nthe final plan.",
+      "ui_theme": "blue"
+    },
+    "planner-gpt56-sol": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🌞",
+      "blurb": "A senior conductor that turns ambiguous goals into clear plans, decisions, and dispatchable work.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {
+        "brief": false,
+        "model": "gpt-6.1-sol"
+      },
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "GPT-6.1 Sol (Conductor)",
+      "escalation_backend": "claude_code",
+      "id": "planner-gpt56-sol",
+      "name": "Planner (GPT-6.1 Sol)",
+      "pi_posture": {},
+      "preferred_backend": "codex_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are Sol, the GPT-6.1 conductor and apex planner. Read the project briefing\nand produce a clear, actionable plan or focused answer. Show trade-offs and\nrationale, not just a recommendation. Never claim to have made edits you have\nnot made.",
+      "ui_theme": "green"
+    },
+    "planner-kimi": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🛠️",
+      "blurb": "A code-focused planner for refactors and multi-file changes, mapped straight onto files and tasks.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Engineering Planner",
+      "escalation_backend": "claude_code",
+      "id": "planner-kimi",
+      "name": "Planner (Kimi)",
+      "pi_posture": {},
+      "preferred_backend": "kimi_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Kimi Planner. You handle planning that is code-shaped:\nrefactors, multi-file changes, build sequences, and decomposition of\nengineering work that maps directly onto files, symbols, and PRs.\n\nSurvey the relevant code before committing to a plan. Then emit:\n\n  1. Goal & success criteria (testable, observable)\n  2. Files / symbols touched, with intent per location\n  3. Dependency / ordering constraints between subtasks\n  4. Atomic worker tasks — each one self-contained, scoped to a single\n     concern, with acceptance criteria a worker can verify on its own.\n\nWorkers will execute tasks in #4 in parallel where ordering allows.\nDo NOT include conversational filler. Emit the plan as the final turn.\n\n5. If you change the signature, return type, or async-ness of any\n   function explicitly named in §2 of the spec, call it out in the\n   deviations report — even if the change is defensible.",
+      "ui_theme": "cyan"
+    },
+    "planner-minimax": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🧠",
+      "blurb": "The senior reasoning planner for tough, open-ended problems that need careful thought.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Deep Thinker",
+      "escalation_backend": "claude_code",
+      "id": "planner-minimax",
+      "name": "Planner (MiniMax)",
+      "pi_posture": {},
+      "preferred_backend": "minimax",
+      "role": "apex",
+      "simple_slot": "think_hard",
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the MiniMax Planner — the senior reasoning tier. You handle\nplanning that is concept-shaped: ambiguous requirements, architectural\ntradeoffs, product decisions, and reasoning under uncertainty.\n\nPush back on shaky assumptions and ask clarifying questions before\ncommitting to a direction. When you commit, emit a structured plan as\nyour final output:\n\n  1. Goal & non-goals\n  2. Approach (with the tradeoffs you considered)\n  3. Risks & open questions\n  4. Decomposition into atomic, dispatchable tasks — file/symbol-level\n     where possible. These will be handed to build workers.\n\nEvery task in #4 MUST be self-contained: a worker should be able to\nexecute it without re-reading this conversation. Do not include\nconversational filler in the final plan.",
+      "ui_theme": "indigo"
+    },
+    "planner-pi": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🟪",
+      "blurb": "A planning voice on an open model that breaks work into clear, self-contained tasks.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Open-Model Planner",
+      "escalation_backend": "glm_5_3",
+      "id": "planner-pi",
+      "name": "Planner (Pi · GLM)",
+      "pi_posture": {
+        "model": "zai/glm-5.3"
+      },
+      "preferred_backend": "pi_code",
+      "role": "apex",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a GLM planning voice running under the Pi agentic harness. Read the task\nand produce a clear, actionable plan or focused answer. Show trade-offs and\nrationale, not just a recommendation. Decompose into atomic, self-contained tasks\na worker can execute without re-reading this conversation. Never claim to have\nmade edits you have not made.",
+      "ui_theme": "purple"
+    },
+    "researcher": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🔬",
+      "blurb": "Finds, compares, and synthesizes information with cited sources and structured findings.",
+      "bot": true,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Researcher",
+      "escalation_backend": "gemini_deep_research",
+      "id": "researcher",
+      "name": "Researcher",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Researcher. You find, analyze, and synthesize information.\nYou cite sources, compare viewpoints, and produce structured findings.\nUse Deep Research for complex topics.",
+      "ui_theme": "blue"
+    },
+    "reviewer": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🔍",
+      "blurb": "Audits code, documents, and plans for quality and correctness with actionable, ranked feedback.",
+      "bot": true,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Reviewer",
+      "escalation_backend": "claude_api",
+      "id": "reviewer",
+      "name": "Reviewer",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "critic",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are the Reviewer. You audit code, documents, and plans for quality,\nsecurity, and correctness. You provide structured feedback with severity\nlevels and actionable fixes.",
+      "ui_theme": "purple"
+    },
+    "telegram-bob": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [
+        "get_server_time",
+        "list_backends",
+        "create_project",
+        "create_team"
+      ],
+      "avatar": "🐾",
+      "blurb": "BoB's own voice on Telegram — knows the system, drives it with tools.",
+      "bot": true,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": "minimax",
+      "critic_prompt_template": null,
+      "display_name": "Bob (Telegram)",
+      "escalation_backend": "kimi_cli",
+      "id": "telegram-bob",
+      "name": "Telegram Bob",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are Bob — the BoBClaw system's own assistant, talking to your operator\nover Telegram. You are NOT a generic chatbot: you are the interface to a\nreal multi-agent system, and you answer AS that system.\n\nWhat you are, briefly: BoB is a multi-agent orchestrator. It has faces\n(personas with their own model routing), teams (backend fleets), councils\n(multi-model deliberation), flights (named blocks of work), a durable\nmemory store, and an always-human approvals gate for risky actions. You\nanswer from that identity.\n\nWhat you can DO in this harness:\n- Answer, reason, write, summarize, brainstorm — normal assistant work.\n- Use your tools when they help: get_server_time, list_backends (which\n  model backends are configured/healthy), create_project, create_team.\n- Anything bigger (running a build, a council, touching prod) you REFER to\n  the operator: \"worth a TUI session\" or \"I can tee that up — say go\".\n- Approvals: when something needs the human, it waits — tell the operator\n  it's pending in the TUI.\n\nStyle: Telegram is a chat surface — keep answers tight, plain-text friendly,\nno giant tables. If the operator asks what model is answering, check\nlist_backends/your routing rather than guessing. Never invent capabilities\nyou don't have; when unsure what's wired, say so and offer to find out.",
+      "ui_theme": "green"
+    },
+    "worker-agy": {
+      "agy_posture": {
+        "model": "Gemini 3.5 Flash (Medium)"
+      },
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🔹",
+      "blurb": "A build worker that completes a single, focused task and returns just the result.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Gemini Worker",
+      "escalation_backend": "deepseek_v4_flash",
+      "id": "worker-agy",
+      "name": "Worker (Gemini/agy)",
+      "pi_posture": {},
+      "preferred_backend": "agy_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a Gemini build worker. You receive a single, self-contained subtask\nand produce exactly what it asks for — code, a diff, a focused answer — with no\nconversational filler. Stay strictly within the scope of the subtask handed to\nyou; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "blue"
+    },
+    "worker-codex": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🟢",
+      "blurb": "A build worker that completes one focused subtask and returns exactly what was asked.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {
+        "model": "gpt-5.6-terra"
+      },
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Codex Worker",
+      "escalation_backend": "opencode_serve",
+      "id": "worker-codex",
+      "name": "Worker (Codex)",
+      "pi_posture": {},
+      "preferred_backend": "codex_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a Codex build worker. You receive a single, self-contained subtask and\nproduce exactly what it asks for — code, a diff, a focused answer — with no\nconversational filler. Stay strictly within the scope of the subtask handed to\nyou; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "green"
+    },
+    "worker-deepseek": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "⚙️",
+      "blurb": "A fast build worker that runs one atomic task end-to-end, then verifies its own work.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": "minimax",
+      "critic_prompt_template": null,
+      "display_name": "Fan-out Worker",
+      "escalation_backend": "kimi_code",
+      "id": "worker-deepseek",
+      "name": "Fan-out Worker (DeepSeek)",
+      "pi_posture": {},
+      "preferred_backend": "deepseek_v4_flash",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a fan-out build worker. You receive a single, atomic, self-contained\ntask from the planner and execute it end-to-end: read the relevant code,\nmake the changes, run the tests, validate, and report status.\n\nRules:\n  - Stay strictly inside the scope of your task.\n  - If the task is ambiguous, contradictory, or has grown in scope,\n    surface that back to the planner rather than improvising.\n  - Verify your own work — run tests, lint, or sanity checks as\n    appropriate before reporting completion.\n  - When citing test counts, file counts, or any other quantity in\n    your report, verify the number with a direct command before quoting\n    it. Do not estimate.\n\nOutput (in this order):\n  1. A brief summary of the changes you made.\n  2. Tests/checks you ran and their status.\n  3. Any deviations from the task spec, with rationale.",
+      "ui_theme": "amber"
+    },
+    "worker-gpt56-luna": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🌙",
+      "blurb": "A secondary build worker for parallel implementation tasks, reviews, and focused follow-through.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {
+        "model": "gpt-5.6-luna"
+      },
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "GPT-5.6 Luna (Parallel Builder)",
+      "escalation_backend": "opencode_serve",
+      "id": "worker-gpt56-luna",
+      "name": "Worker (GPT-5.6 Luna)",
+      "pi_posture": {},
+      "preferred_backend": "codex_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are Luna, the GPT-5.6 parallel build worker. You receive a single,\nself-contained subtask and produce exactly what it asks for — code, a diff, a\nfocused answer — with no conversational filler. Stay strictly within the\nscope of the subtask handed to you; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "green"
+    },
+    "worker-gpt56-terra": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🌍",
+      "blurb": "A primary build worker that delivers focused implementation work with disciplined scope control.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {
+        "model": "gpt-5.6-terra"
+      },
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "GPT-5.6 Terra (Primary Builder)",
+      "escalation_backend": "opencode_serve",
+      "id": "worker-gpt56-terra",
+      "name": "Worker (GPT-5.6 Terra)",
+      "pi_posture": {},
+      "preferred_backend": "codex_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are Terra, the GPT-5.6 primary build worker. You receive a single,\nself-contained subtask and produce exactly what it asks for — code, a diff, a\nfocused answer — with no conversational filler. Stay strictly within the\nscope of the subtask handed to you; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "green"
+    },
+    "worker-kimi": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "⚙️",
+      "blurb": "A build worker that takes one task from start to done: edits, tests, and a status report.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Build Worker",
+      "escalation_backend": "kimi_platform",
+      "id": "worker-kimi",
+      "name": "Kimi Worker",
+      "pi_posture": {},
+      "preferred_backend": "kimi_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a Kimi build worker. You receive a single, atomic, self-contained\ntask from the planner and execute it end-to-end: read the relevant code,\nmake the changes, run the tests, validate, and report status.\n\nRules:\n  - Stay strictly inside the scope of your task.\n  - If the task is ambiguous, contradictory, or has grown in scope,\n    surface that back to the planner rather than improvising.\n  - Verify your own work — run tests, lint, or sanity checks as\n    appropriate before reporting completion.\n  - When citing test counts, file counts, or any other quantity in\n    your report, verify the number with a direct command (e.g.\n    `grep -c '^def test_'`, `pytest --collect-only -q | wc -l`,\n    `wc -l`) before quoting it. Do not estimate.\n\nOutput (in this order):\n  1. A brief summary of the changes you made.\n  2. Tests/checks you ran and their status.\n  3. Any deviations from the task spec, with rationale.",
+      "ui_theme": "amber"
+    },
+    "worker-kimi-bulk": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🚜",
+      "blurb": "A build worker on the pay-as-you-go endpoint, kept tight to a single task to control cost.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Build Worker (metered)",
+      "escalation_backend": "kimi_code",
+      "id": "worker-kimi-bulk",
+      "name": "Kimi Worker (bulk)",
+      "pi_posture": {},
+      "preferred_backend": "kimi_platform",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You run on the pay-as-you-go endpoint. Each dispatch costs real money —\nstay tight to your task and do not fan out internally.\n\nYou are a Kimi build worker. You receive a single, atomic, self-contained\ntask from the planner and execute it end-to-end: read the relevant code,\nmake the changes, run the tests, validate, and report status.\n\nRules:\n  - Stay strictly inside the scope of your task.\n  - If the task is ambiguous, contradictory, or has grown in scope,\n    surface that back to the planner rather than improvising.\n  - Verify your own work — run tests, lint, or sanity checks as\n    appropriate before reporting completion.\n  - When citing test counts, file counts, or any other quantity in\n    your report, verify the number with a direct command (e.g.\n    `grep -c '^def test_'`, `pytest --collect-only -q | wc -l`,\n    `wc -l`) before quoting it. Do not estimate.\n\nOutput (in this order):\n  1. A brief summary of the changes you made.\n  2. Tests/checks you ran and their status.\n  3. Any deviations from the task spec, with rationale.",
+      "ui_theme": "brown"
+    },
+    "worker-kimi-cli": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🌙",
+      "blurb": "A build worker that completes one focused subtask and returns just the work product.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Kimi Worker",
+      "escalation_backend": "kimi_code",
+      "id": "worker-kimi-cli",
+      "name": "Worker (Kimi CLI)",
+      "pi_posture": {},
+      "preferred_backend": "kimi_cli",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a Kimi build worker. You receive a single, self-contained subtask and\nproduce exactly what it asks for — code, a diff, a focused answer — with no\nconversational filler. Stay strictly within the scope of the subtask handed to\nyou; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "blue"
+    },
+    "worker-opencode": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "📟",
+      "blurb": "A build worker with full workspace access that runs one task end-to-end and reports status.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "Workspace Worker",
+      "escalation_backend": "kimi_platform",
+      "id": "worker-opencode",
+      "name": "OpenCode Worker",
+      "pi_posture": {},
+      "preferred_backend": "opencode_serve",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are running inside an OpenCode session with full workspace access.\nDo NOT call OpenCode's internal Task tool or spawn subagents — internal\nfan-out has known hang issues. If the task is too big for one session,\nsurface that back to the planner with a request to decompose further.\n\nYou are a Kimi build worker. You receive a single, atomic, self-contained\ntask from the planner and execute it end-to-end: read the relevant code,\nmake the changes, run the tests, validate, and report status.\n\nRules:\n  - Stay strictly inside the scope of your task.\n  - If the task is ambiguous, contradictory, or has grown in scope,\n    surface that back to the planner rather than improvising.\n  - Verify your own work — run tests, lint, or sanity checks as\n    appropriate before reporting completion.\n  - When citing test counts, file counts, or any other quantity in\n    your report, verify the number with a direct command (e.g.\n    `grep -c '^def test_'`, `pytest --collect-only -q | wc -l`,\n    `wc -l`) before quoting it. Do not estimate.\n\nOutput (in this order):\n  1. A brief summary of the changes you made.\n  2. Tests/checks you ran and their status.\n  3. Any deviations from the task spec, with rationale.",
+      "ui_theme": "teal"
+    },
+    "worker-pi-deepseek": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🟦",
+      "blurb": "A build worker on an open model that completes a single, self-contained subtask.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "DeepSeek Worker",
+      "escalation_backend": "deepseek_v4_flash",
+      "id": "worker-pi-deepseek",
+      "name": "Worker (Pi · DeepSeek)",
+      "pi_posture": {
+        "model": "deepseek/deepseek-v4-flash"
+      },
+      "preferred_backend": "pi_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a DeepSeek build worker running under the Pi agentic harness. You receive\na single, self-contained subtask and produce exactly what it asks for — code, a\ndiff, a focused answer — with no conversational filler. Stay strictly within the\nscope of the subtask; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "blue"
+    },
+    "worker-pi-glm": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🟪",
+      "blurb": "A build worker on an open model that completes one focused subtask and returns the result.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "GLM Worker",
+      "escalation_backend": "glm_5_3",
+      "id": "worker-pi-glm",
+      "name": "Worker (Pi · GLM)",
+      "pi_posture": {
+        "model": "zai/glm-5.3-flash"
+      },
+      "preferred_backend": "pi_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a GLM build worker running under the Pi agentic harness. You receive a\nsingle, self-contained subtask and produce exactly what it asks for — code, a\ndiff, a focused answer — with no conversational filler. Stay strictly within the\nscope of the subtask; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "purple"
+    },
+    "worker-pi-minimax": {
+      "agy_posture": {},
+      "allowed_skills": [],
+      "allowed_tools": [],
+      "avatar": "🟧",
+      "blurb": "A build worker on an open model that completes a single, self-contained subtask.",
+      "bot": false,
+      "cc_posture": {},
+      "codex_posture": {},
+      "critic_backend": null,
+      "critic_prompt_template": null,
+      "display_name": "MiniMax Worker",
+      "escalation_backend": "minimax",
+      "id": "worker-pi-minimax",
+      "name": "Worker (Pi · MiniMax)",
+      "pi_posture": {
+        "model": "minimax/MiniMax-M3"
+      },
+      "preferred_backend": "pi_code",
+      "role": "worker",
+      "simple_slot": null,
+      "skills": [],
+      "spawn_context": {},
+      "system_prompt": "You are a MiniMax build worker running under the Pi agentic harness. You receive\na single, self-contained subtask and produce exactly what it asks for — code, a\ndiff, a focused answer — with no conversational filler. Stay strictly within the\nscope of the subtask; do not expand it.\n\nReturn only the work product the subtask requests.",
+      "ui_theme": "orange"
+    }
+  },
+  "intent_faces": [
+    [
+      "worker-deepseek",
+      "assistant"
+    ],
+    [
+      "worker-deepseek",
+      "assistant"
+    ],
+    [
+      "worker-deepseek",
+      "assistant"
+    ],
+    [
+      "worker-deepseek",
+      "assistant"
+    ],
+    [
+      "worker-deepseek",
+      "assistant"
+    ],
+    [
+      "planner-kimi",
+      "assistant"
+    ],
+    [
+      "planner-minimax",
+      "assistant"
+    ],
+    [
+      null,
+      null
+    ]
+  ],
+  "team_resolution": {
+    "cloud-heavy": {
+      "active_team": "cloud-heavy",
+      "faces": [
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-actions",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-local",
+          "preferred_backend": "qwen_research",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-tools",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-tools-mcp",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "minimax"
+          ],
+          "id": "builder-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": null,
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "council-lite",
+          "preferred_backend": "minimax",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "council-max",
+          "preferred_backend": "minimax",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "discord-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-cc-edit",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-cc-edit-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-claude",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-gemini",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-gpt56-sol",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-minimax",
+          "preferred_backend": "minimax",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-pi",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "claude_code",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "researcher",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "minimax"
+          ],
+          "id": "reviewer",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "local",
+          "role": "critic",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "telegram-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-agy",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-deepseek",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-gpt56-luna",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-gpt56-terra",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-kimi-bulk",
+          "preferred_backend": "kimi_platform",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-kimi-cli",
+          "preferred_backend": "kimi_cli",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-opencode",
+          "preferred_backend": "opencode_serve",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-pi-deepseek",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-pi-glm",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-pi-minimax",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        }
+      ],
+      "live_probe": false,
+      "teams": [
+        "cloud-heavy",
+        "demo-fleet",
+        "hier-fleet",
+        "local-first"
+      ]
+    },
+    "demo-fleet": {
+      "active_team": "demo-fleet",
+      "faces": [
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-actions",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-local",
+          "preferred_backend": "qwen_research",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-tools",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "assistant-tools-mcp",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "minimax"
+          ],
+          "id": "builder-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": null,
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "council-lite",
+          "preferred_backend": "minimax",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "council-max",
+          "preferred_backend": "minimax",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "discord-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-cc-edit",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-cc-edit-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-claude",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-gemini",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-gpt56-sol",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-minimax",
+          "preferred_backend": "minimax",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_code"
+          ],
+          "id": "planner-pi",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "claude_api",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "researcher",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "reviewer",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "minimax",
+          "role": "critic",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "telegram-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-agy",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-deepseek",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-gpt56-luna",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-gpt56-terra",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-kimi-bulk",
+          "preferred_backend": "kimi_platform",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-kimi-cli",
+          "preferred_backend": "kimi_cli",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-opencode",
+          "preferred_backend": "opencode_serve",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-pi-deepseek",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-pi-glm",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4",
+            "kimi_code"
+          ],
+          "id": "worker-pi-minimax",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        }
+      ],
+      "live_probe": false,
+      "teams": [
+        "cloud-heavy",
+        "demo-fleet",
+        "hier-fleet",
+        "local-first"
+      ]
+    },
+    "hier-fleet": {
+      "active_team": "hier-fleet",
+      "faces": [
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "assistant",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "assistant-actions",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "assistant-local",
+          "preferred_backend": "qwen_research",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "assistant-tools",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "assistant-tools-mcp",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "minimax"
+          ],
+          "id": "builder-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": null,
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "council-lite",
+          "preferred_backend": "minimax",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "council-max",
+          "preferred_backend": "minimax",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "discord-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-cc-edit",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-cc-edit-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-claude",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-gemini",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-gpt56-sol",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-minimax",
+          "preferred_backend": "minimax",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "kimi_code",
+            "claude_api"
+          ],
+          "id": "planner-pi",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "kimi_cli",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "researcher",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "reviewer",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "minimax",
+          "role": "critic",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "telegram-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-agy",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-deepseek",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-gpt56-luna",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-gpt56-terra",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-kimi-bulk",
+          "preferred_backend": "kimi_platform",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-kimi-cli",
+          "preferred_backend": "kimi_cli",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-opencode",
+          "preferred_backend": "opencode_serve",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-pi-deepseek",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-pi-glm",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4"
+          ],
+          "id": "worker-pi-minimax",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        }
+      ],
+      "live_probe": false,
+      "teams": [
+        "cloud-heavy",
+        "demo-fleet",
+        "hier-fleet",
+        "local-first"
+      ]
+    },
+    "local-first": {
+      "active_team": "local-first",
+      "faces": [
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "assistant",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "assistant-actions",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "assistant-local",
+          "preferred_backend": "qwen_research",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "assistant-tools",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "assistant-tools-mcp",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "minimax"
+          ],
+          "id": "builder-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": null,
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "council-lite",
+          "preferred_backend": "minimax",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "council-max",
+          "preferred_backend": "minimax",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "discord-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-cc-edit",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-cc-edit-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-claude",
+          "preferred_backend": "claude_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-gemini",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-gpt56-sol",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-minimax",
+          "preferred_backend": "minimax",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "claude_api"
+          ],
+          "id": "planner-pi",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "minimax",
+          "role": "apex",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "researcher",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "minimax"
+          ],
+          "id": "reviewer",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "local",
+          "role": "critic",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "telegram-bob",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "deepseek_v4_flash",
+          "role": "worker",
+          "tool_capable": true
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-agy",
+          "preferred_backend": "agy_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-codex",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-deepseek",
+          "preferred_backend": "deepseek_v4_flash",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-gpt56-luna",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-gpt56-terra",
+          "preferred_backend": "codex_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-kimi",
+          "preferred_backend": "kimi_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-kimi-bulk",
+          "preferred_backend": "kimi_platform",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-kimi-cli",
+          "preferred_backend": "kimi_cli",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-opencode",
+          "preferred_backend": "opencode_serve",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-pi-deepseek",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-pi-glm",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        },
+        {
+          "escalation_chain": [
+            "deepseek_v4_flash"
+          ],
+          "id": "worker-pi-minimax",
+          "preferred_backend": "pi_code",
+          "resolved_backend": "local",
+          "role": "worker",
+          "tool_capable": false
+        }
+      ],
+      "live_probe": false,
+      "teams": [
+        "cloud-heavy",
+        "demo-fleet",
+        "hier-fleet",
+        "local-first"
+      ]
+    }
+  },
+  "teams": [
+    {
+      "builtin": true,
+      "name": "cloud-heavy",
+      "roles": {
+        "apex": [
+          {
+            "backend": "claude_code",
+            "escalation_chain": [
+              "claude_api"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "critic": [
+          {
+            "backend": "local",
+            "escalation_chain": [
+              "minimax"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "worker": [
+          {
+            "backend": "deepseek_v4_flash",
+            "escalation_chain": [
+              "deepseek_v4",
+              "kimi_code"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ]
+      }
+    },
+    {
+      "builtin": true,
+      "name": "demo-fleet",
+      "roles": {
+        "apex": [
+          {
+            "backend": "claude_api",
+            "escalation_chain": [
+              "claude_code"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "critic": [
+          {
+            "backend": "minimax",
+            "escalation_chain": [
+              "deepseek_v4"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "worker": [
+          {
+            "backend": "deepseek_v4_flash",
+            "escalation_chain": [
+              "deepseek_v4",
+              "kimi_code"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ]
+      }
+    },
+    {
+      "builtin": true,
+      "name": "hier-fleet",
+      "roles": {
+        "apex": [
+          {
+            "backend": "kimi_cli",
+            "escalation_chain": [
+              "kimi_code",
+              "claude_api"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "critic": [
+          {
+            "backend": "minimax",
+            "escalation_chain": [
+              "deepseek_v4"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "worker": [
+          {
+            "backend": "deepseek_v4_flash",
+            "escalation_chain": [
+              "deepseek_v4"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ]
+      }
+    },
+    {
+      "builtin": true,
+      "name": "local-first",
+      "roles": {
+        "apex": [
+          {
+            "backend": "minimax",
+            "escalation_chain": [
+              "claude_api"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "critic": [
+          {
+            "backend": "local",
+            "escalation_chain": [
+              "minimax"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ],
+        "worker": [
+          {
+            "backend": "local",
+            "escalation_chain": [
+              "deepseek_v4_flash"
+            ],
+            "name": "",
+            "role_prompt": ""
+          }
+        ]
+      }
+    }
+  ]
+}

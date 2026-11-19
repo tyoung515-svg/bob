@@ -1,139 +1,156 @@
-# UPGRADE — tag-to-tag runbook
+# Upgrade BoB
 
-The supported upgrade path is **pinned tag → pinned tag** (never tracking `main`).
-The sequence is always the same; per-version migration notes are below.
+Upgrade between pinned release tags. Read the target CHANGELOG.md and retain a
+tested backup of databases, lane files, credentials and application state before
+changing code or dependencies. A source checkout rollback does not reverse SQL
+migrations or restore data.
 
-## The runbook
+## 1. Windows desktop installer — recommended
 
-1. **Read the target tag's `CHANGELOG.md` entry** — including *Known limitations* —
-   and the migration notes below for every version you are crossing.
-2. **Stop the stack:** `./scripts/win/stop-all.ps1` (Docker containers keep running;
-   that's fine — the datastores are upgraded by compose, not by git).
-3. **Check out the target tag:**
-   ```powershell
-   git fetch --tags
-   git checkout vX.Y.Z
+1. Close BoB. Download the installer for the target release from
+   [the release assets](https://github.com/tyoung515-svg/bob/releases) and run it over
+   the version you have. If it shows a page headed **Already Installed**, choose **Do
+   not uninstall**. Never uninstall first with "Delete the application data" ticked:
+   that removes the folder that holds your runtime.
+2. Open BoB. A card headed **BoB update available** shows the installed and the bundled
+   runtime version. Press **Upgrade** once and keep the window open.
+3. BoB saves a backup of the runtime, copies the new one in, stops its services, updates
+   the files and the database, and starts again. Allow several minutes, and have free
+   disk space of about twice the size of your runtime. When it says **BoB updated
+   successfully**, press **Reconnect**.
+
+Your lane, conversations, memory and sign-ins are kept. If the update fails, BoB puts
+the previous runtime back and says so; copy the message before trying again.
+
+For an extra copy of your own, export the stopped distribution first with
+`wsl --export BoB <backup-file>` in PowerShell. Do not replace the runtime's code by
+hand with a source checkout. The runtime update uses the same SQL journal as first
+boot.
+
+If the app is set to **Connect to a Bob server**, update the app the same way and
+upgrade the server by its own route below, then reconnect.
+
+## 2. Docker datastore installation
+
+These instructions apply to AGENTS-SETUP.md's Ubuntu host core/gateway with the
+root `docker-compose.yml`. They do not describe upgrading the full runtime image.
+
+1. Record the current tag, compose project, volume names, configured ports and
+   service environment. Preserve `COMPOSE_PROJECT_NAME`; changing it can select
+   empty volumes. Inspect with `sudo docker volume ls` and the same compose
+   env/project used during installation.
+2. Stop core and gateway before taking a consistent backup:
+
+   ```bash
+   sudo systemctl stop bob-source-gateway bob-source-core
    ```
-4. **Re-sync dependencies from the pinned locks** (idempotent):
-   ```powershell
-   uv pip install --python .venv\Scripts\python.exe -r bobclaw-core\requirements.txt
-   uv pip install --python .venv\Scripts\python.exe -r bobclaw-gateway\requirements.txt
-   uv pip install --python .venv\Scripts\python.exe -r bobclaw-claude-pipeline\requirements.txt
+
+3. Back up Postgres and both compose volumes using your tested backup procedure;
+   also preserve `/var/lib/bob-source`, `.secrets`, and the installed service units.
+   Qdrant/Redis live under compose in this route. For a cold volume backup, stop
+   the three datastore containers first, copy their persistent volumes, then
+   restart them. Never remove volumes to perform an upgrade.
+4. Check out the target tag in `/opt/bob-source`. For example:
+
+   ```bash
+   cd /opt/bob-source
+   sudo git fetch --tags
+   sudo git checkout v0.99.1
+   sudo .venv/bin/python -m pip install -r bobclaw-core/requirements.txt \
+     -r bobclaw-gateway/requirements.txt 'textual>=0.80,<2'
+   sudo docker compose --env-file .secrets/bobclaw.env -f docker-compose.yml \
+     up -d --wait --wait-timeout 180 postgres redis qdrant
    ```
-5. **Apply the migration notes** for the versions you crossed (below).
-6. **Verify:** `pwsh ./run_baseline_tests.ps1` — must end `BASELINE GREEN`.
-7. **Bring it up + smoke:** `./scripts/win/start-local.ps1`, then
-   `./scripts/win/status.ps1` (everything OK), log in, and run one chat turn.
-8. **Rollback** (if anything above fails): `git checkout <previous tag>` and re-run
-   steps 4–7. Volumes/data are not touched by a checkout.
 
-## 0.98.0 → 0.98.1
+   Review datastore version changes before starting an existing volume with a
+   new image; changing a Postgres major version needs its own data migration.
+   These requirements files contain version ranges, not fully pinned lockfiles.
+5. Reconcile the environment using the table below, preserving existing secrets.
+   Apply all SQL with the shared runner:
 
-A short one: no datastore, schema, embedder, or dependency-lock changes. The release
-is app + council/capabilities surface work. Three things to check:
+   ```bash
+   sudo -u bob-source /opt/bob-source/.venv/bin/python \
+     /opt/bob-source/scripts/source-lane.py migrate
+   ```
 
-### 1. `MEMORY_QDRANT_URL` default moved `:6333` → `:6353` (memory users only)
+   Run it again to confirm unchanged files are skipped. It applies `init.sql` and
+   every sorted migration, recording filename/hash in `bob_runtime_migrations`.
+   Do not manually insert journal rows or rewrite an applied SQL file.
+6. Start and verify:
 
-The code default now matches the port this repo's compose actually publishes
-(`127.0.0.1:6353`). If your `.secrets\bobclaw.env` (or launcher env) sets
-`MEMORY_QDRANT_URL` explicitly — every install that followed the setup guide does —
-**nothing changes**. Only if you relied on the *implicit* `:6333` default against your
-own Qdrant do you now need to set it explicitly:
+   ```bash
+   sudo systemctl start bob-source-core bob-source-gateway
+   curl --fail http://127.0.0.1:7835/health
+   curl --fail http://127.0.0.1:7836/health
+   sudo -u bob-source /opt/bob-source/.venv/bin/python \
+     /opt/bob-source/scripts/source-lane.py login
+   sudo -u bob-source /opt/bob-source/.venv/bin/python \
+     /opt/bob-source/scripts/source-lane.py broker
+   sudo -u bob-source /opt/bob-source/.venv/bin/python \
+     /opt/bob-source/scripts/source-lane.py broker-check
+   ```
 
-```
-MEMORY_QDRANT_URL=http://127.0.0.1:6333   # only if you deliberately run Qdrant there
-```
+   The login command may reuse/refresh a valid human session. To exercise a fresh
+   password/TOTP login, move the private `.secrets/tui-token.json` aside and wait
+   for the next TOTP interval before retrying. Reconnect the desktop client, or
+   launch `bobclaw-tui` using AGENTS-SETUP.md. A chat smoke test requires an enrolled
+   backend and is separate from sign-in.
 
-This is a fail-safe: enabling memory without an explicit URL can no longer write to an
-unrelated Qdrant that happens to live on the well-known port.
+## 3. Native Ubuntu installation from source
 
-### 2. Optional new flag: `PAGE_CONTEXT_ENABLED` (Ask-Bob helper)
+Use the same stop, backup, tag checkout, dependency refresh, environment review,
+migration and startup sequence as route 2. Replace compose operations with native
+`postgresql`, `redis-server` and `bob-source-qdrant` service operations. Back up
+Postgres, `/var/lib/bob-source/qdrant` and all lane/private state consistently;
+stop Qdrant during a cold storage backup. Keep Qdrant's binary/config pinned to
+the version reviewed for the target release. Follow its data-version upgrade
+requirements before changing binaries against existing storage.
 
-The app's Ask-Bob helper bubble can attach a snapshot of the screen you're viewing to
-its question. The CODE default is **off** (prompt bytes identical to 0.98). To turn it
-on, add to `.secrets\bobclaw.env`:
+The install script deliberately refuses existing state. Do not rerun it
+as an upgrade tool or erase lane state to bypass its guard. On a disposable clean
+Ubuntu 24.04 amd64/systemd machine, try the target release with
+`sudo bash scripts/install-from-source.sh`, or add `--docker` for compose datastores.
+These commands install and leave the target services running.
 
-```
-PAGE_CONTEXT_ENABLED=true
-```
+### Configuration when moving from older host-process installs
 
-### 3. Rebuild the desktop app
+Every required setting and its example is in AGENTS-SETUP.md and
+`.secrets/bobclaw.env.example`. In particular:
 
-The app gained the Council Theater, model/backend picker, Ask-Bob, the 3D memory
-graph, and an Approvals screen — rebuild it once after checkout:
+| Setting / behavior | Required action |
+| --- | --- |
+| `BOBCLAW_PASSWORD` | Preserve/set the real plaintext password read by gateway auth; `BOBCLAW_PASSWORD_HASH` is not read. Keep a private base32 `TOTP_SECRET`. |
+| `BOBCLAW_SECRET`, `JWT_SECRET` | Keep existing strong signing secrets; rotating them invalidates sessions. |
+| `POSTGRES_PASSWORD`, `POSTGRES_URL` | Use the existing database password, with matching URL credentials. Compose now refuses an unset password. Changing the env does not rotate a password inside an existing Postgres volume. |
+| `REDIS_URL`, `MEMORY_QDRANT_URL` | Explicit loopback URLs; Qdrant defaults here are 6353/6354. |
+| `BOB_FAMILY_ROOT`, `BOB_DEFAULT_OWNER`, `BOB_MEMORY_OWNERS` | Set explicitly; standalone login subject remains `admin`. Do not silently rename existing data owners. |
+| `BOB_LANE_ROOT` | Set an absolute private lane root; move data only with a reviewed backup/restore plan. |
+| `BOB_ROSTER_FILE` | Set an explicit valid roster for roster mode, e.g. `/opt/bob-source/bobclaw-core/config/roster.example.yaml`, or leave completely unset for configured-lane mode. An empty selector fails. |
+| `BOB_LANE_BACKENDS`, `BOB_LANE_DEFAULT_BACKEND` | Configure the lane's `lane.env`/`providers.env` and its actual provider credentials/models. The example roster enrolls no providers. |
+| Core/gateway host, port and URLs | Use explicit loopback hosts, 7835/7836 and matching `CORE_URL`/`BOBCLAW_GATEWAY_URL`, or preserve another consistent pair. |
+| `GATEWAY_SQLITE_PATH`, `MEMORY_SQLITE_PATH` | Preserve existing files and use absolute paths. Preserve refresh-token/replay state. |
+| Memory flags | Set intentionally; no launcher should force memory/extraction on. Existing memory installations must preserve store/slot configuration and embedding dimensions. |
+| `BUILD_SANDBOX` | Set `docker` on standalone hosts and all non-Linux hosts. `worker` requires the runtime image's Linux isolation and service provisioning. |
+| `BOB_BROKER_TOKEN_FILE` | Select a private 0600 portal bearer file, or pass `--token-file`; there is no built-in token path. Preserve the lane subject/scope when rotating. |
 
-```powershell
-cd bobclaw-app
-.\gradlew :desktopApp:run
-```
+For installations predating the standalone helper, do not run its `create` action
+over old state. Export the existing service environment and run
+`python3 scripts/migrate.py` with `psql` installed, then adapt launchers to the new
+entry points (`bobclaw-core/start.py`, `bobclaw-gateway/gateway.py`). Review old
+layout/ownership differences explicitly. The migration journal can adopt an old
+schema only when the existing SQL is compatible; take a backup first and stop
+on any error rather than marking it applied.
 
-No compose changes beyond a hardened Qdrant healthcheck (picked up automatically on
-the next `docker compose up -d`).
+The old Kotlin desktop command is obsolete. Build `portal/shell` and select
+**Connect to a Bob server**, or use `bobclaw-tui`. The desktop needs SSH and a Python
+broker launcher selecting the correct loopback gateway and private portal token.
+See AGENTS-SETUP.md for the launcher, token renewal and source feature limitations.
 
-## 0.97.0 → 0.98.0
+### Rollback
 
-### 1. Compose project name (do this BEFORE any `docker compose up`)
-
-v0.98 pins the compose project name (default `bobclaw`) instead of deriving it from
-your checkout folder name. If your checkout folder was NOT named `bobclaw`, compose
-would start a fresh project — new empty volumes — and your conversations/memory
-would *look* gone (they aren't; the old volumes still exist under the old prefix).
-
-Find your existing project prefix and pin it in `.secrets\bobclaw.env`:
-
-```powershell
-docker volume ls --format "{{.Name}}" | Select-String pgdata
-# e.g. "bob_pgdata"  → your old project name is "bob"
-```
-
-Add to `.secrets\bobclaw.env`:
-
-```
-COMPOSE_PROJECT_NAME=bob     # your old project name from the volume prefix
-```
-
-(Fresh v0.98 installs skip this — they just get the pinned `bobclaw` project.
-Running two installs on one host: give each a distinct `COMPOSE_PROJECT_NAME`
-**and** distinct datastore host ports — `BOBCLAW_PG_PORT` / `BOBCLAW_REDIS_PORT` /
-`BOBCLAW_QDRANT_PORT` / `BOBCLAW_QDRANT_GRPC_PORT`, with matching `POSTGRES_URL` /
-`REDIS_URL` / `MEMORY_QDRANT_URL`. Defaults are unchanged: 5432 / 6379 / 6353 / 6354.)
-
-### 2. Default embedder changed (memory users only)
-
-The `embed_text` slot default moved from `granite-embedding-311m` (768-dim) to
-`qwen3-embedding-4b` (2560-dim, last-token pooling). Embeddings from different
-models/dims never mix — the fingerprint guard fail-closes writes on mismatch —
-so an existing memory store needs one of:
-
-- **Keep granite** (no re-index): in `bobclaw-core/config/memory_slots.toml`,
-  restore the commented granite block for `[slot.embed_text]`, and launch the
-  embedder with `BOBCLAW_EMBED_POOLING=mean`. Everything keeps working as on 0.97.
-- **Move to the 4B default** (recommended; better measured recall): serve a
-  `qwen3-embedding-4b` GGUF (`BOBCLAW_EMBED_GGUF=...`, pooling `last` is the
-  launcher default) and re-index your facts into the new 2560-dim collection
-  (memory re-extracts going forward; historical facts re-embed on reindex).
-  The old 768-dim collection is left untouched until you delete it.
-
-If memory was never enabled (`MEMORY_ENABLED=false`, the default), skip this.
-
-### 3. Federation ledger example (`repo` field)
-
-If you copied `bobclaw-core/data/ledger_instances.example.json` on 0.97: the
-BoB-owned instance (`bobclaw-memory`) must carry `"repo": "."` — the write fence
-uses it as the ownership signature at registration. Instances without it are
-treated as foreign (read-only). The current example is correct; older copies may
-lack the field.
-
-### 4. Optional zero-Docker provider
-
-Only if you want the experimental zvec path: `uv pip install --python
-.venv\Scripts\python.exe zvec==0.5.1`, then opt in via
-`bobclaw-core/config/memory_stores.toml` (see the commented block). Qdrant
-remains the default and the recommendation for v0.98 (see the CHANGELOG's known
-limitations for the measured ANN recall gap).
-
-### 5. Extractor version bump (memory users only)
-
-L1 fact dedup identity changed (extractor v1 → v2): the first re-encounter of an
-already-known fact after upgrade may extract once more, then dedup as normal. No
-action needed; noted so a small one-time fact-count bump doesn't surprise you.
+Stop application services. Restore the previous code/dependency environment and a
+matching consistent backup of Postgres, Qdrant and lane/private state, including
+the migration journal and SQLite databases. Restore previous service configuration
+before starting again. Checking out an older tag alone does not undo schema or
+credential-state changes. Retain the failed upgrade state for diagnosis; do not
+overwrite the only good backup.

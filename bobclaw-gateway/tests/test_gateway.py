@@ -14,6 +14,7 @@ Covers:
 """
 import asyncio
 import unittest
+from datetime import datetime, timezone
 
 import pyotp
 from aiohttp.test_utils import TestClient, TestServer
@@ -158,6 +159,21 @@ class TestProtectedRoutes(_GatewayTestBase):
             self._client.get("/system/ports", headers=self._auth_headers())
         )
         self.assertEqual(resp.status, 200)
+
+    def test_system_ports_includes_server_time(self):
+        """F1 (2026-10-01): the MCP get_server_time tool proxies this route —
+        the payload must carry the server clock, not just the port map."""
+        resp = self._run(
+            self._client.get("/system/ports", headers=self._auth_headers())
+        )
+        self.assertEqual(resp.status, 200)
+        body = self._run(resp.json())
+        self.assertIn("server_time_utc", body)
+        self.assertIn("server_time_epoch", body)
+        # parseable ISO-8601 UTC and a sane epoch
+        parsed = datetime.fromisoformat(body["server_time_utc"].replace("Z", "+00:00"))
+        self.assertEqual(parsed.tzinfo, timezone.utc)
+        self.assertAlmostEqual(body["server_time_epoch"], parsed.timestamp(), places=1)
 
     def test_system_config_no_auth_401(self):
         resp = self._run(self._client.get("/system/config"))

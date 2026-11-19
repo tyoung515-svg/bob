@@ -26,7 +26,7 @@ def test_qwen_research_family_taxonomy():
 
 def test_qwen_research_family_no_regression():
     assert family_of("deepseek_v4_flash") == "deepseek"
-    assert family_of("glm_5_2") == "glm"
+    assert family_of("glm_5_3") == "glm"
     assert family_of("claude_code") == "claude"
     assert family_of("minimax") == "minimax"
     assert family_of("holo") == "holo"
@@ -35,7 +35,7 @@ def test_qwen_research_family_no_regression():
 
 def test_qwen_research_tool_capable():
     assert "qwen_research" in TOOL_CAPABLE_BACKENDS
-    assert {"deepseek_v4_flash", "glm_5_2"} <= TOOL_CAPABLE_BACKENDS
+    assert {"deepseek_v4_flash", "glm_5_3"} <= TOOL_CAPABLE_BACKENDS
 
 
 def test_qwen_research_build_chat_openai():

@@ -1,0 +1,13 @@
+[Unit]
+Description=Bob mandatory worker UID firewall (%i)
+After=network-online.target
+Wants=network-online.target
+Before=bob-worker@%i.socket bob-worker@%i.service
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=/opt/bob/.venv/bin/python -I /usr/local/lib/bob_runtime/worker_policy.py %i
+UMask=0077
+Restart=no
+TimeoutStartSec=30

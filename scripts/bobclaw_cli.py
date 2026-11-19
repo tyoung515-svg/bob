@@ -103,11 +103,10 @@ async def _stream(ws, conv_id: str, text: str, face: str, *, research: bool = Fa
 async def main() -> None:
     ap = argparse.ArgumentParser(description="BoBClaw PC CLI client")
     ap.add_argument("-m", "--message", help="one-shot message (omit for interactive REPL)")
-    ap.add_argument("--backend", default="deepseek_v4_flash",
-                    help="backend: deepseek_v4_flash (default/cheap), minimax (senior reasoning), "
-                         "kimi_code, gemini_flash, claude_api (Opus — reserved), local. "
-                         "Omit --backend (or pass '') to let core face routing pick the backend.")
-    ap.add_argument("--model", default="deepseek-v4-flash", help="model name passed to the backend. "
+    ap.add_argument("--backend", default="",
+                    help="backend override; see /api/backends for configured backends. "
+                         "Omit to use the server's lane default / face routing.")
+    ap.add_argument("--model", default="", help="model override (default: server configured model). "
                          "'local' is mapped to None (no override, router picks the resident model).")
     ap.add_argument("--face", default="assistant", help="face/persona id")
     ap.add_argument("--gateway", default="http://localhost:7826")

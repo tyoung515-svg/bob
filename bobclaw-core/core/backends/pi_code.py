@@ -12,7 +12,7 @@ per-provider API keys are injected into the child env by ``_subprocess_env`` fro
 
 Transport is ``asyncio.create_subprocess_exec`` (the ``codex_code`` / ``kimi_cli``
 shape), NOT an HTTP client. This backend is the agentic sibling of the direct-HTTP
-``glm_5_2`` / ``deepseek_v4_flash`` / ``minimax`` backends: those are plain
+``glm_5_3`` / ``deepseek_v4_flash`` / ``minimax`` backends: those are plain
 one-shot chat; ``pi_code`` runs the read/edit/bash tool loop.
 
 Contract — EMPIRICALLY DERIVED against pi 0.80.3 (2026-07-03; the locked facts the
@@ -34,7 +34,7 @@ code depends on, like the codex / kimi / agy contracts):
 * **``--offline`` DISABLES the inference call** (not just startup net ops) — do NOT
   pass it; the child runs online for the provider call.
 * **Model via ``--model <provider>/<id>``** (e.g. ``deepseek/deepseek-v4-flash``,
-  ``zai/glm-5.2``, ``minimax/MiniMax-M3``). Threaded from the face/worker as
+  ``zai/glm-5.3``, ``minimax/MiniMax-M3``). Threaded from the face/worker as
   ``model_override``; absent ⇒ pi's own default provider (google) — so callers
   SHOULD always pass a model.
 * **Tools OFF by default** (``--no-tools``): the stateless worker/seat path wants a
@@ -48,6 +48,9 @@ code depends on, like the codex / kimi / agy contracts):
 Streaming is message-level (one block) — pi buffers the whole reply here.
 """
 from __future__ import annotations
+
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
 
 import asyncio
 import json
@@ -328,14 +331,24 @@ class PiCodeClient:
         """True if ``pi --version`` succeeds (no turn, no provider spend)."""
         argv = [*self._resolve_argv0(), "--version"]
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.repo,
-                env=self._subprocess_env(),
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.repo,
+                    env=self._subprocess_env(),
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.repo,
+                    env=self._subprocess_env(),
+                )
         except (FileNotFoundError, NotADirectoryError, OSError):
             return False
         try:
@@ -357,17 +370,26 @@ class PiCodeClient:
         timeout, return (stdout, stderr, rc). Raises ``PiError`` on a missing binary
         or timeout (the child is killed first)."""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=self._subprocess_env(),
-            )
+            if execution_mode() == "legacy":
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=self._subprocess_env(),
+                )
+            else:
+                proc = await worker_client.refuse_async(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=self._subprocess_env(),
+                )
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             raise PiError(f"pi CLI not found ({argv[0]!r}): {exc}") from exc
-
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout

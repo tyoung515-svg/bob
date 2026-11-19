@@ -131,6 +131,15 @@ async def gate_decide(
             break
 
     combined = _combine_destinations(action_dest, path_dest)
+    # The editable policy is a ceiling. Neither the critic nor the policy can
+    # supply authority missing from the credential's signed Scope.
+    from core.execution.policy import gate_ceiling
+    try:
+        policy_destination = await gate_ceiling(action_type, file_paths)
+    except Exception:
+        policy_destination = 'human'
+    if policy_destination != 'auto':
+        return GateDecision('human', reasons=[*reasons, 'current owner policy requires confirmation'])
 
     effective_critic_backend = (
         critic_backend if critic_backend is not None else config.GATE_CRITIC_BACKEND

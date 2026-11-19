@@ -32,12 +32,12 @@ logger = logging.getLogger(__name__)
 
 # Providers that cap concurrency at ~1 across ALL flights (serial). GLM coding plan (Z.AI)
 # returns 429/1305 on any parallel call — the supervisor MUST serialize it across flights.
-SERIAL_PROVIDERS = {"glm", "glm_5_2"}
+SERIAL_PROVIDERS = {"glm", "glm_5_3"}
 
 # Where a serial provider's OVERFLOW spills: the PAYG `paas/v4` endpoint variant is
 # parallel-safe (separate from the concurrency-1 coding plan). A deferred flight either
 # waits for the single slot or routes its GLM work here.
-SERIAL_PROVIDER_SPILL = {"glm": "glm_payg", "glm_5_2": "glm_payg"}
+SERIAL_PROVIDER_SPILL = {"glm": "glm_payg", "glm_5_3": "glm_payg"}
 
 # TTL on a held provider slot: a crashed holder's slot auto-frees so the resource never
 # wedges (mirrors the escalation-pin TTL policy).

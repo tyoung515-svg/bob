@@ -16,7 +16,7 @@ from api.server import build_app
 from core import teams
 from core.faces.registry import FaceRegistry
 
-PROFILES_DIR = Path(__file__).parent.parent / "core" / "faces" / "profiles"
+PROFILES_DIR = Path(__file__).resolve().parents[2] / "bobclaw-core" / "tests" / "fixtures" / "deployment" / "faces"
 
 
 @pytest.fixture(autouse=True)
@@ -152,7 +152,7 @@ async def test_list_teams_endpoint_returns_builtins(client):
 async def test_create_team_endpoint_persists_and_routes(client):
     resp = await client.post("/api/teams", json={
         "name": "api-fleet",
-        "roles": {"worker": {"backend": "glm_5_2", "escalation_chain": ["kimi_code"]}},
+        "roles": {"worker": {"backend": "glm_5_3", "escalation_chain": ["kimi_code"]}},
     })
     assert resp.status == 201
     created = await resp.json()
@@ -161,10 +161,10 @@ async def test_create_team_endpoint_persists_and_routes(client):
     listing = await (await client.get("/api/teams")).json()
     assert "api-fleet" in {t["name"] for t in listing["items"]}
     # The routing-view can now select it, and it measurably remaps the worker face
-    # (worker-deepseek defaults to deepseek_v4_flash → glm_5_2 under api-fleet).
+    # (worker-deepseek defaults to deepseek_v4_flash → glm_5_3 under api-fleet).
     rv = await (await client.get("/api/routing-view", params={"team": "api-fleet"})).json()
     rows = {f["id"]: f for f in rv["faces"]}
-    assert rows["worker-deepseek"]["resolved_backend"] == "glm_5_2"
+    assert rows["worker-deepseek"]["resolved_backend"] == "glm_5_3"
 
 
 async def test_create_team_endpoint_validation_400(client):

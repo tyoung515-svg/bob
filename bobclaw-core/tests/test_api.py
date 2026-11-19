@@ -28,7 +28,7 @@ from core.graph import build_graph
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-PROFILES_DIR = Path(__file__).parent.parent / "core" / "faces" / "profiles"
+PROFILES_DIR = Path(__file__).resolve().parents[2] / "bobclaw-core" / "tests" / "fixtures" / "deployment" / "faces"
 EXPECTED_FACE_IDS = {
     "builder-bob",
     "researcher",
@@ -36,6 +36,7 @@ EXPECTED_FACE_IDS = {
     "council-lite",
     "council-max",
     "assistant",
+    "assistant-local",
     "assistant-actions",
     "assistant-tools",
     "assistant-tools-mcp",
@@ -61,6 +62,7 @@ EXPECTED_FACE_IDS = {
     "worker-gpt56-terra",
     "worker-gpt56-luna",
     "telegram-bob",
+    "discord-bob",
 }
 
 
@@ -246,6 +248,97 @@ async def test_available_models_local_unavailable_when_nothing_discovered(faces)
         local = {e["backend"]: e for e in body}["local"]
         assert local["available"] is False
         assert local["models"] == []
+
+
+# ─── /api/backends/catalog (F3, 2026-10-01) ──────────────────────────────────
+
+async def test_backends_catalog_covers_every_router_backend(client, router_stub, tmp_path, monkeypatch):
+    """The unified catalog exposes the ROUTER view: one entry per
+    KNOWN_BACKENDS member except lane-only ChatGPT HTTP without sign-in.
+    Each row has a kind, boolean availability and caps. Signed-in deployment
+    inclusion is covered in test_openai_codex_transport."""
+    from core.config import KNOWN_BACKENDS
+    monkeypatch.setenv("BOB_LANE_ROOT", str(tmp_path))
+
+    resp = await client.get("/api/backends/catalog")
+    assert resp.status == 200
+    body = await resp.json()
+    by_backend = {e["backend"]: e for e in body}
+
+    assert set(by_backend) == set(KNOWN_BACKENDS) - {"openai_codex"}
+    for name, entry in by_backend.items():
+        assert entry["kind"] in ("cloud", "cli", "local", "unknown"), name
+        assert isinstance(entry["available"], bool), name
+        assert isinstance(entry["models"], list), name
+        assert "max_usd_per_worker" in entry, name
+    # The backends that caused the 12-vs-17 disagreement must be present
+    # with an explicit kind now.
+    assert by_backend["codex_code"]["kind"] == "cli"
+    assert by_backend["pi_code"]["kind"] == "cli"
+    assert by_backend["glm_5_3"]["kind"] == "cloud"
+    assert by_backend["deepseek_v4"]["kind"] == "cloud"
+    assert by_backend["local"]["kind"] == "local"
+    router_stub.discover.assert_awaited()
+
+
+async def test_backends_catalog_cloud_available_tracks_key_presence(faces, router_stub):
+    import api.server as server_mod
+
+    app = build_app(faces=faces, router=router_stub)
+    async with TestClient(TestServer(app)) as c:
+        original = server_mod.config.DEEPSEEK_API_KEY
+        try:
+            server_mod.config.DEEPSEEK_API_KEY = "sk-test"
+            body = await (await c.get("/api/backends/catalog")).json()
+            by_backend = {e["backend"]: e for e in body}
+            assert by_backend["deepseek_v4_flash"]["available"] is True
+            # Same key gates deepseek_v4 — wiring truth, not policy.
+            assert by_backend["deepseek_v4"]["available"] is True
+            assert by_backend["deepseek_v4_flash"]["models"]
+
+            server_mod.config.DEEPSEEK_API_KEY = ""
+            body2 = await (await c.get("/api/backends/catalog")).json()
+            by_backend2 = {e["backend"]: e for e in body2}
+            assert by_backend2["deepseek_v4_flash"]["available"] is False
+            assert by_backend2["deepseek_v4"]["available"] is False
+        finally:
+            server_mod.config.DEEPSEEK_API_KEY = original
+
+
+async def test_backends_catalog_lapsed_entitlement_overrides_key_presence(faces, router_stub):
+    """A cancelled subscription keeps its key in the env file. Availability
+    must follow entitlement, not credential presence, or the catalog (and the
+    MCP list_backends tool behind it) advertises a seat that cannot serve."""
+    import api.server as server_mod
+
+    app = build_app(faces=faces, router=router_stub)
+    async with TestClient(TestServer(app)) as c:
+        kimi_key = server_mod.config.KIMI_API_KEY
+        original = server_mod.config.BOB_UNAVAILABLE_BACKENDS
+        try:
+            server_mod.config.KIMI_API_KEY = "present-but-lapsed"
+            server_mod.config.BOB_UNAVAILABLE_BACKENDS = ""
+            before = {e["backend"]: e for e in await (await c.get("/api/backends/catalog")).json()}
+            assert before["kimi_code"]["available"] is True
+            assert "unavailable_reason" not in before["kimi_code"]
+
+            # Note the stray space: the list is operator-written.
+            server_mod.config.BOB_UNAVAILABLE_BACKENDS = "kimi_code, glm_5_3"
+            after = {e["backend"]: e for e in await (await c.get("/api/backends/catalog")).json()}
+            assert after["kimi_code"]["available"] is False
+            assert after["kimi_code"]["unavailable_reason"] == "entitlement_lapsed"
+            # The configured slug is still reported, so staleness checks work.
+            assert after["kimi_code"]["model"]
+
+            legacy = {
+                e["backend"]: e
+                for e in await (await c.get("/api/models/available")).json()
+            }
+            assert legacy["kimi_code"]["available"] is False
+            assert legacy["kimi_code"]["unavailable_reason"] == "entitlement_lapsed"
+        finally:
+            server_mod.config.KIMI_API_KEY = kimi_key
+            server_mod.config.BOB_UNAVAILABLE_BACKENDS = original
 
 
 # ─── /api/memory/facts (T4) ───────────────────────────────────────────────────
@@ -985,7 +1078,7 @@ async def test_faces_surface_exposes_gpt56_roster(client):
     } <= face_ids
 
     expected_models = {
-        "planner-gpt56-sol": "gpt-5.6-sol",
+        "planner-gpt56-sol": "gpt-6.1-sol",
         "worker-gpt56-terra": "gpt-5.6-terra",
         "worker-gpt56-luna": "gpt-5.6-luna",
     }

@@ -27,13 +27,13 @@ async def test_node_holds_passes(monkeypatch):
                         _fake_send('{"verdict":"holds","reasons":["OK"]}'))
     state = {"post_condition": {
         "step": "rename", "statement": "new.txt exists, old.txt gone",
-        "result": "renamed", "actor_backend": "deepseek_v4_flash", "critic_backend": "glm_5_2"}}
+        "result": "renamed", "actor_backend": "deepseek_v4_flash", "critic_backend": "glm_5_3"}}
     out = await postcondition_node(state)
     v = out["post_condition_verdict"]
     assert v["passed"] is True
     assert v["verdict"] == "holds"
     assert v["actor_backend"] == "deepseek_v4_flash"
-    assert v["critic_backend"] == "glm_5_2"
+    assert v["critic_backend"] == "glm_5_3"
     assert v["decorrelated"] is True
     assert v["reasons"] == ["OK"]
 
@@ -44,7 +44,7 @@ async def test_node_violated_does_not_pass(monkeypatch):
     state = {"post_condition": {
         "step": "close account", "statement": "balance $0, closed",
         "result": "balance $4521.77 ACTIVE", "actor_backend": "deepseek_v4_flash",
-        "critic_backend": "glm_5_2"}}
+        "critic_backend": "glm_5_3"}}
     out = await postcondition_node(state)
     assert out["post_condition_verdict"]["passed"] is False
     assert out["post_condition_verdict"]["verdict"] == "violated"
@@ -55,7 +55,7 @@ async def test_node_actor_backend_falls_back_to_state_backend(monkeypatch):
                         _fake_send('{"verdict":"holds","reasons":[]}'))
     state = {"backend": "deepseek_v4_flash",
              "post_condition": {"step": "s", "statement": "x", "result": "y",
-                                "critic_backend": "glm_5_2"}}
+                                "critic_backend": "glm_5_3"}}
     out = await postcondition_node(state)
     assert out["post_condition_verdict"]["actor_backend"] == "deepseek_v4_flash"
     assert out["post_condition_verdict"]["passed"] is True
@@ -108,7 +108,7 @@ async def test_node_reads_team_for_decorrelation(monkeypatch):
 
     def fake_decorrelated(actor_backend, *, team=None, candidates=None):
         captured["team"] = team
-        return "glm_5_2"
+        return "glm_5_3"
 
     monkeypatch.setattr("core.verify.postcondition.decorrelated_critic_backend", fake_decorrelated)
     monkeypatch.setattr("core.verify.postcondition._default_send",
@@ -118,7 +118,7 @@ async def test_node_reads_team_for_decorrelation(monkeypatch):
                                 "actor_backend": "deepseek_v4_flash"}}  # no critic_backend
     out = await postcondition_node(state)
     assert captured["team"] == "my-team"
-    assert out["post_condition_verdict"]["critic_backend"] == "glm_5_2"
+    assert out["post_condition_verdict"]["critic_backend"] == "glm_5_3"
     assert out["post_condition_verdict"]["passed"] is True
 
 
@@ -127,7 +127,7 @@ async def test_node_accepts_alt_post_condition_key(monkeypatch):
     monkeypatch.setattr("core.verify.postcondition._default_send",
                         _fake_send('{"verdict":"holds","reasons":[]}'))
     state = {"post_condition": {"step": "s", "post_condition": "x holds", "result": "y",
-                                "actor_backend": "deepseek_v4_flash", "critic_backend": "glm_5_2"}}
+                                "actor_backend": "deepseek_v4_flash", "critic_backend": "glm_5_3"}}
     out = await postcondition_node(state)
     assert out["post_condition_verdict"]["passed"] is True
 
@@ -135,7 +135,7 @@ async def test_node_accepts_alt_post_condition_key(monkeypatch):
 async def test_node_never_raises_on_unparseable(monkeypatch):
     monkeypatch.setattr("core.verify.postcondition._default_send", _fake_send("not json at all"))
     state = {"post_condition": {"step": "s", "statement": "x", "result": "y",
-                                "actor_backend": "deepseek_v4_flash", "critic_backend": "glm_5_2"}}
+                                "actor_backend": "deepseek_v4_flash", "critic_backend": "glm_5_3"}}
     out = await postcondition_node(state)
     assert out["post_condition_verdict"]["passed"] is False
     assert out["post_condition_verdict"]["verdict"] == "unknown"

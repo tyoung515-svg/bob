@@ -50,8 +50,14 @@ class _FakeClientSession:
     async def __aexit__(self, *exc) -> None:
         return None
 
-    def post(self, url, **kwargs):
-        return _FakeContextManager(_FakeResponse(self.response_status, self.response_body))
+    async def close(self) -> None:
+        return None
+
+    async def post(self, url, **kwargs):
+        # The decide handler awaits the POST, checks the status, then hands the
+        # response to a background drain; a stub without `.content` is reported as
+        # ``not_applicable`` and no message row is written.
+        return _FakeResponse(self.response_status, self.response_body)
 
 
 class TestApprovalsRoutes(unittest.TestCase):

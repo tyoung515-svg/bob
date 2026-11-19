@@ -80,14 +80,15 @@ class TruthMaintenancePipeline:
         await self._fact_store.put(new_fact)
         return new_fact
 
-    async def deprecate(self, fact_id: str, reason: str) -> Fact:
+    async def deprecate(self, fact_id: str, reason: str, *, retirement: dict | None = None) -> Fact:
         fact = await self._fact_store.get(fact_id)
 
         new_confidence = replace(
             fact.confidence,
             rank="deprecated",
         )
-        new_fact = replace(fact, confidence=new_confidence)
+        body = {**fact.body, "retirement": retirement} if retirement is not None else fact.body
+        new_fact = replace(fact, confidence=new_confidence, body=body)
         # allowlisted-confidence-writer
         await self._fact_store.put(new_fact)
         return new_fact

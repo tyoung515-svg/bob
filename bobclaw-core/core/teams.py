@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Literal, Optional
 import yaml
 
 from core.config import KNOWN_BACKENDS
+from core.lane_config import configured_mode, get_lane, require_backend, selectable_backends, LaneConfigurationError
+from core.roster import get_roster
 
 if TYPE_CHECKING:  # avoid an import cycle (registry has no need to import teams)
     from core.faces.registry import Face
@@ -54,43 +56,8 @@ _LOCAL_BACKEND = "local"
 # example fleets for the routing-view demo + tests; team-EDITING UI is v1. The
 # DEFAULT team is the *absence* of a selection (None) → per-face passthrough.
 BUILTIN_TEAMS: dict[str, dict[str, dict]] = {
-    # Cloud-led fleet: apex on the Claude planning tier, bulk work on a
-    # tool-capable cloud worker, critic kept local.
-    "cloud-heavy": {
-        "apex": {"backend": "claude_code", "escalation_chain": ["claude_api"]},
-        # GLM is single-lane-only (never a fan-out worker) — see [[glm-single-lane-only]].
-        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["deepseek_v4", "kimi_code"]},
-        "critic": {"backend": _LOCAL_BACKEND, "escalation_chain": ["minimax"]},
-    },
-    # Local-first fleet: everything that can run local does; cloud is escalation.
-    "local-first": {
-        "apex": {"backend": "minimax", "escalation_chain": ["claude_api"]},
-        "worker": {"backend": _LOCAL_BACKEND, "escalation_chain": ["deepseek_v4_flash"]},
-        "critic": {"backend": _LOCAL_BACKEND, "escalation_chain": ["minimax"]},
-    },
-    # Centerpiece demo fleet (100-agent run): apex = Claude Opus (claude_api),
-    # worker = DeepSeek-Flash (the 100 concurrent workers), critic = MiniMax (the
-    # 1:10 chunk-auditor/manager tier). The routing-view under this team renders
-    # the three live tiers. NOTE the critic role here is the chunk-AUDITOR fleet,
-    # not the per-worker 1:1 critic node (that's a separate reduce stage).
-    # GLM pulled from the critic + worker-escalation (fan-out spots) — single-lane-only,
-    # see [[glm-single-lane-only]]; MiniMax is the parallel-safe auditor (cap 10 ⊇ 1:10).
-    "demo-fleet": {
-        "apex": {"backend": "claude_api", "escalation_chain": ["claude_code"]},
-        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["deepseek_v4", "kimi_code"]},
-        "critic": {"backend": "minimax", "escalation_chain": ["deepseek_v4"]},
-    },
-    # Hierarchical-managers fleet (STEERING NB-W1 topology): the top manager +
-    # mini-managers are Kimi via its OWN CLI (apex=kimi_cli), bulk workers are
-    # DeepSeek-Flash, the first final audit + section critics are MiniMax. Escalates to
-    # kimi_code (HTTP membership) then claude_api if the Kimi CLI is unavailable.
-    # GLM pulled from the section-critic + worker-escalation (fan-out) — single-lane-only,
-    # see [[glm-single-lane-only]].
-    "hier-fleet": {
-        "apex": {"backend": "kimi_cli", "escalation_chain": ["kimi_code", "claude_api"]},
-        "worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["deepseek_v4"]},
-        "critic": {"backend": "minimax", "escalation_chain": ["deepseek_v4"]},
-    },
+    name: {role: cfg.model_dump() for role, cfg in roles.items()}
+    for name, roles in get_roster().builtin_teams.items()
 }
 
 
@@ -114,6 +81,12 @@ def set_custom_teams_dir(path: Optional[Path]) -> None:
 def _teams_dir() -> Path:
     if _custom_teams_dir is not None:
         return _custom_teams_dir
+    if configured_mode():
+        lane = get_lane()
+        path = lane.owned_path(lane.values.get("BOBCLAW_TEAMS_DIR") or "teams")
+        if path is None:
+            raise LaneConfigurationError("teams directory must belong to this lane")
+        return path
     env = (os.getenv("BOBCLAW_TEAMS_DIR") or "").strip()
     return Path(env) if env else _DEFAULT_TEAMS_DIR
 
@@ -159,7 +132,7 @@ def _normalize_team_cfg(roles: dict) -> dict[str, list]:
     return {role: _as_slots(cfg) for role, cfg in roles.items()}
 
 
-def validate_team_config(roles) -> list[str]:
+def validate_team_config(roles, *, eligibility: bool = True) -> list[str]:
     """Human-readable errors for a proposed role→backend map (empty list = valid).
 
     Backend STRINGS only — every backend + escalation entry must be a known
@@ -183,11 +156,15 @@ def validate_team_config(roles) -> list[str]:
             backend = slot.get("backend")
             if not isinstance(backend, str) or not backend:
                 errors.append(f"role {role!r} slot needs a backend string")
-            elif backend not in KNOWN_BACKENDS:
-                errors.append(f"role {role!r} backend {backend!r} is not a known backend")
+            elif backend not in (selectable_backends() if eligibility else KNOWN_BACKENDS):
+                errors.append(f"role {role!r} needs provider {backend}: not configured or unknown backend"
+                              if configured_mode() and eligibility else
+                              f"role {role!r} backend {backend!r} is not a known backend")
             for esc in slot.get("escalation_chain") or []:
-                if esc not in KNOWN_BACKENDS:
-                    errors.append(f"role {role!r} escalation {esc!r} is not a known backend")
+                if esc not in (selectable_backends() if eligibility else KNOWN_BACKENDS):
+                    errors.append(f"role {role!r} needs provider {esc}: not configured or unknown escalation backend"
+                                  if configured_mode() and eligibility else
+                                  f"role {role!r} escalation {esc!r} is not a known backend")
             rp = slot.get("role_prompt")
             if rp is not None and not isinstance(rp, str):
                 errors.append(f"role {role!r} role_prompt must be a string")
@@ -200,12 +177,12 @@ def _parse_custom_teams(directory: Path) -> dict[str, dict[str, dict]]:
         return out
     for f in sorted(directory.glob("*.yaml")):
         slug = f.stem
-        if slug in BUILTIN_TEAMS:
+        if not configured_mode() and slug in BUILTIN_TEAMS:
             continue  # a built-in always wins; never shadow it
         try:
             data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
             roles = data.get("roles") if isinstance(data, dict) else None
-            if not isinstance(roles, dict) or validate_team_config(roles):
+            if not isinstance(roles, dict) or validate_team_config(roles, eligibility=False):
                 raise ValueError("missing or invalid 'roles' map")
             out[slug] = _normalize_team_cfg(roles)
         except Exception:
@@ -218,10 +195,34 @@ def _load_custom_teams() -> dict[str, dict[str, dict]]:
     return _parse_custom_teams(_teams_dir())
 
 
+def execution_drafts(models: dict) -> list[dict]:
+    """Read-only JOAT adapter. No built-ins, health walk, chain or YAML writes.
+
+    Ambiguous slots/models remain unresolved. An explicit save creates a new
+    owner-attributed DB definition; these are only unowned legacy suggestions.
+    """
+    from core.execution.models import TOPOLOGY, digest
+    result = []
+    for name, roles in _load_custom_teams().items():
+        bindings = {}
+        alternatives = {}
+        for source, target in (("apex", "manager"), ("worker", "worker"), ("critic", "critic")):
+            slots = _as_slots(roles.get(source))
+            matches = [key for key, spec in models.items()
+                       if len(slots) == 1 and spec.get("backend") == slots[0]["backend"]]
+            bindings[target] = matches[0] if len(matches) == 1 else None
+            alternatives[target] = [b for slot in slots for b in slot.get("escalation_chain", [])]
+        result.append({"schema_version": 1, "id": name, "state": "draft", "topology": TOPOLOGY,
+                       "roles": bindings, "review_independence": "same_model",
+                       "origin": {"source": "joat-yaml", "digest": digest(roles),
+                                  "proposed_alternatives": alternatives}})
+    return result
+
+
 def _all_teams() -> dict[str, dict[str, dict]]:
     """Built-in + custom teams. Customs cannot shadow a built-in (create_team and
     the loader both reject that), so a plain merge is unambiguous."""
-    merged: dict[str, dict[str, dict]] = dict(BUILTIN_TEAMS)
+    merged: dict[str, dict[str, dict]] = {} if configured_mode() else dict(BUILTIN_TEAMS)
     merged.update(_load_custom_teams())
     return merged
 
@@ -236,13 +237,23 @@ def list_teams() -> list[dict]:
     the read model for the team-builder and GET /api/teams."""
     custom = _load_custom_teams()
     out = []
-    for name in sorted({*BUILTIN_TEAMS, *custom}):
+    for name in sorted(_all_teams()):
         cfg = custom.get(name) or BUILTIN_TEAMS.get(name) or {}
         out.append({
             "name": name,
             "builtin": name in BUILTIN_TEAMS,
             "roles": {role: _as_slots(rc) for role, rc in cfg.items()},
         })
+        if configured_mode():
+            missing = []
+            for slots in out[-1]["roles"].values():
+                for slot in slots:
+                    for backend in [slot["backend"], *slot.get("escalation_chain", [])]:
+                        try:
+                            require_backend(backend)
+                        except LaneConfigurationError as exc:
+                            missing.append(str(exc))
+            out[-1]["missing_requirements"] = sorted(set(missing))
     return out
 
 
@@ -257,7 +268,7 @@ def create_team(name: str, roles: dict, *, overwrite: bool = False) -> dict:
         raise ValueError("team name is required")
     if not _SLUG_RE.match(slug):
         raise ValueError("team name must be a lowercase slug (a-z, 0-9, hyphens)")
-    if slug in BUILTIN_TEAMS:
+    if not configured_mode() and slug in BUILTIN_TEAMS:
         raise ValueError(f"{slug!r} is a built-in team; choose another name")
     errors = validate_team_config(roles)
     if errors:
@@ -352,7 +363,7 @@ def validate_profile(profile) -> list[str]:
                 if b is not None and b not in KNOWN_BACKENDS:
                     errors.append(f"seat {s['posture']!r} backend {b!r} is not a known backend")
                 for esc in s.get("fallback_chain") or []:
-                    if esc not in KNOWN_BACKENDS:
+                    if esc not in selectable_backends():
                         errors.append(f"seat {s['posture']!r} fallback {esc!r} is not a known backend")
                 rp = s.get("role_prompt")
                 if rp is not None and not isinstance(rp, str):
@@ -468,7 +479,9 @@ def load_profile(name: str) -> Optional[dict]:
     protocol_bounds / schedule). Roles + seats are normalized via _as_slots/_as_seats.
     """
     slug = (name or "").strip().lower()
-    if slug in BUILTIN_TEAMS:
+    if not _SLUG_RE.fullmatch(slug):
+        return None
+    if not configured_mode() and slug in BUILTIN_TEAMS:
         return {
             "name": slug,
             "builtin": True,
@@ -499,7 +512,8 @@ def list_profiles() -> list[dict]:
     """Full profile envelopes for every selectable team/profile (built-in + custom)."""
     directory = _teams_dir()
     custom = {p.stem for p in directory.glob("*.yaml")} if directory.exists() else set()
-    names = sorted({*BUILTIN_TEAMS, *(n for n in custom if n not in BUILTIN_TEAMS)})
+    builtin = {} if configured_mode() else BUILTIN_TEAMS
+    names = sorted({*builtin, *(n for n in custom if n not in builtin)})
     return [env for env in (load_profile(n) for n in names) if env is not None]
 
 
@@ -620,16 +634,20 @@ async def resolve(
     unhealthy/throttled, honouring ``want_tools`` and the critic@high-risk pin.
     """
     effective_team = team or get_active_team()
+    if configured_mode():
+        require_team(effective_team)
     primary = _primary_slot(_team_role_cfg(effective_team, role))
 
     # ── DEFAULT team / unmapped role: pure passthrough (the regression baseline) ──
     if primary is None:
-        return face.preferred_backend
+        from core.lane_backend import preferred_for_lane
+        return preferred_for_lane(face.preferred_backend, face.escalation_backend)
 
     # ── ACTIVE team — route to the role's PRIMARY slot. Multi-slot rosters resolve to
     # slot[0]; per-subtask selection across the rest is the dispatch-routing follow-up.
     # Critic on high-risk is pinned local — never family-swapped (GUI-CU §6).
     if role == "critic" and risk == "high":
+        require_backend(_LOCAL_BACKEND)
         return _LOCAL_BACKEND
 
     candidates = [primary["backend"], *primary["escalation_chain"]]
@@ -663,6 +681,8 @@ def role_backend(team: Optional[str], role: Role) -> Optional[str]:
     execute_node still applies). None ⇒ the caller should passthrough to its own
     default (typically ``state["backend"]``)."""
     effective_team = team or get_active_team()
+    if configured_mode():
+        require_team(effective_team)
     primary = _primary_slot(_team_role_cfg(effective_team, role))
     return primary["backend"] if primary else None
 
@@ -673,6 +693,8 @@ def role_chain(team: Optional[str], role: Role) -> Optional[list[str]]:
     :func:`role_backend`). Used by the build pipeline to thread the worker-audit
     tier's escalation chain (e.g. critic = ``minimax → kimi_code → deepseek_v4``)."""
     effective_team = team or get_active_team()
+    if configured_mode():
+        require_team(effective_team)
     primary = _primary_slot(_team_role_cfg(effective_team, role))
     if primary is None:
         return None
@@ -691,6 +713,8 @@ def escalation_for(
     escalation if the team declares none).
     """
     effective_team = team or get_active_team()
+    if configured_mode():
+        require_team(effective_team)
     primary = _primary_slot(_team_role_cfg(effective_team, role))
     if primary is None:
         return face.escalation_backend
@@ -710,8 +734,39 @@ def escalation_chain(
     (or the face's escalation when the team declares none).
     """
     effective_team = team or get_active_team()
+    if configured_mode():
+        require_team(effective_team)
     primary = _primary_slot(_team_role_cfg(effective_team, role))
     if primary is None:
-        return [face.escalation_backend]
+        return [face.escalation_backend] if face.escalation_backend else []
     chain = list(primary["escalation_chain"])
-    return chain or [face.escalation_backend]
+    return chain or ([face.escalation_backend] if face.escalation_backend else [])
+
+
+def require_team(name: Optional[str]) -> None:
+    """Validate every declared seat/hop before any role is allowed to spend."""
+    if not configured_mode() or not name:
+        return
+    roles = _all_teams().get(name)
+    if roles is None:
+        raise LaneConfigurationError(f"needs provider/configuration team {name}")
+    for cfg in roles.values():
+        for slot in _as_slots(cfg):
+            for backend in [slot["backend"], *slot.get("escalation_chain", [])]:
+                require_backend(backend)
+
+
+def require_profile(profile: dict) -> None:
+    if not configured_mode():
+        return
+    for slots in (profile.get("roles") or {}).values():
+        for slot in _as_slots(slots):
+            for backend in [slot["backend"], *slot.get("escalation_chain", [])]:
+                require_backend(backend)
+    for seat in profile.get("seats") or []:
+        if seat.get("backend"):
+            require_backend(seat["backend"])
+        for backend in seat.get("fallback_chain") or []:
+            require_backend(backend)
+    if profile.get("synth_backend"):
+        require_backend(profile["synth_backend"])

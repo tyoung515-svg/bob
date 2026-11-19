@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import tomllib
+import os
+import shlex
+import stat
 from pathlib import Path
 
 from core.memory.exceptions import SlotDeferred, SlotMisconfigured
@@ -26,6 +29,7 @@ class SlotResolver:
     def __init__(self, slots_file: Path) -> None:
         self._file = slots_file
         self._slots: dict[str, dict] = _parse_slots_file(slots_file)
+        self.keyword_fallback = tomllib.loads(slots_file.read_text(encoding="utf-8")).get("embedder_selection") is not None
 
     def get(self, slot_name: str) -> SlotResolution:
         raw = self._slots.get(slot_name)
@@ -53,6 +57,12 @@ class SlotResolver:
 
 def _parse_slots_file(path: Path) -> dict[str, dict]:
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    selection = None
+    if "embedder_selection" in raw:
+        # Runtime opt-in only. Do not let a slot config choose another env file.
+        if raw["embedder_selection"] != "/etc/bob/embedder.env":
+            raise SlotMisconfigured("embed_text", "invalid packaged embedder selection path")
+        selection = _runtime_embedding_selection(Path(raw["embedder_selection"]))
     slot_section = raw.get("slot", {})
     slots: dict[str, dict] = {}
     for slot_name, value in slot_section.items():
@@ -67,4 +77,26 @@ def _parse_slots_file(path: Path) -> dict[str, dict]:
                     slot_name, f"missing required keys: {missing}"
                 )
         slots[slot_name] = dict(value)
+        if selection and slot_name in {"embed_text", "embed_text_heavy"}:
+            slots[slot_name].update(model=selection[0], embedding_dimension=selection[1])
     return slots
+
+
+def _runtime_embedding_selection(path: Path) -> tuple[str, int]:
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_size > 65536
+            or (os.name != "nt" and (info.st_uid != 0 or info.st_mode & 0o022))):
+        raise SlotMisconfigured("embed_text", "unsafe packaged embedder selection")
+    values = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith('#'):
+            key, _, value = line.partition('=')
+            tokens = shlex.split(value)
+            if len(tokens) != 1:
+                raise SlotMisconfigured("embed_text", "invalid packaged embedder selection")
+            values[key] = tokens[0]
+    choices = {"4b": ("qwen3-embedding-4b", 2560), "0.6b": ("qwen3-embedding-0.6b", 1024)}
+    selected = choices.get(values.get("EMBEDDER_MODEL", "4b"))
+    if selected is None or values.get("EMBEDDER_ALIAS", selected[0]) != selected[0] or values.get("EMBEDDER_DIM", str(selected[1])) != str(selected[1]):
+        raise SlotMisconfigured("embed_text", "inconsistent packaged embedder model/dimension")
+    return selected

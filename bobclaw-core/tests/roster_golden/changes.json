@@ -1,0 +1,199 @@
+{
+  "_doc": "Deliberate deployment roster changes made AFTER the pre-extraction goldens were captured. The goldens stay untouched as the refactor oracle; equivalence tests apply these edits on top. Each entry: surface (core|gateway), match by record id, fields to set. For /v1/models rows the fields live under the row's 'bob' object.",
+  "changes": [
+    {
+      "date": "2026-11-17",
+      "by": "BU5",
+      "reason": "DeepSeek reported deepseek-flash for the requested deepseek-v4-flash model.",
+      "surface": "gateway",
+      "match": {"id": "bob-ds-flash"},
+      "set": {"reported_model_names": ["deepseek-flash"]}
+    },
+    {
+      "date": "2026-11-02",
+      "by": "operator",
+      "reason": "GLM down for now; subscription ended 2026-10-28",
+      "surface": "gateway",
+      "match": {
+        "id": "bob-glm-53"
+      },
+      "set": {
+        "enabled": false,
+        "disabled_reason": "GLM down for now (operator, 2026-11-02; subscription ended 2026-10-28)"
+      }
+    },
+    {
+      "date": "2026-11-02",
+      "by": "operator",
+      "reason": "Balance-budget re-seat: GPT manager/final, DeepSeek worker, Claude Opus critic (different family from manager)",
+      "surface": "gateway",
+      "match": {
+        "id": "balance-budget"
+      },
+      "set": {
+        "manager": "bob-gpt-sol-61",
+        "critic": "bob-claude-opus-55"
+      }
+    },
+    {
+      "date": "2026-11-02",
+      "by": "operator",
+      "reason": "coding team stays non-runnable; note GLM worker is down",
+      "surface": "gateway",
+      "match": {
+        "id": "coding"
+      },
+      "set": {
+        "reason": "GLM edit harness and Claude targeted-fix controls require verification; GLM worker seat down for now (2026-11-02)"
+      }
+    },
+    {
+      "date": "2026-11-03",
+      "by": "S4B (sub-slice 4.1)",
+      "reason": "Feature addition, not a roster change: catalog advertises the durable v2 run contract",
+      "surface": "gateway",
+      "match": {
+        "dollar_metering": false,
+        "cost_limits": [
+          "model_calls",
+          "wall_seconds"
+        ]
+      },
+      "set": {
+        "execution_v2": {
+          "above_threshold_reason": "matching_owner_grant_required",
+          "auto_escalation": true,
+          "capabilities_revision": "execution/2.6",
+          "confirmation_threshold": 200,
+          "contract_versions": [
+            2
+          ],
+          "custom_calls": true,
+          "failure_recovery": {
+            "audit_binding_order": "team.audit_bindings",
+            "audit_requires_different_model": true,
+            "basic_retries": 2,
+            "guided_retries": 1,
+            "retry_after_max_seconds": 60
+          },
+          "flags": {
+            "get": true,
+            "list": true,
+            "resolution_resumes": false,
+            "resolve": "owner_stepup"
+          },
+          "follow_budget_seconds_per_call": 360,
+          "grant_matcher_versions": [
+            1,
+            2,
+            3
+          ],
+          "growth": {
+            "above_200": "double_with_owner_grant",
+            "no_progress_cycles": 3,
+            "output_basis": "accepted_deliverable",
+            "presets": [
+              10,
+              50,
+              100,
+              200
+            ],
+            "topologies": [
+              "agent-loop/v1"
+            ]
+          },
+          "integer_encoding": "safe_number_or_decimal_string",
+          "job_time": {
+            "above_3600": "allow_long_runs_and_allow_extended_jobs",
+            "agent_proposes": true,
+            "cli_usage": "estimated_or_unknown",
+            "codex_cli": false,
+            "continuation": "trusted_adapter_reconciliation_required",
+            "custom": "allow_custom_job_limit",
+            "finite_custom": "matching_owner_grant",
+            "job_seconds_budget": true,
+            "jobs_api": true,
+            "matcher_version": 3,
+            "max_job_attempts_default": 32,
+            "owner_override": "reviewed_grant",
+            "presets_seconds": [
+              900,
+              1800,
+              3600
+            ],
+            "strict_limit": true,
+            "version": 1
+          },
+          "loop_contract": {
+            "acceptance": "criteria_with_ids_output_kinds_and_deterministic_checks",
+            "max_depth": 4,
+            "max_ready_wave": 16,
+            "max_tasks_per_plan": 64,
+            "output_kinds": [
+              "answer",
+              "report",
+              "proposal",
+              "json",
+              "intermediate"
+            ],
+            "receipt_page_size": 2
+          },
+          "max_integer": "9223372036854775807",
+          "null_wall": true,
+          "owner_operations": {
+            "budgets.set": "owner_stepup",
+            "runs.resume": "owner_stepup"
+          },
+          "project_pools": true,
+          "resume": true,
+          "run_parallelism": 2,
+          "server_run_list": true,
+          "sprint_pools": "storage_only_resource_service_unavailable",
+          "start_calls": [
+            10,
+            50,
+            100,
+            200
+          ],
+          "storage_required": "postgres",
+          "topologies": [
+            "four-step-readonly/v1",
+            "agent-loop/v1"
+          ],
+          "worker_jobs": true,
+          "worker_loop": {
+            "admission": "jobs.start_coder",
+            "apply": false,
+            "cli": false,
+            "contracts": [
+              "checked-edits/1"
+            ],
+            "max_depth": 16,
+            "max_ready_wave": 16,
+            "operation_ids": [
+              "edits.plan",
+              "workspace.read",
+              "workspace.edit",
+              "python.scaffold",
+              "files.nonempty",
+              "python.import",
+              "python.collect",
+              "python.pytest",
+              "python.cli"
+            ],
+            "registered_operations_only": true,
+            "step_kinds": [
+              "model_task",
+              "workspace_read",
+              "workspace_edit",
+              "worker_command",
+              "registered_check",
+              "proposal_publish"
+            ],
+            "topology": "agent-loop/v1"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+[Unit]
+Description=Bob bounded Builder lane egress proxy (%i)
+AssertPathExists=/etc/systemd/system/bob-egress-proxy@%i.service.d/identity.conf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=bob-unprovisioned
+Group=bob-unprovisioned
+SupplementaryGroups=
+ExecStart=/opt/bob/.venv/bin/python -I -m core.builder.egress_proxy /etc/bob/workers/%i.json
+RuntimeDirectory=bob-egress-%i
+RuntimeDirectoryMode=0755
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+TasksMax=64
+MemoryMax=256M
+LimitNOFILE=1024
+KillMode=control-group
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

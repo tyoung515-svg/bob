@@ -34,6 +34,12 @@ async def _proxy(method: str, path: str, *, json_body=None) -> web.Response:
 
 @router.get("/teams")
 async def list_teams(request: web.Request) -> web.Response:
+    if "contract_version" in request.query:
+        from routers.execution import proxy, query
+        try:
+            return await proxy(request, "teams.list", query(request, {"cursor", "limit"}))
+        except ValueError:
+            return web.json_response({"error": {"code": "invalid_query"}}, status=422)
     return await _proxy("GET", "/api/teams")
 
 
@@ -50,6 +56,13 @@ async def create_team(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "invalid JSON body", "code": "invalid_json"}, status=400
         )
+    if isinstance(body, dict) and "contract_version" in body:
+        if type(body["contract_version"]) is not int or body["contract_version"] != 2:
+            return web.json_response({"error": {"code": "unsupported_run_contract"}}, status=422)
+        from routers.execution import proxy
+        return await proxy(request, "teams.save", body)
+    if request.get("user", {}).get("token_type") in {"agent", "portal"}:
+        return web.json_response({"error": {"code": "client_upgrade_required"}}, status=403)
     return await _proxy("POST", "/api/teams", json_body=body)
 
 

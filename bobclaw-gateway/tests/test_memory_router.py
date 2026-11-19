@@ -106,6 +106,11 @@ class TestMemoryProxy(unittest.TestCase):
             "/memory/facts?limit=10&offset=5", headers=self._auth()))
         self.assertEqual(self.core_calls[0], ("GET", {"limit": "10", "offset": "5"}))
 
+    def test_retired_filter_uses_existing_memory_route(self):
+        self._run(self._client.get(
+            "/memory/facts?status=retired&limit=10", headers=self._auth()))
+        self.assertEqual(self.core_calls[0], ("GET", {"status": "retired", "limit": "10"}))
+
     def test_delete_forwards_and_returns_forgotten(self):
         resp = self._run(self._client.delete(
             "/memory/facts/known", headers=self._auth()))

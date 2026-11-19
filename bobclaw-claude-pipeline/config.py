@@ -52,7 +52,7 @@ if not JWT_SECRET:
 PORT: int = int(os.environ.get("PORT", 7823))
 # Loopback-only by default (R1 network containment). The pipeline sits behind the
 # authenticated gateway; only the gateway is ever intentionally exposed, behind
-# the TLS/SSH boundary in docs/SECURITY.md. Override with HOST=0.0.0.0 to bind all
+# the TLS/SSH boundary in SECURITY.md. Override with HOST=0.0.0.0 to bind all
 # interfaces.
 HOST: str = os.environ.get("HOST", "127.0.0.1")
 

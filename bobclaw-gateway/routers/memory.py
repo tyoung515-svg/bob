@@ -39,6 +39,8 @@ async def list_memory_facts(request: web.Request) -> web.Response:
         params["limit"] = request.query["limit"]
     if "offset" in request.query:
         params["offset"] = request.query["offset"]
+    if "status" in request.query:
+        params["status"] = request.query["status"]
     status, body = await _proxy("GET", "/api/memory/facts", params or None)
     return web.Response(status=status, text=body, content_type="application/json")
 

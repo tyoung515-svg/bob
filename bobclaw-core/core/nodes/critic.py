@@ -109,13 +109,22 @@ async def run_critic(
     if fallback_chain is not None:
         backends.extend(b for b in fallback_chain if b and b != critic_backend)
     else:
-        fallback = config.CRITIC_FALLBACK_BACKEND
+        from core.lane_config import configured_mode, get_lane
+        fallback = (get_lane().values.get("CRITIC_FALLBACK_BACKEND") if configured_mode()
+                    else config.CRITIC_FALLBACK_BACKEND)
         if fallback and fallback != critic_backend:
             backends.append(fallback)
 
     last_reason = "critic_unavailable: no critic backend"
+    from core.lane_config import require_backend, LaneConfigurationError
+    try:
+        for backend in backends:
+            require_backend(backend)
+    except LaneConfigurationError as exc:
+        return ("none", [f"critic_unavailable: {exc}"])
     for idx, backend in enumerate(backends):
         try:
+            require_backend(backend)
             raw = await asyncio.wait_for(
                 _send_to_backend(messages, backend),
                 timeout=CRITIC_TIMEOUT_SECONDS,

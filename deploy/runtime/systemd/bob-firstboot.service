@@ -1,0 +1,14 @@
+[Unit]
+Description=Initialize Bob shared secrets and database schema
+Requires=postgresql@16-main.service
+After=postgresql@16-main.service
+ConditionPathExists=!/var/lib/bob/.firstboot-complete
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/local/bin/bob-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

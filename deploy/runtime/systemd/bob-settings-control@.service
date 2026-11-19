@@ -1,0 +1,28 @@
+[Unit]
+Description=Bob settings control connection
+After=systemd-tmpfiles-setup.service
+
+[Service]
+User=root
+Group=root
+UMask=0077
+StandardInput=socket
+StandardOutput=null
+StandardError=null
+ExecStart=/usr/local/bin/bob-settings %i control
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/bob-settings
+# Upgraded C4 guests never ran the image build step that creates this
+# directory; let systemd create it so the namespace setup cannot fail.
+StateDirectory=bob-embedder
+StateDirectoryMode=0755
+ReadWritePaths=/var/lib/bob-embedder
+# Recovery publishes the replacement portal token atomically in this directory.
+# The receipt service deliberately has no write access to this destination.
+ReadWritePaths=/var/lib/bob-portal
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+Restart=on-failure
+RestartSec=1

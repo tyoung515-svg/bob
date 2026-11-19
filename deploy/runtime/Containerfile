@@ -1,0 +1,107 @@
+FROM ubuntu:24.04 AS binaries
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+ARG UV_VERSION=0.13.6
+ARG UV_SHA256=f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
+ARG QDRANT_VERSION=1.18.0
+ARG QDRANT_URL=https://github.com/qdrant/qdrant/releases/download/v${QDRANT_VERSION}/qdrant-x86_64-unknown-linux-musl.tar.gz
+ARG QDRANT_SHA256=76c38c3859682776d2bef61bf6c23b593b7c06682578f7c9ff9eac79c87a4268
+ARG LLAMA_VERSION=b11747
+ARG LLAMA_URL=https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_VERSION}/llama-${LLAMA_VERSION}-bin-ubuntu-x64.tar.gz
+ARG LLAMA_SHA256=6e9e6eb4db7e2133fed8dfaf141fb1abfdd5b18db4b360be45245e0f91ffca1e
+ARG CODEX_URL=https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-x86_64-unknown-linux-musl.tar.gz
+ARG CODEX_SHA256=a0bf572d2f93f056c6712a6da348e96078dc84f3885fd7be67807ef389cb3978
+ARG CLAUDE_VERSION=2.1.327
+ARG CLAUDE_URL=https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude
+ARG CLAUDE_SHA256=343c744baa14bfd38286a7cb90871051f04379956da6c5b803a9e66019a76ac9
+COPY deploy/runtime/fetch-checked.sh /usr/local/bin/fetch-checked
+RUN test "$(dpkg --print-architecture)" = amd64 && mkdir -p /out /uv /qdrant /llama /llama-runtime && \
+    fetch-checked "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" "$UV_SHA256" /tmp/uv.tgz && \
+    tar -xzf /tmp/uv.tgz -C /uv --strip-components=1 && cp /uv/uv /out/uv && \
+    fetch-checked "$QDRANT_URL" "$QDRANT_SHA256" /tmp/qdrant.tgz && \
+    tar -xzf /tmp/qdrant.tgz -C /qdrant && install /qdrant/qdrant /out/qdrant && \
+    fetch-checked "$LLAMA_URL" "$LLAMA_SHA256" /tmp/llama.tgz && \
+    tar -xzf /tmp/llama.tgz -C /llama && \
+    server="$(find /llama -type f -name llama-server)" && test -n "$server" && install "$server" /llama-runtime/llama-server && \
+    find /llama -name 'lib*.so*' -exec cp -L -t /llama-runtime {} + && \
+    mkdir /codex && fetch-checked "$CODEX_URL" "$CODEX_SHA256" /tmp/codex.tgz && \
+    tar -xzf /tmp/codex.tgz -C /codex && \
+    codex="$(find /codex -type f \( -name codex -o -name 'codex-x86_64-unknown-linux-musl' \))" && \
+    test -n "$codex" && install -m 0755 "$codex" /out/codex && \
+    fetch-checked "$CLAUDE_URL" "$CLAUDE_SHA256" /tmp/claude && \
+    test "$(stat -c %s /tmp/claude)" = 372904464 && \
+    install -o root -g root -m 0755 /tmp/claude /out/claude
+
+FROM ubuntu:24.04
+ARG DEBIAN_FRONTEND=noninteractive
+# Prevent package postinst scripts from starting daemons during docker build.
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d && \
+    apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv kmod dbus postgresql-16 redis-server curl ca-certificates git openssh-client sudo locales libgomp1 libstdc++6 libcurl4t64 nftables iproute2 acl procps nodejs npm && \
+    rm -rf /var/lib/apt/lists/* && locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8 && \
+    if [ -f /etc/pam.d/login ]; then sed -i '/pam_lastlog\.so/ s/^/# /' /etc/pam.d/login; fi && \
+    useradd --system --create-home --home-dir /home/bob --shell /bin/bash bob && \
+    useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin bobapp && \
+    useradd --system --user-group --no-create-home --shell /usr/sbin/nologin bob-embedder && \
+    useradd --system --user-group --no-create-home --shell /usr/sbin/nologin bob-qdrant && \
+    install -d -m 0700 -o bobapp -g bobapp /var/lib/bob-portal && \
+    install -d -m 0711 -o root -g root /var/lib/bob /var/lib/bob/family && \
+    install -d -m 0700 -o root -g root /var/lib/bob/secrets && \
+    install -d -m 0700 -o bob-embedder -g bob-embedder /var/lib/bob/models && \
+    install -d -m 0700 -o bob-qdrant -g bob-qdrant /var/lib/bob/qdrant
+ENV LANG=en_US.UTF-8 UV_PYTHON_INSTALL_DIR=/opt/python UV_PYTHON_PREFERENCE=only-managed
+COPY --from=binaries /out/ /usr/local/bin/
+COPY --from=binaries /llama-runtime/ /opt/llama/
+COPY . /opt/bob/
+RUN ln -s /opt/llama/llama-server /usr/local/bin/llama-server && \
+    install -o root -g root -m 0755 /opt/bob/deploy/runtime/fetch-checked.sh /usr/local/bin/fetch-checked && \
+    printf '/opt/llama\n' > /etc/ld.so.conf.d/bob-llama.conf && ldconfig && \
+    install -D -m 0755 /opt/bob/deploy/runtime/check-embedder-backend.sh /usr/local/libexec/bob/check-embedder-backend && \
+    /usr/local/libexec/bob/check-embedder-backend && \
+    test -x /usr/bin/kmod && \
+    uv python install 3.13 && uv venv --python 3.13 /opt/bob/.venv && \
+    uv pip install --python /opt/bob/.venv/bin/python -r /opt/bob/bobclaw-core/requirements.txt -r /opt/bob/bobclaw-gateway/requirements.txt && \
+    /opt/bob/.venv/bin/python -c 'import site,pathlib; pathlib.Path(site.getsitepackages()[0],"bob-core.pth").write_text("/opt/bob/bobclaw-core\n")' && \
+    uv pip install --python /opt/bob/.venv/bin/python pytest && \
+    npm install --prefix /opt/bob-mcp --save-exact @modelcontextprotocol/server-filesystem@2025.8.21 @playwright/mcp@0.0.40 playwright@1.56.0-alpha-1758750661000 playwright-core@1.56.0-alpha-1758750661000 && \
+    /opt/bob/.venv/bin/python /opt/bob/deploy/runtime/prepare_browser.py /opt/bob-mcp/node_modules && \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/bob-browsers /opt/bob-mcp/node_modules/.bin/playwright install --with-deps --only-shell chromium && \
+    test -x /opt/bob-browsers/chromium_headless_shell-1191/chrome-linux/headless_shell && \
+    install -d /usr/local/lib/bob_runtime /etc/bob && \
+    chown root:root /etc/bob && chmod 0755 /etc/bob && \
+    printf 'worker\n' > /etc/bob/execution-boundary && \
+    chown root:root /etc/bob/execution-boundary && chmod 0444 /etc/bob/execution-boundary && \
+    cp /opt/bob/deploy/runtime/lib/*.py /usr/local/lib/bob_runtime/ && \
+    install -m 0755 /opt/bob/deploy/runtime/bin/bob-firstboot \
+        /opt/bob/deploy/runtime/bin/bob-lane /opt/bob/deploy/runtime/bin/bob-health \
+        /opt/bob/deploy/runtime/bin/bob-embedder /opt/bob/deploy/runtime/bin/bob-broker \
+        /opt/bob/deploy/runtime/bin/bob-model /opt/bob/deploy/runtime/bin/bob-settings /opt/bob/deploy/runtime/bin/bob-token-renew \
+        /opt/bob/deploy/runtime/bin/bob-project-folder /opt/bob/deploy/runtime/bin/bob-runtime /usr/local/bin/ && \
+    install -m 0644 /opt/bob/deploy/runtime/systemd/*.service /opt/bob/deploy/runtime/systemd/*.timer /opt/bob/deploy/runtime/systemd/*.socket /etc/systemd/system/ && \
+    install -m 0644 /opt/bob/deploy/runtime/config/wsl.conf /etc/wsl.conf && \
+    install -m 0644 /opt/bob/deploy/runtime/config/qdrant.yaml /etc/bob/qdrant.yaml && \
+    install -m 0644 /opt/bob/deploy/runtime/config/memory_slots.toml /etc/bob/memory_slots.toml && \
+    install -m 0644 /opt/bob/deploy/runtime/config/redis.conf /etc/redis/bob.conf && \
+    printf "listen_addresses = '127.0.0.1'\npassword_encryption = 'scram-sha-256'\n" > /etc/postgresql/16/main/conf.d/bob.conf && \
+    printf 'local all postgres peer\nlocal all all peer\nhost all all 127.0.0.1/32 scram-sha-256\n' > /etc/postgresql/16/main/pg_hba.conf && \
+    install -d /etc/systemd/system/redis-server.service.d && \
+    install -m 0644 /opt/bob/deploy/runtime/config/redis-override.conf /etc/systemd/system/redis-server.service.d/bob.conf && \
+    systemctl enable postgresql.service redis-server.service bob-firstboot.service bob-qdrant.service bob-embedder.service bob-token-renew.timer && \
+    truncate -s 0 /etc/machine-id && rm -f /var/lib/dbus/machine-id && ln -s /etc/machine-id /var/lib/dbus/machine-id && \
+    rm /usr/sbin/policy-rc.d
+# URL supplied in R2-PINS.txt; the SHA256 pins its content even if main moves.
+ARG EMBEDDER_URL=https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF/resolve/main/Qwen3-Embedding-4B-Q4_K_M.gguf
+ARG EMBEDDER_SHA256=2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b
+ARG EMBEDDER_SMALL_URL=https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf
+ARG EMBEDDER_SMALL_SHA256=06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439
+# Refuse invalid/placeholder digests before shipping either setup option.
+RUN /opt/bob/.venv/bin/python -c 'import os,sys; sys.path.insert(0,"/usr/local/lib/bob_runtime"); from embedder import configure_build; configure_build(os.environ)'
+ARG BOB_BUILD_ID
+ARG BOB_GIT_REV
+ARG BOB_BUILD_EPOCH
+# Last mutation of runtime-owned paths. Hashes bind all entries, links and modes.
+RUN /opt/bob/.venv/bin/python /usr/local/lib/bob_runtime/upgrade_payload.py \
+    --build-id "$BOB_BUILD_ID" --git-rev "$BOB_GIT_REV" --build-epoch "$BOB_BUILD_EPOCH" && \
+    test -s /etc/bob/runtime-version && test -s /etc/bob/runtime-payload.json
+WORKDIR /opt/bob
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

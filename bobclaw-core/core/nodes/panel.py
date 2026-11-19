@@ -85,6 +85,8 @@ def make_backend_fn(
     backends never read it — inert for them.
     """
     async def _fn(system: str, user_msg: str) -> str:
+        from core.lane_config import require_backend
+        require_backend(backend)
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
@@ -177,13 +179,17 @@ def resolve_seat_backend(
     rather than raising, so a malformed spec degrades instead of crashing a turn.
     """
     table = COUNCIL_SEAT_BACKENDS
-    default_entry = table.get(posture) or table["framer"]
+    from core.lane_config import configured_mode, require_backend
+    default_entry = {} if configured_mode() else table.get(posture) or table["framer"]
     override = profile.get(posture) if (profile and isinstance(profile.get(posture), dict)) else {}
     # Per-field merge so a profile seat can set only a role_prompt (keeping the
     # posture's default backend/fallback) — P4 profiles. A seat with no override is
     # byte-identical to P1; the default posture table carries no role_prompt.
-    backend = override.get("backend") or default_entry["backend"]
+    backend = override.get("backend") or default_entry.get("backend")
+    require_backend(backend)
     fallback_chain = list(override.get("fallback_chain") or default_entry.get("fallback_chain") or [])
+    for candidate in fallback_chain:
+        require_backend(candidate)
     role_prompt = str(override.get("role_prompt") or "")
     return backend, fallback_chain, role_prompt
 
@@ -267,6 +273,8 @@ def panel_dispatch_node(state: dict) -> dict:
     worker cost-cap path, so no cost pre-flight here (design "off the worker path").
     """
     spec = dict(state.get("council_spec") or {})
+    from core.lane_config import require_council
+    require_council(spec)
     # Default ONLY when seats is absent/None — an explicit empty list means
     # "no panel" (→ _route_after_panel falls through to synthesize), not "defaults".
     seats_raw = spec.get("seats")
@@ -333,6 +341,8 @@ def _route_after_panel(state: dict) -> Union[list[Send], str]:
     empty (defensive — should not happen on the council branch).
     """
     spec = state.get("council_spec") or {}
+    from core.lane_config import require_council
+    require_council(spec)
     resolved = spec.get("resolved_seats") or []
     task = spec.get("panel_task", "")
     # Stamp the current round so synthesize reads ONLY the latest round's results
@@ -384,6 +394,9 @@ async def panel_worker_node(sub_state: dict) -> dict:
     posture = sub_state.get("seat_posture", "framer")
     primary = sub_state.get("backend", "local")
     fallback_chain = sub_state.get("fallback_chain") or []
+    from core.lane_config import require_backend
+    for candidate in [primary, *fallback_chain]:
+        require_backend(candidate)
     seat_idx = sub_state.get("seat_idx", 0)
     panel_round = sub_state.get("panel_round", 0)
     task = sub_state.get("task", "")
@@ -429,6 +442,8 @@ async def panel_worker_node(sub_state: dict) -> dict:
     last_error: Optional[Exception] = None
     with spawn_descriptor(seat_descriptor):
         for candidate in [primary, *fallback_chain]:
+            from core.lane_config import require_backend
+            require_backend(candidate)
             try:
                 text = await asyncio.wait_for(
                     _send_to_backend(messages, candidate),

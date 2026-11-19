@@ -22,6 +22,7 @@ from langgraph.graph import END
 from langgraph.types import Send
 
 from core.backends._cost import remaining_budget
+from core.chat_policy import single_pass_chat
 from core.config import (
     HARD_CONCURRENCY_CAP_BACKENDS,
     MAX_FANOUT_WIDTH_BY_BACKEND,
@@ -116,6 +117,14 @@ def dispatch_node(state: dict) -> dict:
 
     # 1. Workspace-bound bypass: workers bound to a single instance don't fan out.
     if backend == "opencode_serve" or face_id == "worker-opencode":
+        return result
+
+    # 1b. Chat single-pass: a conversational face never fans out, even if a stale
+    # or externally supplied subtask list is in state. Decompose already skipped
+    # for these faces; this closes the same door at the dispatch boundary. An
+    # explicit fanout_width is an explicit request (multi-wave callers set it), so
+    # the guard yields to it.
+    if single_pass_chat(state, dispatch=True):
         return result
 
     # 2. Single-subtask turns never fan out.
@@ -268,6 +277,10 @@ def _route_after_dispatch(state: dict) -> Union[list[Send], str]:
         args = [
             {
                 "task": entry["text"],
+                # Keep the caller's evidence/constraints, not only the planner's summary.
+                **({"original_task": state["task"]} if state.get("task") else {}),
+                **({"model_override": state["model_override"]}
+                   if state.get("model_override") else {}),
                 "face_id": face_id,
                 "backend": backend,
                 "escalation_backend": state.get("escalation_backend"),
@@ -287,6 +300,11 @@ def _route_after_dispatch(state: dict) -> Union[list[Send], str]:
             }
             for entry in fanout
         ]
+        # Chat ingress marks these as interactive face invocations.
+        # Internal service/run workers keep their existing stateless prompts.
+        if state.get("selected_face_id") and not state.get("agent_service_single_turn"):
+            for arg in args:
+                arg["interactive_face"] = True
         # ── Research lane (hermes wiring): on a RESEARCH turn (research_tier set by
         # research_plan; never set on plain chat fan-outs) with RESEARCH_LKS_INSTANCES
         # configured, each Send becomes a research_subagent worker over the LKS-first

@@ -1,0 +1,33 @@
+# Both embedding slots read model and dimension from this root-owned selection.
+embedder_selection = "/etc/bob/embedder.env"
+
+[slot.embed_text]
+model = "qwen3-embedding-4b"
+backend = "lmstudio"
+endpoint = "http://127.0.0.1:58081"
+embedding_dimension = 2560
+
+[slot.embed_text_heavy]
+model = "qwen3-embedding-4b"
+backend = "lmstudio"
+endpoint = "http://127.0.0.1:58081"
+embedding_dimension = 2560
+
+[slot.extract_small]
+deferred = true
+[slot.rollup_mid]
+deferred = true
+[slot.synth_mid]
+deferred = true
+[slot.synth_deep]
+deferred = true
+[slot.audit_manager]
+deferred = true
+[slot.embed_multimodal]
+deferred = true
+[slot.embed_visual_doc]
+deferred = true
+[slot.rerank_cross]
+deferred = true
+[slot.managed_remote]
+deferred = true

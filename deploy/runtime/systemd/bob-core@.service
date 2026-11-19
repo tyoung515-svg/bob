@@ -1,0 +1,24 @@
+[Unit]
+AssertPathExists=/etc/systemd/system/bob-core@%i.service.d/identity.conf
+Description=Bob core (%i)
+Requires=bob-firstboot.service postgresql@16-main.service redis-server.service bob-qdrant.service
+After=bob-firstboot.service postgresql@16-main.service redis-server.service bob-qdrant.service
+Wants=bob-embedder.service
+
+[Service]
+User=bob-unprovisioned
+Group=bob-unprovisioned
+UMask=0077
+WorkingDirectory=/var/lib/bob/family/%i/bob-memory
+Environment=PYTHONPATH=/opt/bob/bobclaw-core
+Environment=PYTHONUNBUFFERED=1
+Environment=BOB_EXECUTION_BOUNDARY=worker
+Environment=BOB_FAMILY_ROOT=/var/lib/bob/family
+EnvironmentFile=/var/lib/bob/family/%i/bob-memory/core.env
+EnvironmentFile=-/var/lib/bob/family/%i/bob-memory/providers.env
+ExecStart=/opt/bob/.venv/bin/python /opt/bob/bobclaw-core/start.py --host 127.0.0.1 --port ${BOBCLAW_CORE_PORT}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

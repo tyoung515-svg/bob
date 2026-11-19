@@ -84,7 +84,7 @@ async def test_chat_posts_to_messages_with_anthropic_headers():
 
     captured = {}
 
-    def fake_post(url, *, json, headers):
+    def fake_post(url, *, json, headers, **_kw):
         captured["url"] = url
         captured["json"] = json
         captured["headers"] = headers
@@ -119,7 +119,7 @@ async def test_chat_with_system_kwarg_puts_system_at_top_level():
 
     captured = {}
 
-    def fake_post(url, *, json, headers):
+    def fake_post(url, *, json, headers, **_kw):
         captured["json"] = json
         return mock_cm
 
@@ -145,7 +145,7 @@ async def test_chat_without_system_kwarg_omits_system_key():
 
     captured = {}
 
-    def fake_post(url, *, json, headers):
+    def fake_post(url, *, json, headers, **_kw):
         captured["json"] = json
         return mock_cm
 
@@ -170,7 +170,7 @@ async def test_chat_with_system_none_omits_system_key():
 
     captured = {}
 
-    def fake_post(url, *, json, headers):
+    def fake_post(url, *, json, headers, **_kw):
         captured["json"] = json
         return mock_cm
 
@@ -196,7 +196,7 @@ async def test_chat_with_system_empty_string_includes_key():
 
     captured = {}
 
-    def fake_post(url, *, json, headers):
+    def fake_post(url, *, json, headers, **_kw):
         captured["json"] = json
         return mock_cm
 
@@ -263,7 +263,7 @@ async def test_stream_chat_with_system_none_omits_system_key():
 
     captured = {}
 
-    def fake_post(url, *, json, headers):
+    def fake_post(url, *, json, headers, **_kw):
         captured["json"] = json
         return mock_cm
 

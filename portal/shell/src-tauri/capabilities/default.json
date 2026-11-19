@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The one window only LISTENS to the engine's three verbatim event streams (slice://line, slice://stderr, slice://exit). App commands (slice_start/slice_send/slice_shutdown) are not ACL-gated; the webview emits no events itself.",
+  "windows": ["main"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

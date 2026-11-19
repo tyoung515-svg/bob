@@ -29,7 +29,7 @@ def test_list_backends_returns_palette_and_roles():
 def test_create_team_tool_persists(teams_dir):
     out = create_team.invoke({
         "name": "tool-fleet",
-        "roles": {"worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_2"]}},
+        "roles": {"worker": {"backend": "deepseek_v4_flash", "escalation_chain": ["glm_5_3"]}},
     })
     assert "Created team 'tool-fleet'" in out
     assert "tool-fleet" in teams.known_teams()

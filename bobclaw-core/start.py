@@ -24,9 +24,9 @@ from typing import Optional
 
 from aiohttp import web
 
-from api.server import GRAPH_KEY, POOL_KEY, build_app
+from api.server import GRAPH_KEY, POOL_KEY, ROUTER_KEY, build_app
 from core.config import config
-from core.db import init_postgres, init_sqlite
+from core.db import close_sqlite, init_postgres, init_sqlite
 from core.graph import create_graph
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 # ─── Lifecycle hooks ──────────────────────────────────────────────────────────
 
 async def _on_startup(app: web.Application) -> None:
+    try:
+        await _initialize(app)
+    except BaseException:
+        # aiohttp does not guarantee on_cleanup after an incomplete startup.
+        # An open aiosqlite connection owns a non-daemon thread and prevents exit.
+        await _on_cleanup(app)
+        raise
+
+
+async def _initialize(app: web.Application) -> None:
     """Open SQLite and Postgres connections before serving traffic."""
     logger.info("bobclaw-core: initialising SQLite cache")
     await init_sqlite()
@@ -75,15 +85,27 @@ async def _on_startup(app: web.Application) -> None:
             logger.error("Memory bootstrap failed: %s", exc)
             raise
 
+    from core.execution.api import initialize as initialize_execution
+    await initialize_execution(app, pool, app[ROUTER_KEY])
+
     logger.info("bobclaw-core: ready")
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    """Close the Postgres pool on shutdown (SQLite is process-lifetime)."""
+    """Release database resources on shutdown and on partial startup failure."""
+    from core.execution.api import cleanup as cleanup_execution
+    await cleanup_execution(app)
     pool = app.get(POOL_KEY)
-    if pool is not None:
-        logger.info("bobclaw-core: closing Postgres pool")
-        await pool.close()
+    try:
+        if pool is not None:
+            logger.info("bobclaw-core: closing Postgres pool")
+            try:
+                await asyncio.wait_for(pool.close(), timeout=10)
+            finally:
+                pool.terminate()
+                app[POOL_KEY] = None
+    finally:
+        await close_sqlite()
 
 
 # ─── App construction ─────────────────────────────────────────────────────────

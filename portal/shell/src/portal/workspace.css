@@ -1,0 +1,194 @@
+.workspace-panel {
+  max-width: 64rem;
+  margin-inline: auto;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+}
+.workspace-panel form {
+  display: grid;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+.workspace-panel input,
+.workspace-panel textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+.workspace-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workspace-panel .gap-list > li {
+  margin-block: 0.75rem;
+}
+.workspace-panel .portal-fault {
+  border-inline-start: 0.25rem solid currentColor;
+  padding-inline-start: 0.5rem;
+}
+.portal-tabs { display: flex; gap: 0.25rem; }
+.portal-tabs [role="tab"][aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.portal-workspace[hidden], .portal-body[hidden] { display: none; }
+.portal-workspace { flex: 1; min-height: 0; overflow: auto; }
+.workspace-panel { max-width: none; }
+.workspace-columns { display: grid; grid-template-columns: minmax(16rem, 22rem) 1fr; gap: 1rem; align-items: start; }
+.workspace-side select, .workspace-side textarea { width: 100%; }
+.workspace-jobs { list-style: none; padding: 0; display: grid; gap: 0.25rem; }
+.workspace-jobs button { width: 100%; text-align: start; display: grid; gap: 0.15rem; }
+.workspace-jobs button[aria-current="true"] { border-color: var(--accent); }
+.workspace-jobs small, .workspace-panel .subtle { color: var(--muted); }
+.workspace-job-header { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; }
+.workspace-result { background: var(--field); border: 1px solid var(--line); padding: 0.75rem; }
+.workspace-diff { background: var(--field); border: 1px solid var(--line); padding: 0.75rem; font-size: 12px; max-height: 32rem; overflow: auto; }
+.workspace-diff .add { color: #a6e3a1; }
+.workspace-diff .del { color: var(--danger); }
+.workspace-diff .hunk { color: var(--warning); }
+.workspace-diff .file { color: var(--muted); }
+.workspace-files { border-collapse: collapse; }
+.workspace-files td, .workspace-files th { padding: 0.2rem 0.6rem; border-bottom: 1px solid var(--line); text-align: start; }
+.workspace-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.workspace-panel .caveat { color: var(--warning); }
+.workspace-history { font-size: 12px; }
+@media (max-width: 760px) { .workspace-columns { grid-template-columns: 1fr; } }
+
+/* ── Workspace IDE (2026-11-02): explorer | editor + terminal | agents ───── */
+.ide { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 0; min-width: 0; }
+.ide-pad { padding: 12px; }
+.ide-explorer { display: grid; grid-template-rows: auto auto minmax(0, 1fr); background: var(--panel); border-right: 1px solid var(--line); min-height: 0; }
+.ide-explorer > header { display: flex; justify-content: space-between; align-items: center; padding: 10px 10px 6px; }
+.ide-explorer h2 { font-size: 11px; }
+.portal button.ide-root {
+  text-align: left; background: transparent; border: 0; border-radius: 0; padding: 4px 10px;
+  font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+}
+.ide-tree-scroll { overflow: auto; min-height: 0; padding-bottom: 12px; }
+.ide-tree { list-style: none; margin: 0; padding: 0; }
+.portal button.ide-node {
+  width: 100%; display: flex; gap: 4px; align-items: center; text-align: left;
+  background: transparent; border: 0; border-radius: 0; padding: 2px 8px; font-size: 13px; color: var(--ink);
+}
+.portal button.ide-node:hover:not(:disabled) { background: #22272c; }
+.portal button.ide-node.active { background: #2a3136; }
+.ide-node .twisty { width: 12px; color: var(--muted); flex: none; font-size: 10px; }
+.ide-node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ide-node .mark { font-size: 11px; font-weight: 700; flex: none; }
+.ide-node.git-M .name, .ide-node.git-M .mark { color: #e2c08d; }
+.ide-node.git-U .name, .ide-node.git-U .mark, .ide-node.git-A .name, .ide-node.git-A .mark { color: #8fd3a5; }
+.ide-node.git-D .name, .ide-node.git-D .mark { color: var(--danger); }
+.ide-start { padding: 6px 10px; display: grid; gap: 8px; align-content: start; }
+.ide-recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ide-recent .link { text-align: left; text-decoration: none; display: grid; }
+.ide-recent small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ide-center { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; min-width: 0; background: #1e1e1e; }
+.ide.with-term .ide-center { grid-template-rows: auto auto minmax(0, 1fr) minmax(140px, 34%) auto; }
+.ide-tabs { display: flex; overflow-x: auto; background: var(--panel); border-bottom: 1px solid var(--line); min-height: 34px; }
+.ide-tab { display: flex; align-items: center; border-right: 1px solid var(--line); flex: none; }
+.ide-tab.active { background: #1e1e1e; box-shadow: inset 0 -2px 0 var(--accent); }
+.portal .ide-tab button { background: transparent; border: 0; border-radius: 0; padding: 6px 4px 6px 12px; font-size: 12.5px; }
+.portal .ide-tab button.close { padding: 6px 10px 6px 4px; color: var(--muted); }
+.portal .ide-tab button.close.armed { color: var(--danger); font-weight: 700; }
+.ide-tab .dirty { color: var(--accent); }
+.ide-note { font-size: 11.5px; color: var(--warning); padding: 4px 12px; background: #1a1d21; border-bottom: 1px solid var(--line); }
+.ide-editors { position: relative; min-height: 0; }
+.ide-editor { position: absolute; inset: 0; }
+.ide-editor[hidden] { display: none; }
+.ide-welcome { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 8px; color: var(--muted); pointer-events: none; }
+.ide-welcome h1 { font-size: 28px; color: #3d4349; }
+.ide-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); border-top: 1px solid var(--line); background: #121417; min-height: 0; }
+.ide-panel[hidden] { display: none; }
+.ide-panel-tabs { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-bottom: 1px solid var(--line); }
+.ide-panel-tabs .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 0 8px; }
+.ide-panel-tabs .hide { margin-left: auto; }
+.ide-terms { position: relative; min-height: 0; }
+.ide-term { position: absolute; inset: 4px 0 0 8px; }
+.ide-term[hidden] { display: none; }
+.ide-status {
+  display: flex; gap: 14px; align-items: center; padding: 2px 10px; font-size: 11.5px;
+  background: #2b3a33; color: #dfe9e2; white-space: nowrap; overflow: hidden;
+}
+.ide-status .msg-line { overflow: hidden; text-overflow: ellipsis; color: #f3e3bd; }
+.ide-status .right { margin-left: auto; display: flex; gap: 10px; }
+.ide-status .link { color: #dfe9e2; font-size: 11.5px; }
+
+@media (max-width: 1280px) {
+  .portal .portal-body.mode-workspace { grid-template-columns: minmax(0, 1fr) 340px; }
+  .ide { grid-template-columns: 210px minmax(0, 1fr); }
+}
+
+/* ── Workspace v2: IDE | agent thread; fixed grid areas (no row shifting) ── */
+.portal .portal-body.mode-workspace { grid-template-columns: minmax(0, 1fr) 420px; }
+.portal-body.mode-workspace > .portal-sidebar, .portal-body.mode-workspace > .portal-panel { display: none; }
+.ide-slot { min-height: 0; min-width: 0; display: grid; }
+.ide-slot[hidden] { display: none; }
+.portal-body:not(.mode-workspace) > .ide-slot { display: none; }
+.portal-body.mode-workspace > .portal-main { border-left: 1px solid var(--line); }
+.portal-body.mode-workspace .msg { max-width: 94%; }
+.portal-body.mode-workspace .thread-title .subtle { max-width: 26ch; }
+.portal-body.mode-workspace .conversation-header { flex-wrap: wrap; padding: 8px 12px; }
+.portal-body.mode-workspace .transcript { padding: 12px; }
+.portal select.agent-picker { width: auto; padding: 4px 8px; }
+.ide-center {
+  grid-template-areas: "tabs" "note" "editors" "panel" "status";
+  grid-template-rows: auto auto minmax(0, 1fr) 0 auto;
+}
+.ide.with-term .ide-center { grid-template-rows: auto auto minmax(0, 1fr) minmax(160px, 36%) auto; }
+.ide-tabs { grid-area: tabs; }
+.ide-note { grid-area: note; }
+.ide-editors { grid-area: editors; }
+.ide-panel { grid-area: panel; }
+.ide-status { grid-area: status; }
+.ide-welcome { pointer-events: none; }
+.portal .ide-panel-tabs button.panel-switch {
+  background: transparent; border: 0; border-radius: 0; padding: 6px 10px; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+}
+.portal .ide-panel-tabs button.panel-switch.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.ide-panel-tabs .sep { width: 1px; align-self: stretch; background: var(--line); margin: 6px 6px; }
+.ide-jobs { overflow: auto; min-height: 0; }
+.ide-jobs[hidden], .ide-terms[hidden] { display: none; }
+.ide-jobs .workspace-panel { padding: 8px 14px; }
+.attach-chip {
+  display: inline-flex !important; align-items: center; gap: 6px; margin: 0 0 6px !important;
+  font-weight: 500 !important; font-size: 11.5px !important; color: var(--muted) !important;
+}
+.attach-chip input { width: auto; }
+.attach-chip.on { color: var(--accent) !important; }
+.portal label.attach-chip { width: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* ── Agent mini terminals (Workspace › Agents) ─────────────────────────── */
+.agent-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; padding: 10px 12px; }
+.agent-tile { display: grid; grid-template-rows: auto 1fr; border: 1px solid var(--line); border-radius: 8px; background: #0e1012; overflow: hidden; min-height: 150px; max-height: 240px; }
+.agent-tile header { display: flex; gap: 8px; align-items: center; padding: 5px 9px; background: #1a1d21; border-bottom: 1px solid var(--line); font-size: 12px; min-width: 0; }
+.agent-tile header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.agent-tile header em { font-style: normal; font-size: 11px; color: var(--muted); flex: none; }
+.agent-tile.working { border-color: #2f5a40; }
+.agent-tile.working .pulse { background: #8fd3a5; animation: pulse 1.2s ease-in-out infinite; }
+.agent-tile.needs_you { border-color: #6b4038; }
+.agent-tile.needs_you .pulse { background: #e0816f; animation: pulse 1.2s ease-in-out infinite; }
+.agent-tile.done .pulse { background: var(--accent); }
+.agent-tile.error .pulse, .agent-tile.stopped .pulse { background: var(--danger); }
+.tile-log { display: flex; flex-direction: column-reverse; overflow: auto; min-height: 0; }
+.portal .tile-log pre {
+  margin: 0; border: 0; border-radius: 0; background: transparent; max-height: none; overflow: visible;
+  padding: 6px 9px; font-size: 11.5px; line-height: 1.45; color: #cfd6cf;
+}
+.server-jobs { margin: 4px 12px 12px; border-top: 1px solid var(--line); padding-top: 6px; }
+.server-jobs > summary { cursor: pointer; color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* ── Needs you: expandable rows and the agent hand-off ─────────────────── */
+.portal button.row-toggle {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: baseline; width: 100%;
+  text-align: left; background: transparent; border: 0; padding: 0;
+}
+.portal button.row-toggle:hover:not(:disabled) { background: transparent; color: var(--accent); }
+.row-toggle .twisty { color: var(--muted); font-size: 11px; }
+.row-toggle .summary { grid-column: 2 / -1; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approval-row.open { border-color: #4b5a52; }
+.approval-row .details.full { max-height: 360px; }
+.work-on-it { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-top: 1px solid var(--line); padding-top: 8px; }
+.work-on-it .subtle { margin-right: 4px; }
+.gap-list details > summary { cursor: pointer; font-weight: 600; list-style: none; }
+.gap-list details > summary::before { content: '▸ '; color: var(--muted); }
+.gap-list details[open] > summary::before { content: '▾ '; }
+.gap-list details > p { margin: 6px 0 0; }
+.gap-list details .work-on-it { margin-top: 8px; }

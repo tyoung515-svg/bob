@@ -111,11 +111,17 @@ async def verify_node(state: dict) -> dict:
             # These shell out (subprocess.run / docker run) and would block the shared
             # event loop for up to BUILD_VERIFY_TIMEOUT — offload to a worker thread
             # (the codebase's async-subprocess convention, cf. backends/claude_code.py).
-            mode = await asyncio.to_thread(sandbox.resolve_mode)
-            builds = await asyncio.to_thread(sandbox.build_empty_ok, ws, mode=mode)
-            gate = await asyncio.to_thread(
-                sandbox.run_pytest, ws, timeout=_config.BUILD_VERIFY_TIMEOUT, mode=mode)
-            runs, _cli_out = await asyncio.to_thread(sandbox.run_cli, ws, mode=mode)
+            from core.worker import mode as execution_mode
+            if execution_mode() != 'legacy':
+                from core.build.jobs import verify
+                gate = await verify(ws, timeout=_config.BUILD_VERIFY_TIMEOUT)
+                builds, runs = gate['builds'], gate['runs']
+            else:
+                mode = await asyncio.to_thread(sandbox.resolve_mode)
+                builds = await asyncio.to_thread(sandbox.build_empty_ok, ws, mode=mode)
+                gate = await asyncio.to_thread(
+                    sandbox.run_pytest, ws, timeout=_config.BUILD_VERIFY_TIMEOUT, mode=mode)
+                runs, _cli_out = await asyncio.to_thread(sandbox.run_cli, ws, mode=mode)
             report = {
                 "phase": "verify", "builds": builds, "passed": gate["passed"],
                 "failed": gate["failed"], "errors": gate["errors"], "runs": runs,

@@ -1,23 +1,12 @@
-"""BoBClaw build pipeline — Docker isolation for the verify gate (P3.5).
+"""Build gates retain legacy Docker/subprocess behavior on unmarked hosts.
 
-The REAL boundary the P3 static gate cannot be. The verify gate EXECUTES LLM-written
-impls (pytest imports them and calls them; the CLI runs them); this runs that gate in a
-throwaway container with ONLY the per-turn workspace bind-mounted (no host secrets /
-repo), ``--network none`` (no exfiltration), memory/pids/cpu capped, and ``--rm``
-(ephemeral). A gate-slipping impl is confined to a container that has no host secrets
-and no network — it cannot read ``.secrets/bobclaw.env`` or phone home.
-
-Mode (``config.BUILD_SANDBOX``):
-  * ``docker``     — force the container; FAIL-LOUD (raise) if the daemon/image is absent.
-  * ``subprocess`` — run on the HOST (P3 static gate + env-strip only); trusted models / CI.
-  * ``auto``       — docker when the daemon + image are available, else host + a loud warning.
-
-``verify_node`` calls these (build_empty_ok / run_pytest / run_cli). ``plan_contracts``
-keeps its build-empty gate on the host: it runs only deterministic STUBS (no LLM code).
-The functions mirror the host signatures in :mod:`core.build.skeleton` so the dispatch
-is transparent to the caller.
+In packaged worker mode, auto/subprocess dispatch through the lane worker and
+Docker is unavailable. Boundary failures never fall back to host execution.
 """
 from __future__ import annotations
+
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
 
 import logging
 import subprocess
@@ -39,16 +28,19 @@ class SandboxUnavailable(RuntimeError):
 
 def docker_ready() -> bool:
     """True iff the Docker daemon is reachable AND the sandbox image is present."""
-    try:
-        info = subprocess.run(["docker", "info"], capture_output=True,
-                              timeout=_PROBE_TIMEOUT)
-        if info.returncode != 0:
+    if execution_mode() == "legacy":
+        try:
+            info = subprocess.run(["docker", "info"], capture_output=True,
+                                  timeout=_PROBE_TIMEOUT)
+            if info.returncode != 0:
+                return False
+            img = subprocess.run(
+                ["docker", "image", "inspect", _config.BUILD_SANDBOX_IMAGE],
+                capture_output=True, timeout=_PROBE_TIMEOUT)
+            return img.returncode == 0
+        except (OSError, subprocess.SubprocessError):
             return False
-        img = subprocess.run(
-            ["docker", "image", "inspect", _config.BUILD_SANDBOX_IMAGE],
-            capture_output=True, timeout=_PROBE_TIMEOUT)
-        return img.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+    else:
         return False
 
 
@@ -60,24 +52,30 @@ def resolve_mode() -> str:
     loud warning (the verify gate then runs LLM code un-isolated — static gate only).
     """
     mode = (_config.BUILD_SANDBOX or "auto").strip().lower()
-    if mode == "subprocess":
-        return "subprocess"
-    if mode == "docker":
+    if execution_mode() == "legacy":
+        if mode == "subprocess":
+            return "subprocess"
+        if mode == "docker":
+            if docker_ready():
+                return "docker"
+            raise SandboxUnavailable(
+                f"BUILD_SANDBOX=docker but the Docker daemon or image "
+                f"{_config.BUILD_SANDBOX_IMAGE!r} is unavailable; build it with "
+                f"`docker build -t {_config.BUILD_SANDBOX_IMAGE} -f docker/build-sandbox.Dockerfile docker`"
+            )
+        # auto
         if docker_ready():
             return "docker"
-        raise SandboxUnavailable(
-            f"BUILD_SANDBOX=docker but the Docker daemon or image "
-            f"{_config.BUILD_SANDBOX_IMAGE!r} is unavailable; build it with "
-            f"`docker build -t {_config.BUILD_SANDBOX_IMAGE} -f docker/build-sandbox.Dockerfile docker`"
-        )
-    # auto
-    if docker_ready():
-        return "docker"
-    logger.warning(
-        "build sandbox: BUILD_SANDBOX=auto but Docker/image unavailable — the verify "
-        "gate (LLM-written code) runs UN-ISOLATED on the host (static gate + env-strip "
-        "only). Build %s and set BUILD_SANDBOX=docker for real isolation.",
-        _config.BUILD_SANDBOX_IMAGE)
+        logger.warning(
+            "build sandbox: BUILD_SANDBOX=auto but Docker/image unavailable — the verify "
+            "gate (LLM-written code) runs UN-ISOLATED on the host (static gate + env-strip "
+            "only). Build %s and set BUILD_SANDBOX=docker for real isolation.",
+            _config.BUILD_SANDBOX_IMAGE)
+    else:
+        if mode == "docker":
+            raise SandboxUnavailable(worker_client.EXCLUDED_REASON)
+        if mode not in {"auto", "subprocess", "worker"}:
+            raise SandboxUnavailable("unavailable: unknown build execution mode")
     return "subprocess"
 
 
@@ -116,13 +114,21 @@ def _run(workspace: Path, inner: list[str], timeout: int) -> subprocess.Complete
     # the (capped, isolated) container lingers, leaking on the fan-out/repair paths.
     name = f"bobclaw-build-{uuid.uuid4().hex[:12]}"
     try:
-        return subprocess.run(
-            _docker_argv(workspace, inner, name=name),
-            capture_output=True, text=True, timeout=timeout)
+        if execution_mode() == "legacy":
+            return subprocess.run(
+                _docker_argv(workspace, inner, name=name),
+                capture_output=True, text=True, timeout=timeout)
+        else:
+            return worker_client.refuse(
+                _docker_argv(workspace, inner, name=name),
+                capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         # Best-effort reap (then --rm cleans up); never mask the original timeout.
         try:
-            subprocess.run(["docker", "kill", name], capture_output=True, timeout=10)
+            if execution_mode() == "legacy":
+                subprocess.run(["docker", "kill", name], capture_output=True, timeout=10)
+            else:
+                worker_client.refuse(["docker", "kill", name], capture_output=True, timeout=10)
         except (OSError, subprocess.SubprocessError):
             pass
         raise

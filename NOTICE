@@ -18,3 +18,8 @@ terms. See COMPLIANCE.md for details.
 
 BoB depends on third-party open-source software, each under its own license.
 Those licenses are retained in the respective packages' distributions.
+
+The runtime image used by the Windows app also contains third-party programs
+installed as binaries, among them the Claude Code CLI, which is proprietary
+Anthropic software and not covered by this project's license. They are listed
+with their licenses in deploy/runtime/THIRD-PARTY.md.

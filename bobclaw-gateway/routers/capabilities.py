@@ -20,6 +20,9 @@ import aiohttp
 from aiohttp import web
 
 from config import config
+from core.lane_config import configured_mode
+from core.portal_resources import OP_CAPABILITIES
+from core.execution.http_cache import conditional_json
 
 router = web.RouteTableDef()
 
@@ -79,6 +82,84 @@ async def get_capabilities(request: web.Request) -> web.Response:
     a stable, sorted JSON document. Partial failures degrade to a ``warnings`` list; a total core
     outage surfaces 502.
     """
+    # Read-only feature discovery does not depend on the model registry being up.
+    if request.query.get('operations') == '1':
+        operations = {**OP_CAPABILITIES}
+        execution_features = {}
+        job_time = {'version':1, 'available':False, 'reason':'worker_boundary_required'}
+        for name in (('teams.list', 'teams.save', 'runs.start', 'runs.get', 'runs.list', 'runs.cancel', 'runs.resume', 'budgets.set', 'flags.list', 'flags.get')
+                     if request.query.get('contract_version') == '2' else ()):
+            operations[name] = {'version': 2, 'implemented': True, 'contract_versions': [2],
+                                'request_key_required': name in {'teams.save', 'runs.start', 'runs.cancel', 'runs.resume', 'budgets.set'},
+                                'human_owner_required': name in {'runs.resume', 'budgets.set'},
+                                'storage_required': 'postgres'}
+        if request.query.get('contract_version') == '2':
+            from core.execution.owner import operation_capabilities
+            operations.update(operation_capabilities())
+            state = {}
+            # Availability is per operation, independent of model-catalog health.
+            # SQLite session status/lock remain usable during a core outage.
+            if operations['owner.begin']['available']:
+                from routers.execution import proxy
+                live = await proxy(request, 'capabilities', {})
+                state = json.loads(live.body) if live.status == 200 else {}
+                from core.execution.models import CAPABILITIES
+                ready = bool(state.get('storage_available') and state.get('execution_enabled'))
+                job_time = state.get('job_time') or {**CAPABILITIES['job_time'], 'available':False,
+                            'reason':'installed_job_ladder_unavailable'}
+                for name, capability in state.get('operations', {}).items():
+                    if name in operations:
+                        operations[name].update(capability)
+                execution_features = {k:state[k] for k in ('capabilities_revision', 'grant_matcher_versions') if k in state}
+                if not state.get('storage_available') or not state.get('execution_enabled'):
+                    for name in ('owner.begin', 'grants.prepare', 'grants.issue', 'grants.list', 'grants.get', 'grants.revoke',
+                                 'budgets.set', 'budgets.get', 'budgets.list', 'budgets.remove', 'runs.resume', 'flags.resolve'):
+                        operations[name].update(available=False, reason='execution_storage_or_executor_unavailable')
+            if not config.TOTP_SECRET or not config.BOBCLAW_PASSWORD:
+                for name in ('owner.begin', 'owner.confirm'):
+                    operations[name].update(available=False, implemented=False, reason='enrolled_password_totp_required')
+            from core.tool_jobs.service import OPERATIONS as JOB_OPERATIONS
+            for name in JOB_OPERATIONS:
+                operations[name] = state.get('operations', {}).get(name) or {
+                    'contract_versions':[2], 'implemented':True, 'available':False,
+                    'reason':'execution_storage_or_executor_unavailable', 'owner_session_required':name=='jobs.decide'}
+            from core.execution.workbench import OPERATIONS as WORK_OPERATIONS
+            from core.workflow_surface import capabilities as workflow_capabilities
+            for name, fallback in workflow_capabilities(False).items():
+                operations[name] = state.get('operations', {}).get(name) or fallback
+            from core.builder.capabilities import capabilities as builder_capabilities
+            for name, fallback in builder_capabilities(False, {}).items():
+                operations[name] = state.get('operations',{}).get(name) or fallback
+                if name in {'builder.mode.set','builder.approve','builder.network.set'} and not operations['owner.begin']['available']:
+                    operations[name].update(available=False,reason=operations['owner.begin']['reason'])
+            for name in WORK_OPERATIONS:
+                operations[name]=state.get('operations',{}).get(name) or {
+                    'contract_versions':[2],'implemented':True,'available':False,'reason':'execution_storage_or_executor_unavailable'}
+                if name in {'work.workspace.create','work.publish'} and not operations['owner.begin']['available']:
+                    operations[name].update(available=False,reason=operations['owner.begin']['reason'])
+            if not operations['owner.begin']['available']:
+                operations['jobs.decide'].update(available=False,reason=operations['owner.begin']['reason'])
+            execution_features['tool_jobs'] = state.get('tool_jobs', {'protocols':['tool-jobs/2'],
+                'apply':{'available':False,'reason':'managed_apply_unavailable_until_4.3e'}})
+            from routers.settings import capabilities as settings_capabilities
+            operations.update(settings_capabilities())
+            if not state.get('storage_available'):
+                for name in ('policy.get', 'policy.set'):
+                    if operations[name]['available']:
+                        operations[name].update(available=False, reason='policy_storage_unavailable')
+            # Secret storage/owner summaries need only SQLite and the root helper.
+            if (operations['secrets.set']['available'] and config.TOTP_SECRET and config.BOBCLAW_PASSWORD
+                    and operations['owner.begin']['reason'] == 'execution_storage_or_executor_unavailable'):
+                operations['owner.begin'].update(available=True, reason=None)
+            operations['settings.status'] = {'version': 1, 'contract_versions': [1],
+                'implemented': True, 'available': operations['secrets.set']['available'],
+                'reason': operations['secrets.set']['reason'], 'transport': 'broker_receipt_socket',
+                'credential_retry': 'never', 'owner_session_required': False}
+            for name in ('credentials.change', 'recovery.begin', 'recovery.confirm'):
+                operations[name] = {'version': 2, 'contract_versions': [2], 'implemented': False,
+                                    'available': False, 'reason': 'privileged_helper_later_slice_required'}
+        return conditional_json(request, {'operations': operations, 'job_time':job_time, **execution_features})
+
     # Read CORE_URL at request time (NOT module import) — tests and launchers override
     # config.CORE_URL, exactly as the sibling faces/models/routing_view routers do.
     core_base = config.CORE_URL.rstrip("/")
@@ -111,6 +192,11 @@ async def get_capabilities(request: web.Request) -> web.Response:
     backends_items = backends_data.get("items", []) if isinstance(backends_data, dict) else []
     backends_roles = backends_data.get("roles", []) if isinstance(backends_data, dict) else []
     models_list = models_data if isinstance(models_data, list) else []
+    # In a configured lane, model rows are the authoritative membership. Cost
+    # metadata cannot enroll adapters absent from that core catalog. A failed
+    # model component leaves membership empty rather than guessing from costs.
+    configured_names = ({m.get("backend") for m in models_list if isinstance(m, dict)}
+                        if configured_mode() else None)
 
     # Merge one entry per backend name = union of availability (models/available) + cost caps
     # (/api/backends). Tolerate a backend present in only one source; never KeyError.
@@ -125,6 +211,7 @@ async def get_capabilities(request: web.Request) -> web.Response:
             "backend": name,
             "available": bool(m.get("available", False)),
             "model": m.get("model"),
+            **{key: m[key] for key in ("provider_label", "choices", "tool_capable", "billing") if key in m},
             "max_usd_per_worker": None,
             "max_fanout_width": None,
         }
@@ -133,6 +220,8 @@ async def get_capabilities(request: web.Request) -> web.Response:
             continue
         name = item.get("backend")
         if not name:
+            continue
+        if configured_names is not None and name not in configured_names:
             continue
         entry = merged.get(name)
         if entry is None:
@@ -157,6 +246,7 @@ async def get_capabilities(request: web.Request) -> web.Response:
         warnings.append(actions_warn)
 
     doc: dict = {
+        "operations": OP_CAPABILITIES,
         "faces": faces,
         "backends": backends_list,
         "actions": actions,

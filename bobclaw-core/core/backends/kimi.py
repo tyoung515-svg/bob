@@ -28,8 +28,17 @@ class KimiClient:
     ) -> None:
         self.base_url = (base_url or config.KIMI_BASE_URL).rstrip("/")
         self.api_key = api_key or config.KIMI_API_KEY
-        self._timeout = aiohttp.ClientTimeout(total=120, connect=5)
+        self._timeout = aiohttp.ClientTimeout(total=180, connect=5)
         self._discover_timeout = aiohttp.ClientTimeout(total=5)
+
+    @property
+    def api_key(self):
+        from core.settings_client import provider_key
+        return provider_key('kimi', self._api_key)
+
+    @api_key.setter
+    def api_key(self, value):
+        self._api_key = value
 
     # ── health & model discovery ───────────────────────────────────────────────
 

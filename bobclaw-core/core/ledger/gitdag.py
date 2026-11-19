@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from core.worker import mode as execution_mode
+from core.worker import client as worker_client
+
 import pathlib
 import re
 import subprocess
@@ -34,12 +37,20 @@ def _git(
         GitError if allow_fail is False and the git command exits with non-zero.
     """
     cmd = ["git", "-C", str(repo), *args]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+    if execution_mode() == "legacy":
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+    else:
+        result = worker_client.run(
+            cmd, cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
     if result.returncode != 0 and not allow_fail:
         raise GitError(f"git {args} failed: {result.stderr.strip()}")
     return result

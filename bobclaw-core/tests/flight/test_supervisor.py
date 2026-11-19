@@ -70,14 +70,14 @@ async def _new_store(tmp_path):
 
 # ── pure allocator ────────────────────────────────────────────────────────────
 def test_provider_capacity():
-    assert provider_capacity("glm_5_2") == 1
+    assert provider_capacity("glm_5_3") == 1
     assert provider_capacity("glm") == 1
     assert provider_capacity("deepseek_v4_flash") == 20
     assert provider_capacity("totally_unknown") == 100  # global cap
 
 
 def test_spill_target():
-    assert spill_target("glm_5_2") == "glm_payg"
+    assert spill_target("glm_5_3") == "glm_payg"
     assert spill_target("deepseek_v4_flash") is None
 
 
@@ -87,7 +87,7 @@ def test_glm_serial_grants_one_by_priority():
         {"flight_id": "high", "priority": 9},
         {"flight_id": "mid", "priority": 5},
     ]
-    plan = plan_provider_grants("glm_5_2", reqs)
+    plan = plan_provider_grants("glm_5_3", reqs)
     assert plan["capacity"] == 1
     assert plan["granted"] == ["high"]
     assert set(plan["deferred"]) == {"low", "mid"}
@@ -99,7 +99,7 @@ def test_ties_break_fifo():
         {"flight_id": "first", "priority": 5},
         {"flight_id": "second", "priority": 5},
     ]
-    assert plan_provider_grants("glm_5_2", reqs)["granted"] == ["first"]
+    assert plan_provider_grants("glm_5_3", reqs)["granted"] == ["first"]
 
 
 def test_non_serial_provider_grants_all_under_cap():
@@ -164,36 +164,36 @@ async def test_enforce_budget_leaves_under_flight_active(tmp_path, monkeypatch):
 async def test_provider_slot_serializes_glm():
     kv = _FakeKV()
     slots = ProviderSlots(redis_getter=lambda: kv)
-    assert await slots.try_acquire("glm_5_2", "f1", priority=5) is True
+    assert await slots.try_acquire("glm_5_3", "f1", priority=5) is True
     # a lower-priority flight cannot take the single slot
-    assert await slots.try_acquire("glm_5_2", "f2", priority=1) is False
-    assert await slots.holder("glm_5_2") == "f1"
+    assert await slots.try_acquire("glm_5_3", "f2", priority=1) is False
+    assert await slots.holder("glm_5_3") == "f1"
 
 
 async def test_provider_slot_priority_preemption():
     kv = _FakeKV()
     slots = ProviderSlots(redis_getter=lambda: kv)
-    await slots.try_acquire("glm_5_2", "low", priority=1)
+    await slots.try_acquire("glm_5_3", "low", priority=1)
     # a higher-priority flight preempts
-    assert await slots.try_acquire("glm_5_2", "high", priority=9) is True
-    assert await slots.holder("glm_5_2") == "high"
+    assert await slots.try_acquire("glm_5_3", "high", priority=9) is True
+    assert await slots.holder("glm_5_3") == "high"
 
 
 async def test_provider_slot_reentrant_same_holder():
     kv = _FakeKV()
     slots = ProviderSlots(redis_getter=lambda: kv)
-    await slots.try_acquire("glm_5_2", "f1", priority=5)
-    assert await slots.try_acquire("glm_5_2", "f1", priority=5) is True  # re-acquire own
+    await slots.try_acquire("glm_5_3", "f1", priority=5)
+    assert await slots.try_acquire("glm_5_3", "f1", priority=5) is True  # re-acquire own
 
 
 async def test_provider_slot_release_only_by_holder():
     kv = _FakeKV()
     slots = ProviderSlots(redis_getter=lambda: kv)
-    await slots.try_acquire("glm_5_2", "f1", priority=5)
-    await slots.release("glm_5_2", "f2")   # not the holder — no-op
-    assert await slots.holder("glm_5_2") == "f1"
-    await slots.release("glm_5_2", "f1")
-    assert await slots.holder("glm_5_2") is None
+    await slots.try_acquire("glm_5_3", "f1", priority=5)
+    await slots.release("glm_5_3", "f2")   # not the holder — no-op
+    assert await slots.holder("glm_5_3") == "f1"
+    await slots.release("glm_5_3", "f1")
+    assert await slots.holder("glm_5_3") is None
 
 
 async def test_non_serial_provider_always_acquires():
@@ -206,4 +206,4 @@ async def test_non_serial_provider_always_acquires():
 async def test_provider_slot_fails_open_on_redis_error():
     slots = ProviderSlots(redis_getter=lambda: _BoomKV())
     # Redis down → do NOT wedge work; a resulting GLM 429 is handled by the throttle path.
-    assert await slots.try_acquire("glm_5_2", "f1", priority=5) is True
+    assert await slots.try_acquire("glm_5_3", "f1", priority=5) is True

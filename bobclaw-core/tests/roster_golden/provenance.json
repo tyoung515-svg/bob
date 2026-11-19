@@ -1,0 +1,17 @@
+{
+  "commit": "73add668b57cff8a2efbcf1aeb7d3d00b2681fab",
+  "tracked_diff": "",
+  "source_sha256": {
+    "bobclaw-core/core/faces/registry.py": "6971bd6a7b9e8d93bdbd6b9e0a85bd722c72784632fcbbb3dd8c74c682ec75ee",
+    "bobclaw-core/core/config.py": "cb42581c4ade78526db932014f12578ac218267e095b4f7093cc062d71af8fed",
+    "bobclaw-core/core/teams.py": "2a45b8c783a68200505d49bd1c543222932b24753e322c4a7865aa6119078a2f",
+    "bobclaw-core/core/nodes/route.py": "dcd8304f754cd28ffdacb631b6fa4aae540998f627b865c8e6c22ae160dc20a0",
+    "bobclaw-core/core/nodes/execute.py": "de63d64ef2c871991748b6b65ec7f0fb7b52403af2062a0d420a7b9d702b46a1",
+    "bobclaw-core/core/mcp_tools/profile_routing.py": "3ca3718238e65877b9a2de04917a53b92c9a659b1923689bf7562ccc749f073f",
+    "bobclaw-gateway/routers/agent_services.py": "18803b1ee880f6c4bffc6a52c8c92ea652795d025e07e947972e33a4d02bbf72"
+  },
+  "golden_sha256": {
+    "core": "a9564d3dccc33aa1da0b78649dfbdac7e7224de25a557a654257de4f67be812f",
+    "gateway": "e8e860adafcb254308ce6f884fde420018aef427db94f251ba3346bc1e0a40a6"
+  }
+}

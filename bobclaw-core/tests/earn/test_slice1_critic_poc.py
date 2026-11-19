@@ -22,7 +22,7 @@ from core.verify.postcondition import family_of
 
 def test_lane_pinned_critic_backends():
     assert critic_backend_for(Lane.BUG_BOUNTY) == "minimax"
-    assert critic_backend_for(Lane.DATASET) == "glm_5_2"
+    assert critic_backend_for(Lane.DATASET) == "glm_5_3"
 
 
 def test_family_divergence_enforced():

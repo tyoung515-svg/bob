@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Bob portal token renewal daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=bob-token-renew.service
+
+[Install]
+WantedBy=timers.target

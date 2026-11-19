@@ -70,14 +70,14 @@ async def test_refine_parses_multislot_draft_and_prose():
         return (
             "Added a second worker on glm.\n"
             '{"name":"my-fleet","roles":{"worker":['
-            '{"name":"bulk","backend":"deepseek_v4_flash","escalation_chain":["glm_5_2"]},'
-            '{"name":"tool","backend":"glm_5_2","escalation_chain":[]}],'
+            '{"name":"bulk","backend":"deepseek_v4_flash","escalation_chain":["glm_5_3"]},'
+            '{"name":"tool","backend":"glm_5_3","escalation_chain":[]}],'
             '"critic":[{"backend":"local"}]}}'
         )
 
     out = await team_proposer.refine_team("add a glm worker", send=fake_send)
     assert out["reply"].startswith("Added a second worker")
-    assert [s["backend"] for s in out["draft"]["roles"]["worker"]] == ["deepseek_v4_flash", "glm_5_2"]
+    assert [s["backend"] for s in out["draft"]["roles"]["worker"]] == ["deepseek_v4_flash", "glm_5_3"]
     assert out["draft"]["roles"]["critic"][0]["backend"] == "local"
     assert out["draft"]["name"] == "my-fleet"
 

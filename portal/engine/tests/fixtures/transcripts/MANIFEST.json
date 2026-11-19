@@ -1,0 +1,38 @@
+{
+  "note": "Committed wire transcripts (E10 item 4). Each file is the verbatim stdout of one live `bob-slice-cli` run driven exactly as the webview drives it: hello r1 -> session.create r2 -> turn.start r3, every frame acked with its own through_seq (ack-<seq>), the approval answered from the preview with r4. Captured on primary-pc (the only build host); event_ids, decision_ids, timestamps and the absolute data-root path are the run's own values and are deliberately not checksummed. A transcript that no test consumes is a failure: every entry names the JS harness case and the Rust test that replay it, and both sides assert that mapping. Each entry also names the AT-1 projection fixture: the projected view rows in full (canonical, sorted), which is the object the checksum is taken over - the engine test, the Tauri IPC bridge test and the JS harness all compare against it.",
+  "transcripts": [
+    {
+      "file": "v0_allow.wire.jsonl",
+      "run": "V0 allow_once: FX-READ-01 read of ./hello.txt, merged, turn succeeded",
+      "s5_fixture": "allow.requests.jsonl",
+      "lines": 20,
+      "frames": 8,
+      "at1_checksum": "sha256:63f1ac4ffa07d329145475a0c6d4c0904a10e9d98e6106466250e153b9ff0df6",
+      "consumers": [
+        "js:generated_protocol_matches_the_hello_schema_hash",
+        "js:at1_projection_checksum_allow",
+        "js:conn_becomes_connected_on_helloack",
+        "js:first_frame_does_not_freeze_the_row",
+        "js:acl_denied_listen_delivers_no_rows",
+        "c5_violation_freezes_only_the_offending_row",
+        "rust:at1_both_bindings_agree_on_the_projection_checksum"
+      ],
+      "projection_fixture": "v0_allow.projection.json"
+    },
+    {
+      "file": "v0_deny.wire.jsonl",
+      "run": "V0 user deny with reason: no witness, denied/user_denied, turn failed",
+      "s5_fixture": "deny.requests.jsonl",
+      "lines": 18,
+      "frames": 7,
+      "at1_checksum": "sha256:8b8827a725a580946950e97e9b4428e7b59d8d4233d52a88c69955fa8d4d09a7",
+      "consumers": [
+        "js:generated_protocol_matches_the_hello_schema_hash",
+        "js:at1_projection_checksum_deny",
+        "js:deny_transcript_is_not_success_shaped",
+        "rust:at1_both_bindings_agree_on_the_projection_checksum"
+      ],
+      "projection_fixture": "v0_deny.projection.json"
+    }
+  ]
+}

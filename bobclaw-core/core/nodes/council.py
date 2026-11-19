@@ -38,6 +38,8 @@ _LOG_DIR: Path = Path(__file__).resolve().parent.parent.parent / DEFAULT_LOG_DIR
 async def council_node(state: "dict") -> dict:
     """Run the sequential 3-voice council chain and emit answer + handoff."""
     spec = state.get("council_spec") or {}
+    from core.lane_config import require_council
+    require_council(spec)
     topic = state.get("task", "")
     context = spec.get("context", "") or ""
 

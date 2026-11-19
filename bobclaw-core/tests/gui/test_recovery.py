@@ -330,7 +330,7 @@ def test_decorrelated_alternative() -> None:
 
 def test_resolve_adjudicator() -> None:
     actor = "deepseek_v4_flash"
-    glm = "glm_5_2"
+    glm = "glm_5_3"
 
     # explicit adjudicator_backend returned as-is
     assert resolve_adjudicator(actor, adjudicator_backend=glm) == glm
@@ -377,7 +377,7 @@ def test_parse_adjudication() -> None:
 
 def test_adjudicate_failure_failsafe() -> None:
     actor = "deepseek_v4_flash"
-    glm = "glm_5_2"
+    glm = "glm_5_3"
     action, diff, verdict, post = _wrong_element_evidence()
     floor = classify_failure(action, diff, verdict, post)
     assert floor is FailureType.WRONG_ELEMENT
@@ -446,7 +446,7 @@ def test_adjudicate_failure_failsafe() -> None:
 
 def test_make_failure_adjudicator_sync() -> None:
     actor = "deepseek_v4_flash"
-    glm = "glm_5_2"
+    glm = "glm_5_3"
     action, diff, verdict, post = _wrong_element_evidence()
     floor = classify_failure(action, diff, verdict, post)
     assert floor is FailureType.WRONG_ELEMENT
@@ -485,7 +485,7 @@ def _run_recover_floor(evidence: tuple, actor: str = "deepseek_v4_flash"):
 
     # adjudicator that raises → same floor
     adj_raise = make_failure_adjudicator(actor_backend=actor,
-                                         adjudicator_backend="glm_5_2",
+                                         adjudicator_backend="glm_5_3",
                                          send=raising_send())
     outcome_raise = recover(state, action=action, diff=diff, verdict=verdict, post=post,
                             actor_backend=actor, adjudicator=adj_raise)
@@ -515,7 +515,7 @@ def test_recover_floor_byte_identical() -> None:
 
 def test_recover_adjudicated_override() -> None:
     actor = "deepseek_v4_flash"
-    glm = "glm_5_2"
+    glm = "glm_5_3"
     action, diff, verdict, post = _wrong_element_evidence()  # floor = WRONG_ELEMENT
     floor = classify_failure(action, diff, verdict, post)
     assert floor is FailureType.WRONG_ELEMENT
@@ -585,7 +585,7 @@ def test_decorrelated_alternative_skips_all_tried_raises() -> None:
     """When every reachable cross-family backend is already tried, raise (no untried alt)."""
     actor = "deepseek_v4_flash"
     # all cross-family backends in DEFAULT_CRITIC_PREFERENCE for a deepseek actor
-    all_cross = ["glm_5_2", "minimax", "kimi_code", "claude_api", "gemini_pro"]
+    all_cross = ["glm_5_3", "minimax", "kimi_code", "claude_api", "gemini_pro"]
     with pytest.raises(PostConditionError):
         decorrelated_alternative(actor, tried=all_cross)
 
@@ -628,7 +628,7 @@ def test_adjudicate_failure_render_error_falls_back(monkeypatch) -> None:
         action, diff, verdict, post,
         actor_backend="deepseek_v4_flash",
         send=make_send('{"category":"modal_interrupt"}'),
-        adjudicator_backend="glm_5_2",
+        adjudicator_backend="glm_5_3",
     ))
     assert res.adjudicated is False
     assert res.failure is floor
@@ -668,7 +668,7 @@ def test_recover_adjudicator_raises_falls_back() -> None:
 
 def test_adjudicate_failure_out_of_menu_category_falls_back() -> None:
     """A parseable JSON whose category is OUTSIDE the menu (none/audit_veto) -> floor, not adjudicated."""
-    actor, glm = "deepseek_v4_flash", "glm_5_2"
+    actor, glm = "deepseek_v4_flash", "glm_5_3"
     action, diff, verdict, post = _wrong_element_evidence()
     floor = classify_failure(action, diff, verdict, post)
     for bad in ('{"category":"audit_veto"}', '{"category":"none"}'):
@@ -681,7 +681,7 @@ def test_adjudicate_failure_out_of_menu_category_falls_back() -> None:
 
 def test_adjudicate_failure_cancelled_send_falls_back() -> None:
     """A send raising asyncio.CancelledError is caught -> floor (does NOT propagate / crash)."""
-    actor, glm = "deepseek_v4_flash", "glm_5_2"
+    actor, glm = "deepseek_v4_flash", "glm_5_3"
     action, diff, verdict, post = _wrong_element_evidence()
     floor = classify_failure(action, diff, verdict, post)
 
@@ -697,7 +697,7 @@ def test_adjudicate_failure_cancelled_send_falls_back() -> None:
 
 def test_recover_terminal_adjudication_surfaces() -> None:
     """recover with an adjudicated TERMINAL category surfaces (no retry consumed) — through recover."""
-    actor, glm = "deepseek_v4_flash", "glm_5_2"
+    actor, glm = "deepseek_v4_flash", "glm_5_3"
     action, diff, verdict, post = _wrong_element_evidence()  # floor WRONG_ELEMENT (retryable)
     st = RecoveryState("sub")
     # AUTH_BLOCK adjudication -> ESCALATE_HUMAN, surfaced, state unchanged
@@ -750,7 +750,7 @@ def test_make_failure_adjudicator_cancelled_bridge_falls_back(monkeypatch) -> No
     monkeypatch.setattr(pc, "_run_blocking", _cancel)
     action, diff, verdict, post = _wrong_element_evidence()
     floor = classify_failure(action, diff, verdict, post)
-    adj = make_failure_adjudicator(actor_backend="deepseek_v4_flash", adjudicator_backend="glm_5_2",
+    adj = make_failure_adjudicator(actor_backend="deepseek_v4_flash", adjudicator_backend="glm_5_3",
                                    send=make_send('{"category":"loading"}'))
     res = adj(action, diff, verdict, post)
     assert res.adjudicated is False

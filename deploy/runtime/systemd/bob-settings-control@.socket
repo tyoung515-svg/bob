@@ -1,0 +1,12 @@
+[Unit]
+Description=Bob settings control (%i)
+
+[Socket]
+ListenStream=/run/bob-settings/%i/control.sock
+SocketUser=root
+SocketMode=0660
+DirectoryMode=0711
+Accept=no
+
+[Install]
+WantedBy=sockets.target

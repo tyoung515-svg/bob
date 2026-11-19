@@ -1,0 +1,14 @@
+#!/opt/bob/.venv/bin/python
+import sys
+sys.path.insert(0, '/usr/local/lib/bob_runtime')
+if len(sys.argv) > 1 and sys.argv[1] == 'upgrade':
+    from runtime_upgrade import main
+    del sys.argv[1]
+else:
+    from migration import main
+
+try:
+    raise SystemExit(main())
+except Exception as exc:
+    # Subprocess errors can carry credential-bearing input/output.
+    sys.exit(f'bob-runtime: {type(exc).__name__}; migration incomplete, inspect root-private phase journal')

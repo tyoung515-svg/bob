@@ -1,0 +1,21 @@
+[Unit]
+AssertPathExists=/etc/systemd/system/bob-worker@%i.socket.d/identity.conf
+Description=Bob isolated worker submission socket (%i)
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+Requires=bob-worker-policy@%i.service
+After=bob-worker-policy@%i.service
+BindsTo=bob-worker-policy@%i.service bob-worker-auth@%i.socket
+
+[Socket]
+ListenStream=/run/bob-workers/%i/exec.sock
+SocketMode=0600
+SocketUser=bob-unprovisioned
+DirectoryMode=0711
+RemoveOnStop=yes
+Accept=no
+Service=bob-worker@%i.service
+
+[Install]
+WantedBy=multi-user.target

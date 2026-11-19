@@ -1,0 +1,30 @@
+#!/usr/bin/python3
+"""Fixed-argv WSL→Windows SSH adapter. No credentials or global config changes."""
+import json,os,pathlib,subprocess,sys
+args=sys.argv[1:]
+required=['BOB_RELAY_TARGET','BOB_RELAY_ENTRY','BOB_FUNCTIONAL_RELAY','BOB_MODEL_RELAY']
+if any(not os.environ.get(key) for key in required):
+ print(json.dumps({'ok':False,'error':'Legacy relay unavailable: configure '+', '.join(required)}));sys.exit(2)
+target,entry,functional,models=[os.environ[key] for key in required]
+if target.startswith('-') or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._-:' for c in target) or any(not p.startswith('/') or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-' for c in p) for p in [entry,functional,models]):
+ print(json.dumps({'ok':False,'error':'Invalid legacy relay configuration'}));sys.exit(2)
+common=['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o']
+routes={
+ tuple(common+['ConnectTimeout=10',target,'python3',functional]):'ds',
+ tuple(common+['ConnectTimeout=8',target,'python3',models]):'models',
+}
+route=routes.get(tuple(args))
+if route is None:
+ print(json.dumps({'ok':False,'error':'WSL sprint adapter permits only the existing model/catalog relays; Bob team runtime transport is not enabled; no dispatch'}));sys.exit(2)
+data=sys.stdin.buffer.read(80001)
+if len(data)>80000:
+ print(json.dumps({'ok':False,'error':'request too large; no dispatch'}));sys.exit(2)
+# The existing Windows user's key + already pinned server known_hosts are used
+# in place, never exported into WSL. Prompt/model content exists only on stdin.
+command=['/mnt/c/Windows/System32/OpenSSH/ssh.exe','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8',target,'python3',entry,route]
+try:
+ result=subprocess.run(command,input=data,capture_output=True,timeout=140)
+ if len(result.stdout)>256000:raise RuntimeError('response oversized; outcome unknown; no retry')
+ sys.stdout.buffer.write(result.stdout);sys.stderr.buffer.write(result.stderr);sys.exit(result.returncode)
+except Exception as e:
+ print(json.dumps({'ok':False,'error':'Windows SSH outcome unknown; no automatic retry: '+str(e)}));sys.exit(2)

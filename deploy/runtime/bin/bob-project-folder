@@ -1,0 +1,54 @@
+#!/opt/bob/.venv/bin/python
+"""Operator-only lane-relative project folder registration; no service restart."""
+import argparse
+import fcntl
+import json
+import os
+import pwd
+import sys
+
+sys.path.insert(0, '/usr/local/lib/bob_runtime')
+from common import SOURCE, read_env, require_root
+from lane import FAMILY, LOCK_PATH, validate_name
+from worker import load_identity
+
+sys.path.insert(0, str(SOURCE / 'bobclaw-core'))
+from core.portal_resources import ResourceError, register_project_folder
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('lane', type=validate_name)
+    parser.add_argument('project_id')
+    parser.add_argument('path', help='lane-relative existing folder under projects/')
+    parser.add_argument('label')
+    args = parser.parse_args()
+    require_root()
+    root = FAMILY / args.lane / 'bob-memory'
+    if not (root / 'lane.env').is_file():
+        raise ValueError('unknown lane')
+    owner = read_env(root / 'lane.env').get('BOB_DEFAULT_OWNER', '')
+    with open(LOCK_PATH, 'a') as allocation, open(f'/run/bob-project-folder-{args.lane}.lock', 'a') as lock:
+        fcntl.flock(allocation, fcntl.LOCK_EX)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        from common import writer_guard
+        writer_guard(args.lane)
+        row = register_project_folder(root, owner, args.project_id, args.path, args.label)
+        registry = root / 'project-folders.json'
+        from common import execution_mode
+        if execution_mode() == 'legacy':
+            account = pwd.getpwnam('bob')
+            os.chmod(registry, 0o600)
+            os.chown(registry, account.pw_uid, account.pw_gid)
+        else:
+            os.chmod(registry, 0o640)
+            os.chown(registry, 0, load_identity(args.lane)['service_gid'])
+    print(json.dumps({k: row[k] for k in ('attachment_id', 'project_id', 'label')}))
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        raise SystemExit(main())
+    except (ResourceError, OSError, ValueError):
+        sys.exit('bob-project-folder: registration refused')

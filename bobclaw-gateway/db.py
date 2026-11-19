@@ -87,19 +87,29 @@ async def init_db() -> None:
         )
         await db.commit()
     logger.info("SQLite database initialised at %s", sqlite_path)
+    from owner_sessions import initialize
+    await initialize()
+    from credential_auth import initialize as initialize_credentials
+    await initialize_credentials()
 
 
-async def create_refresh_token(user_id: str = "admin") -> str:
+async def create_refresh_token(user_id: Optional[str] = None) -> str:
     """Persist and return a new cryptographically-random refresh token."""
+    from core import credential_state
+    if user_id is None:
+        user_id = os.environ['BOB_DEFAULT_OWNER'] if credential_state.enabled() else 'admin'
     token = secrets.token_urlsafe(48)
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=config.REFRESH_TOKEN_DAYS)
 
+    from core import credential_state
+    credential_state.require_loaded()
+    epoch = credential_state.loaded_epoch() if credential_state.enabled() else None
     async with _sqlite_connection() as db:
         await db.execute(
-            "INSERT INTO refresh_tokens (token, user_id, expires_at, created_at)"
-            " VALUES (?, ?, ?, ?)",
-            (token, user_id, expires_at.isoformat(), now.isoformat()),
+            "INSERT INTO refresh_tokens (token, user_id, expires_at, created_at, credential_epoch)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (token, user_id, expires_at.isoformat(), now.isoformat(), epoch),
         )
         await db.commit()
 
@@ -113,9 +123,13 @@ async def validate_and_rotate_refresh_token(old_token: str) -> Optional[str]:
     """
     now = datetime.now(timezone.utc)
 
+    from core import credential_state
+    credential_state.require_loaded()
+    epoch = credential_state.loaded_epoch() if credential_state.enabled() else None
     async with _sqlite_connection() as db:
+        await db.execute('BEGIN IMMEDIATE')
         async with db.execute(
-            "SELECT user_id, expires_at FROM refresh_tokens WHERE token = ?",
+            "SELECT user_id, expires_at, credential_epoch FROM refresh_tokens WHERE token = ?",
             (old_token,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -123,7 +137,9 @@ async def validate_and_rotate_refresh_token(old_token: str) -> Optional[str]:
         if row is None:
             return None
 
-        user_id, expires_at_str = row
+        user_id, expires_at_str, stored_epoch = row
+        if epoch is not None and (stored_epoch != epoch or user_id != os.environ['BOB_DEFAULT_OWNER']):
+            return None
         expires_at = datetime.fromisoformat(expires_at_str)
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
@@ -143,9 +159,9 @@ async def validate_and_rotate_refresh_token(old_token: str) -> Optional[str]:
         new_token = secrets.token_urlsafe(48)
         new_expires = now + timedelta(days=config.REFRESH_TOKEN_DAYS)
         await db.execute(
-            "INSERT INTO refresh_tokens (token, user_id, expires_at, created_at)"
-            " VALUES (?, ?, ?, ?)",
-            (new_token, user_id, new_expires.isoformat(), now.isoformat()),
+            "INSERT INTO refresh_tokens (token, user_id, expires_at, created_at, credential_epoch)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (new_token, user_id, new_expires.isoformat(), now.isoformat(), epoch),
         )
         await db.commit()
 

@@ -13,7 +13,7 @@ import pytest
 
 from bobclaw_telegram import gateway_client
 
-_ENV = "BOBCLAW_PASSWORD=hunter2\nTOTP_SECRET=JBSWY3DPEHPK3PXP\n"
+_ENV = "BOBCLAW_PASSWORD=hunter2\nTOTP_SECRET=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP\n"
 
 
 class _Resp:
@@ -157,8 +157,8 @@ def test_login_posts_password_and_totp_from_env_file(tmp_path, env_file):
 
 def test_env_file_with_crlf_endings_parsed(tmp_path):
     p = tmp_path / "bobclaw.env"
-    p.write_bytes(b"BOBCLAW_PASSWORD=hunter2\r\nTOTP_SECRET=JBSWY3DPEHPK3PXP\r\n")
-    assert gateway_client._load_credentials(p) == ("hunter2", "JBSWY3DPEHPK3PXP")
+    p.write_bytes(b"BOBCLAW_PASSWORD=hunter2\r\nTOTP_SECRET=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP\r\n")
+    assert gateway_client._load_credentials(p) == ("hunter2", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
 
 
 # ── list_pending_approvals (Task 3) ─────────────────────────────────────────

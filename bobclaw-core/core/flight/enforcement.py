@@ -17,7 +17,7 @@ point — two mega-sprints don't both hammer the serial GLM window). WITHIN one 
 re-entrant (same-holder refresh), so same-flight PARALLEL GLM would slip past — but that only
 happens when GLM is a FAN-OUT auditor/worker (e.g. the 1:10 chunk-audit). The resolution is a
 roster policy, not a slot change: **GLM is single-lane-only work** — pull it out of the fan-out
-critic/worker spots (``core/teams.py`` `critic`/`worker` = `glm_5_2` at ~:61/:78/:87;
+critic/worker spots (``core/teams.py`` `critic`/`worker` = `glm_5_3` at ~:61/:78/:87;
 ``core/nodes/hier.py`` section critic) and use a parallel-safe auditor there (minimax /
 deepseek_v4). With no same-flight parallel GLM, at most one GLM call runs per flight and the
 cross-flight mutex gives TRUE serial-1 — re-entrancy moot. The roster swap is a FOLLOW-UP
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # escalation backend instead of blocking or building glm_payg. Tunable; deepseek_v4_flash is
 # the always-available, uncapped worker that can stand in for the GLM audit/critic role.
 SERIAL_ESCALATION: dict[str, str] = {
-    "glm_5_2": "deepseek_v4_flash",
+    "glm_5_3": "deepseek_v4_flash",
     "glm": "deepseek_v4_flash",
 }
 
@@ -83,6 +83,8 @@ async def acquire_or_escalate(backend: str) -> tuple[str, Optional[str]]:
 
     Fail-OPEN: any error ⇒ ``(backend, None)`` (run the original backend, no slot).
     """
+    from core.lane_config import configured_mode, get_lane, require_backend, LaneConfigurationError
+    require_backend(backend)
     if not config.FLIGHT_ENFORCE_ENABLED or backend not in SERIAL_PROVIDERS:
         return backend, None
     try:
@@ -91,14 +93,20 @@ async def acquire_or_escalate(backend: str) -> tuple[str, Optional[str]]:
         acquired = await get_provider_slots().try_acquire(backend, flight, priority)
         if acquired:
             return backend, flight
-        escalation = SERIAL_ESCALATION.get(backend)
+        escalation = (get_lane().values.get("BOB_SERIAL_ESCALATION_BACKEND")
+                      if configured_mode() else SERIAL_ESCALATION.get(backend))
         if escalation:
+            require_backend(escalation)
             logger.info(
                 "serial slot %s contended by flight=%r (pri=%d); backing off to %s",
                 backend, flight, priority, escalation,
             )
             return escalation, None
+        if configured_mode():
+            raise LaneConfigurationError(f"Provider {backend} slot busy; no configured escalation")
         return backend, None  # no escalation mapped ⇒ run anyway (fail-open)
+    except LaneConfigurationError:
+        raise
     except Exception:
         logger.debug("serial-slot acquire failed for %s; running unslotted", backend, exc_info=True)
         return backend, None

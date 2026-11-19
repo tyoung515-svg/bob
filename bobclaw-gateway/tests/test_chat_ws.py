@@ -1,6 +1,7 @@
 import asyncio
 import json
 import unittest
+from unittest.mock import AsyncMock, patch
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -54,9 +55,20 @@ class TestChatWebSocket(unittest.TestCase):
                              "backend": "claude_api", "round": 0, "status": "ok", "tokens": 12},
                             {"type": "council_synth", "backend": "minimax", "status": "ok"},
                         ]
-                    events.append(
-                        {"type": "message_complete", "message_id": "assistant-1", "tokens_in": 4, "tokens_out": 2, "elapsed_ms": 12}
-                    )
+                    if body.get('content') == 'BU16-RECEIPT':
+                        actual = (body.get('model') or 'gpt-5') + '-reported'
+                        events.insert(0, {'type': 'model_observation', 'backend': 'openai',
+                            'model': body.get('model'), 'provider_reported_model': actual})
+                        events.append({'type': 'model_usage', 'backend': 'openai', 'model': actual,
+                            'available': True, 'input_tokens': 4, 'output_tokens': 2, 'total_tokens': 6})
+                        events.append({'type': 'message_complete', 'model': actual, 'backend': 'openai',
+                            'requested_model': body.get('model'), 'provider_reported_model': actual,
+                            'model_usage': {'input_tokens': 4, 'output_tokens': 2, 'total_tokens': 6},
+                            'tokens_in': 4, 'tokens_out': 2, 'elapsed_ms': 12})
+                    else:
+                        events.append(
+                            {"type": "message_complete", "message_id": "assistant-1", "tokens_in": 4, "tokens_out": 2, "elapsed_ms": 12}
+                        )
                 for event in events:
                     await response.write((json.dumps(event) + "\n").encode())
                 await response.write_eof()
@@ -66,6 +78,11 @@ class TestChatWebSocket(unittest.TestCase):
                 return web.json_response({"status": "ok"})
 
             core_app = web.Application()
+            async def core_models(request):
+                return web.json_response([
+                    {'backend': 'openai', 'model': 'gpt-5', 'models': ['gpt-5', 'gpt-other'], 'available': True},
+                    {'backend': 'local', 'model': None, 'models': [], 'available': True}])
+            core_app.router.add_get('/api/models/available', core_models)
             core_app.router.add_post("/api/chat", core_chat)
             core_app.router.add_post("/api/chat/approval", approval)
             cls._core_server = TestServer(core_app)
@@ -95,6 +112,11 @@ class TestChatWebSocket(unittest.TestCase):
         cls._loop.close()
 
     def setUp(self) -> None:
+        # UUID/database authority is covered by the real Postgres C6 suite.
+        # This transport fixture deliberately uses synthetic conversation IDs.
+        lifecycle = patch('core.builder.lifecycle.end_sessions',new_callable=AsyncMock)
+        self.end_builder_sessions = lifecycle.start()
+        self.addCleanup(lifecycle.stop)
         self._pool.messages.clear()
         self.core_requests.clear()
         self._client.server.app[CONVERSATION_STATE_KEY].clear()
@@ -177,6 +199,7 @@ class TestChatWebSocket(unittest.TestCase):
                     "conversation_id": "conv-ws",
                     "content": "Hi there",
                     "model": "gpt-5",
+                    "request_id": "ordinary-turn",
                 }
             )
         )
@@ -204,6 +227,7 @@ class TestChatWebSocket(unittest.TestCase):
                     "conversation_id": "conv-ws",
                     "content": "Hi there",
                     "model": "gpt-5",
+                    "request_id": "ordinary-turn",
                 }
             )
         )
@@ -217,6 +241,12 @@ class TestChatWebSocket(unittest.TestCase):
         self.assertEqual(complete["type"], "message_complete")
         self.assertEqual([message["role"] for message in self._pool.messages], ["user", "assistant"])
         self.assertEqual(self._pool.messages[-1]["content"], "Hello world")
+        self.assertEqual(complete['message_id'], str(self._pool.messages[-1]['id']))
+        self.assertEqual(complete['request_id'], 'ordinary-turn')
+        self.assertEqual(self.core_requests[-1]['request_id'], 'ordinary-turn')
+        for row in self._pool.messages:
+            metadata = json.loads(row['metadata']) if isinstance(row['metadata'], str) else row['metadata']
+            self.assertEqual(metadata['request_id'], 'ordinary-turn')
         self._run(ws.close())
 
     def test_user_id_sent_to_core_in_upstream_payload(self):
@@ -818,4 +848,56 @@ class TestChatWebSocket(unittest.TestCase):
         # ... but the chunk relayed to the client carries core's resolved backend.
         self.assertEqual(first["backend"], "core")
 
+        self._run(ws.close())
+
+
+    def test_bu16_nondefault_pin_survives_socket_and_other_conversation(self):
+        ws = self._run(self._client.ws_connect('/ws/chat', headers={'Authorization': 'Bearer ' + self._token()}))
+        self._run(ws.send_json({'type': 'switch_model', 'conversation_id': 'conv-ws',
+                               'backend': 'openai', 'model': 'gpt-other'}))
+        self.assertEqual(self._run(ws.receive_json())['type'], 'model_switched')
+        self._run(ws.close())
+        # Force the new socket to recover the persisted pin from the conversation.
+        self._client.server.app[CONVERSATION_STATE_KEY].clear()
+        ws = self._run(self._client.ws_connect('/ws/chat', headers={'Authorization': 'Bearer ' + self._token()}))
+        for conversation in ('conv-ws', 'conv-other'):
+            self._run(ws.send_json({'type': 'message', 'conversation_id': conversation, 'content': 'fixture'}))
+            for _ in range(3):
+                self._run(ws.receive_json())
+        self.assertEqual(self.core_requests[0]['model'], 'gpt-other')
+        self.assertIsNone(self.core_requests[1]['model'])
+        self.assertIsNone(self._pool.conversations['conv-other']['model_preference'])
+        self._run(ws.close())
+
+    def test_bu16_bad_pin_does_not_replace_good_pin_or_call_core(self):
+        ws = self._run(self._client.ws_connect('/ws/chat', headers={'Authorization': 'Bearer ' + self._token()}))
+        for model, expected in (('gpt-other', 'model_switched'), ('invented', 'error')):
+            self._run(ws.send_json({'type': 'switch_model', 'conversation_id': 'conv-ws',
+                                   'backend': 'openai', 'model': model}))
+            frame = self._run(ws.receive_json())
+            self.assertEqual(frame['type'], expected)
+        self.assertEqual(frame['code'], 'invalid_pin')
+        self.assertEqual(frame['message'], 'The model "invented" is not offered by openai.')
+        self.assertEqual(self._pool.conversations['conv-ws']['model_preference'], 'gpt-other')
+        self.assertEqual(self.core_requests, [])
+        self._run(ws.close())
+
+
+    def test_bu16_actual_model_and_usage_are_saved_and_relayed(self):
+        ws = self._run(self._client.ws_connect('/ws/chat', headers={'Authorization': 'Bearer ' + self._token()}))
+        self._run(ws.send_json({'type': 'switch_model', 'conversation_id': 'conv-ws',
+                               'backend': 'openai', 'model': 'gpt-other'}))
+        self._run(ws.receive_json())
+        self._run(ws.send_json({'type': 'message', 'conversation_id': 'conv-ws', 'content': 'BU16-RECEIPT'}))
+        frames = [self._run(ws.receive_json()) for _ in range(5)]
+        complete = frames[-1]
+        self.assertEqual(complete['type'], 'message_complete')
+        self.assertEqual(complete['model'], 'gpt-other-reported')
+        self.assertEqual(complete['requested_model'], 'gpt-other')
+        metadata = self._pool.messages[-1]['metadata']
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        self.assertEqual(metadata['model'], 'gpt-other-reported')
+        self.assertEqual(metadata['model_usage']['input_tokens'], 4)
+        self.assertEqual(self._pool.conversations['conv-ws']['model_preference'], 'gpt-other')
         self._run(ws.close())

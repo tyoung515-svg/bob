@@ -90,11 +90,13 @@ def walk_to_available(candidates: list[str], availability: dict[str, bool]) -> s
 # ``opencode_serve`` have no single-client health and are handled specially below.
 _HTTP_CLIENT_BACKENDS: frozenset[str] = frozenset({
     "kimi_code",
+    "qwen_cloud",
     "kimi_platform",
     "claude_api",
     "deepseek_v4_flash",
     "deepseek_v4",   # DS Pro — same DeepSeek client/health as flash, Pro model
-    "glm_5_2",
+    "glm_5_3",
+    "glm_5_3_flash_or",
     "minimax",
     "gemini_flash",
     "gemini_pro",
@@ -102,6 +104,7 @@ _HTTP_CLIENT_BACKENDS: frozenset[str] = frozenset({
     "claude_code",   # subprocess `claude --version`
     "agy_code",      # subprocess `agy --version`
     "codex_code",    # subprocess `codex --version` (GPT-native; no proxy dependency)
+    "openai_codex",  # lane sign-in evidence; never refresh during health probes
     "kimi_cli",      # subprocess `kimi --version`
     "pi_code",       # subprocess `pi --version` (agentic GLM/DeepSeek/MiniMax harness)
 })
@@ -123,6 +126,9 @@ def _make_client(backend: str):
     if backend == "kimi_code":
         from core.backends.kimi import KimiClient
         return KimiClient()
+    if backend == "qwen_cloud":
+        from core.backends.qwen_cloud import QwenCloudClient
+        return QwenCloudClient()
     if backend == "kimi_platform":
         from core.backends.kimi_platform import KimiPlatformClient
         return KimiPlatformClient()
@@ -132,9 +138,16 @@ def _make_client(backend: str):
     if backend in ("deepseek_v4_flash", "deepseek_v4"):
         from core.backends.deepseek import DeepSeekClient
         return DeepSeekClient()
-    if backend == "glm_5_2":
+    if backend == "glm_5_3":
         from core.backends.glm import GLMClient
         return GLMClient()
+    if backend == "glm_5_3_flash_or":
+        from core.backends.glm import GLMClient
+        from core.config import config
+        return GLMClient(
+            base_url=config.OPENROUTER_BASE_URL, api_key=config.OPENROUTER_API_KEY,
+            vault_provider=None,
+        )
     if backend == "minimax":
         from core.backends.minimax import MiniMaxClient
         return MiniMaxClient()
@@ -150,6 +163,9 @@ def _make_client(backend: str):
     if backend == "codex_code":
         from core.backends.codex_code import CodexCodeClient
         return CodexCodeClient()
+    if backend == "openai_codex":
+        from core.backends.openai_codex import OpenAICodexClient
+        return OpenAICodexClient()
     if backend == "kimi_cli":
         from core.backends.kimi_cli import KimiCliClient
         return KimiCliClient()

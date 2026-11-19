@@ -1,0 +1,23 @@
+[Unit]
+AssertPathExists=/etc/systemd/system/bob-worker-journal@%i.service.d/identity.conf
+Description=Bob durable worker journal (%i)
+Requires=bob-worker-journal@%i.socket
+After=bob-worker-journal@%i.socket
+
+[Service]
+User=bob-unprovisioned
+Group=bob-unprovisioned
+ExecStart=/opt/bob/.venv/bin/python -I -m core.worker.journal /etc/bob/workers/%i.json
+WorkingDirectory=/
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX
+InaccessiblePaths=-/var/lib/bob -/var/lib/bob-workers -/mnt
+KillMode=control-group
+Restart=on-failure

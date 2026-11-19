@@ -7,6 +7,7 @@ python-dotenv>=1.0
 langgraph>=0.2
 langchain-core>=0.3
 langchain-openai>=0.2
+httpx>=0.28,<1  # lane-owned ChatGPT Responses transport (no SDK auth discovery)
 langchain-mcp-adapters>=0.3
 mcp>=1.0
 PyJWT>=2.0    # MCP server (Neck Beard MODE) decodes the agent token's faces claim

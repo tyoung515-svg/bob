@@ -11,7 +11,7 @@ import pytest
 from bobclaw_tui import auth
 from tests.conftest import assert_private_mode
 
-_ENV = "BOBCLAW_PASSWORD=hunter2\nTOTP_SECRET=JBSWY3DPEHPK3PXP\n"
+_ENV = "BOBCLAW_PASSWORD=hunter2\nTOTP_SECRET=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP\n"
 
 
 class _Resp:
@@ -149,8 +149,8 @@ def test_login_posts_password_and_totp_from_env_file(tmp_path, env_file):
 
 def test_env_file_with_crlf_endings_parsed(tmp_path):
     p = tmp_path / "bobclaw.env"
-    p.write_bytes(b"BOBCLAW_PASSWORD=hunter2\r\nTOTP_SECRET=JBSWY3DPEHPK3PXP\r\n")
-    assert auth._load_credentials(p) == ("hunter2", "JBSWY3DPEHPK3PXP")
+    p.write_bytes(b"BOBCLAW_PASSWORD=hunter2\r\nTOTP_SECRET=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP\r\n")
+    assert auth._load_credentials(p) == ("hunter2", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
 
 
 def test_no_mint_token_reference_remains():

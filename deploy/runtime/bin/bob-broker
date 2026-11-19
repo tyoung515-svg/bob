@@ -1,0 +1,10 @@
+#!/opt/bob/.venv/bin/python
+import sys
+
+sys.path.insert(0, '/usr/local/lib/bob_runtime')
+from broker import main
+
+try:
+    raise SystemExit(main())
+except (OSError, ValueError, KeyError) as exc:
+    sys.exit(f'bob-broker: {exc}')

@@ -25,8 +25,12 @@ from pathlib import Path
 # (e.g. from CI secrets) always take precedence.
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-key-32-chars-minimum!!")
 os.environ.setdefault("BOBCLAW_PASSWORD", "testpassword123")
-os.environ.setdefault("TOTP_SECRET", "JBSWY3DPEHPK3PXP")  # valid base32, 16 chars; self-contained (was a non-base32 placeholder only ever masked by the .secrets override)
-os.environ.setdefault("POSTGRES_URL", "postgresql://test:test@localhost:5432/test")
+os.environ.setdefault("TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")  # valid base32, 32 chars (160 bits); self-contained (was a non-base32 placeholder only ever masked by the .secrets override)
+os.environ.setdefault("POSTGRES_URL", "postgresql://test:***@localhost:5432/test")
+# Denial-gate tests must always run against the strict posture, even when the
+# live .secrets sets BOB_AGENT_INNER_GATES=open (PATCH-LATER 2026-10-16;
+# process env wins over dotenv override=False).
+os.environ.setdefault("BOB_AGENT_INNER_GATES", "strict")
 
 _GATEWAY_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from qdrant_client import QdrantClient
+from core.paths import memory_sqlite_path
 
 from core.memory._db import init_schema
 from core.memory.acl import ACLRegistry, StoreACL
@@ -61,7 +62,7 @@ class MemoryBootstrapConfig:
     enabled: bool = False
     writer_enabled: bool = False
     t0_recall_enabled: bool = False
-    sqlite_path: Path = _PROJECT_ROOT / ".memory" / "bobclaw_memory.db"
+    sqlite_path: Path = field(default_factory=memory_sqlite_path)
     qdrant_url: str = "http://localhost:6353"  # BoB's own Qdrant, NOT the shared LKS :6333
     stores_config_path: Path = (
         _PROJECT_ROOT / "config" / "memory_stores.toml"

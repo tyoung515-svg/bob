@@ -1,6 +1,6 @@
 # BoBClaw Claude Pipeline (sandboxed build sessions, SSE) — http://127.0.0.1:7823
 # Binds loopback (127.0.0.1) by default (R1 network containment); set HOST=0.0.0.0
-# only behind the TLS/SSH boundary in docs/SECURITY.md.
+# only behind the TLS/SSH boundary in SECURITY.md.
 # Self-contained. Needs ANTHROPIC_API_KEY + JWT_SECRET (from .secrets/bobclaw.env).
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path

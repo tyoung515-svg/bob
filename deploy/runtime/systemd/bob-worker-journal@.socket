@@ -1,0 +1,14 @@
+[Unit]
+AssertPathExists=/etc/systemd/system/bob-worker-journal@%i.service.d/identity.conf
+Description=Bob worker journal socket (%i)
+
+[Socket]
+ListenStream=/run/bob-workers/%i/journal.sock
+SocketMode=0600
+SocketUser=bob-unprovisioned
+DirectoryMode=0711
+RemoveOnStop=yes
+Service=bob-worker-journal@%i.service
+
+[Install]
+WantedBy=multi-user.target

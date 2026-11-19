@@ -407,7 +407,7 @@ if __name__ == "__main__":
         "out_of_scope": bounty.scope.out_of_scope + ["no gas-griefing class findings"],
     })
     digest = bounty.ratify(
-        ratifier="travis",
+        ratifier="example-operator",
         scope=tightened,
         modifications=["added gas-griefing to out-of-scope"],
     )
@@ -463,7 +463,7 @@ if __name__ == "__main__":
     )
 
     print("B bucket:", dataset.run_triage().value)   # fast_approve
-    dataset.ratify(ratifier="travis")
+    dataset.ratify(ratifier="example-operator")
     print("B status:", dataset.status.value)
 
     # --- Example C: no-AI program -> AUTO_REJECT (never reaches your queue) ---

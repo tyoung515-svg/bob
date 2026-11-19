@@ -113,7 +113,7 @@ def test_to_grant_requires_ratification():
 def test_grant_to_scope_gates_actions():
     c = _bounty()
     c.run_triage()
-    c.ratify(ratifier="travis")                              # freeze the envelope
+    c.ratify(ratifier="example-operator")                              # freeze the envelope
     scope = grant_to_scope(c.to_grant())
     assert evaluate_action("static review of in-scope contracts", scope) == "auto"
     assert evaluate_action("mainnet interaction", scope) == "gate"   # out-of-scope → fail-closed
